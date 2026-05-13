@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Certificación CPA — Web</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="container">
+        <h1>Certificación CPA</h1>
+      </div>
+    </header>
+
+    <main class="container">
+      <section class="card">
+        <div class="grid-4">
+          <div class="field">
+            <label>Excel</label>
+            <div id="dz-excel" class="dropzone" aria-label="Adjuntar Excel">
+              <input id="excel" class="hidden-input" type="file" accept=".xlsx,.xls" />
+              <div class="dz-content">
+                <svg class="dz-icon upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M3 16v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4"/>
+                  <path d="M12 3v12"/>
+                  <path d="M7 8l5-5 5 5"/>
+                </svg>
+              </div>
+            </div>
+            <div id="prev-excel" class="preview clickable" data-input="#excel"></div>
+          </div>
+          <div class="field">
+            <label>Cédula – Frente</label>
+            <div id="dz-ced-front" class="dropzone" aria-label="Adjuntar Cédula frente">
+              <input id="cedula_front" class="hidden-input" type="file" accept=".png,.jpg,.jpeg,.bmp,.tif,.tiff,.pdf" />
+              <div class="dz-content">
+                <svg class="dz-icon upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M3 16v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4"/>
+                  <path d="M12 3v12"/>
+                  <path d="M7 8l5-5 5 5"/>
+                </svg>
+              </div>
+            </div>
+            <div id="prev-cedula-front" class="preview clickable" data-input="#cedula_front"></div>
+          </div>
+          <div class="field">
+            <label>Cédula – Reverso</label>
+            <div id="dz-ced-back" class="dropzone" aria-label="Adjuntar Cédula reverso">
+              <input id="cedula_back" class="hidden-input" type="file" accept=".png,.jpg,.jpeg,.bmp,.tif,.tiff,.pdf" />
+              <div class="dz-content">
+                <svg class="dz-icon upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M3 16v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4"/>
+                  <path d="M12 3v12"/>
+                  <path d="M7 8l5-5 5 5"/>
+                </svg>
+              </div>
+            </div>
+            <div id="prev-cedula-back" class="preview clickable" data-input="#cedula_back"></div>
+          </div>
+          <div class="field">
+            <label>Matrícula/ROC</label>
+            <div id="dz-matricula" class="dropzone" aria-label="Adjuntar Matrícula/ROC">
+              <input id="matricula" class="hidden-input" type="file" accept=".png,.jpg,.jpeg,.bmp,.tif,.tiff,.pdf" />
+              <div class="dz-content">
+                <svg class="dz-icon upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M3 16v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4"/>
+                  <path d="M12 3v12"/>
+                  <path d="M7 8l5-5 5 5"/>
+                </svg>
+              </div>
+            </div>
+            <div id="prev-matricula" class="preview clickable" data-input="#matricula"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="grid-4">
+          <div class="field">
+            <label>Tipo de ESF</label>
+            <div class="options">
+              <label><input type="radio" name="esf_tipo" value="corte" checked> Al corte</label>
+              <label style="margin-left: 12px;"><input type="radio" name="esf_tipo" value="mensual"> Mensual</label>
+            </div>
+            <small class="hint">Selecciona qué hoja usar del Excel: ESF_Corte o ESF_Mensual.</small>
+          </div>
+          <div class="field">
+            <label>Generación</label>
+            <div class="options">
+              <label><input type="checkbox" id="allow_errors" checked> Generar aunque haya errores de validación</label>
+            </div>
+            <small class="hint">Si está activo, no se detendrá por fallos en ER/ESF.</small>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="actions center">
+          <button id="btnValidar" class="btn primary xl">Validar</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <div id="stepper" class="stepper">
+          <div class="step" data-step="excel">
+            <span class="dot"></span>
+            <span class="label">Cargar Excel</span>
+          </div>
+          <div class="step" data-step="er">
+            <span class="dot"></span>
+            <span class="label">ER</span>
+          </div>
+          <div class="step" data-step="esf">
+            <span class="dot"></span>
+            <span class="label">ESF</span>
+          </div>
+          <div class="step" data-step="docs_cedula">
+            <span class="dot"></span>
+            <span class="label">Cédula</span>
+          </div>
+          <div class="step" data-step="docs_matricula">
+            <span class="dot"></span>
+            <span class="label">Matrícula</span>
+          </div>
+          <div class="step" data-step="llm">
+            <span class="dot"></span>
+            <span class="label">LLM</span>
+          </div>
+          <div class="step" data-step="done">
+            <span class="dot"></span>
+            <span class="label">Completado</span>
+          </div>
+        </div>
+        <div id="messages" class="messages"></div>
+      </section>
+
+      <section class="card">
+        <div id="results" class="results">
+          <div class="result-group">
+            <h3><span class="result-title"><span class="abbr" title="Estado de Resultados">ER</span></span><span class="badge">—</span></h3>
+            <div id="res-er"></div>
+          </div>
+          <div class="result-group">
+            <h3><span class="result-title"><span class="abbr" title="Estado de Situación Financiera">ESF</span></span><span class="badge">—</span></h3>
+            <div id="res-esf"></div>
+          </div>
+          <div class="result-group">
+            <h3><span class="result-title"><span class="abbr" title="Documentos — Cédula">Cédula</span></span><span class="badge">—</span></h3>
+            <div id="res-docs-cedula"></div>
+          </div>
+          <div class="result-group">
+            <h3><span class="result-title"><span class="abbr" title="Documentos — Matrícula">Matrícula</span></span><span class="badge">—</span></h3>
+            <div id="res-docs-matricula"></div>
+          </div>
+          <div class="result-group">
+            <h3><span class="result-title"><span class="abbr" title="Validación LLM">LLM</span></span><span class="badge">—</span></h3>
+            <div id="res-llm"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="actions center">
+          <button id="btnGenerarFinal" class="btn primary xl" disabled>Generar documento</button>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer container">
+      <small>© Certificación App</small>
+    </footer>
+
+    <script src="/static/app.js"></script>
+  </body>
+  </html>

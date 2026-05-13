@@ -1,0 +1,40 @@
+# Python caches
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Environments
+.env
+.venv/
+venv/
+env/
+
+# Notebooks
+.ipynb_checkpoints/
+*.ipynb.bak
+
+# Editors/OS
+.vscode/
+*.code-workspace
+.DS_Store
+Thumbs.db
+
+# Build/packaging
+build/
+dist/
+*.egg-info/
+
+# Generated artifacts
+*.docx
+!plantilla_smartArt.docx
+*.validation.json
+*.page1.jpg
+*.tmp
+~$*
+uploads/
+input_docs/
+
+# Tools caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
