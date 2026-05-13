@@ -17,6 +17,7 @@ from vision_validation import validate_cedula_vision, validate_matricula_vision
 from llm_validation import build_snapshot, llm_validate
 from document_generator import generar_documento_completo
 from report_utils import build_report, save_report_json
+from financial_model import build_financial_model, result_to_json
 
 
 load_dotenv()
@@ -330,6 +331,81 @@ def generate_doc():
         JOBS.pop(token, None)
 
     return send_file(out_path, as_attachment=True, download_name=filename)
+
+
+@app.post("/api/model/preview")
+def model_preview():
+    """Calcula ER/ESF desde inputs de la app y devuelve una vista previa JSON."""
+    try:
+        payload = request.get_json(silent=True) or {}
+        result = build_financial_model(payload)
+        return result_to_json(result)
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 400
+
+
+@app.post("/api/model/generate")
+def model_generate_doc():
+    """Genera el DOCX sin Excel, usando el modelo financiero interno."""
+    try:
+        payload = request.get_json(silent=True) or {}
+        result = build_financial_model(payload)
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 400
+
+    allow_errors = bool(payload.get("allow_errors", False))
+    ok = (
+        result.validations["er"].get("ok")
+        and result.validations["esf"].get("ok")
+        and result.validations["balance"].get("ok")
+    )
+    if not ok and not allow_errors:
+        return {
+            "ok": False,
+            "error": "El modelo tiene errores de validacion",
+            "validations": result_to_json(result).get("validations"),
+        }, 422
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
+        out_path = tmp.name
+
+    generar_documento_completo(
+        result.df_esf_mensual,
+        result.df_er,
+        result.df_datos,
+        result.df_certificacion,
+        out_path,
+        incluir_validacion=False,
+        tolerancia_validacion=1.0,
+        detener_si_error=False,
+        validacion_documentos=None,
+        validacion_llm=None,
+        esf_tipo="mensual",
+    )
+
+    report = build_report(
+        v_er=result.validations["er"],
+        v_esf=result.validations["esf"],
+        v_docs=None,
+        v_llm=None,
+        meta={"source": "app_model", **result.summary},
+    )
+    report_path = save_report_json(report, out_path)
+
+    seed_label = str(result.summary.get("seed", "app"))
+    safe_seed = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in seed_label)[:80]
+    safe_filename = f"certificacion_modelo_{safe_seed or 'app'}.docx"
+
+    @after_this_request
+    def _remove_model_generated(response):
+        try:
+            Path(out_path).unlink(missing_ok=True)
+            Path(report_path).unlink(missing_ok=True)
+        except Exception:
+            pass
+        return response
+
+    return send_file(out_path, as_attachment=True, download_name=safe_filename)
 
 
 if __name__ == "__main__":

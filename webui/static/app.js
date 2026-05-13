@@ -433,4 +433,240 @@
       if (input) input.click();
     });
   });
+
+  let lastModelPayload = null;
+
+  function setModelMessage(text, type = 'info') {
+    const wrap = qs('#modelMessages');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+    if (!text) return;
+    const div = document.createElement('div');
+    div.className = `msg ${type}`;
+    div.textContent = text;
+    wrap.appendChild(div);
+  }
+
+  function inputValue(id) {
+    const el = qs(`#${id}`);
+    return el ? el.value.trim() : '';
+  }
+
+  function numberValue(id, fallback = 0) {
+    const raw = inputValue(id);
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : fallback;
+  }
+
+  function parseModelEvents() {
+    const raw = inputValue('m_eventos');
+    if (!raw) return [];
+    return raw.split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(Boolean)
+      .map(line => {
+        const [month, account, amount, currency] = line.split(',').map(x => (x || '').trim());
+        return { month, account, amount: Number(amount || 0), currency: currency || 'nio' };
+      })
+      .filter(ev => ev.month && ev.account && Number.isFinite(ev.amount));
+  }
+
+  function buildModelPayload() {
+    return {
+      client: {
+        nombre_completo: inputValue('m_nombre_completo'),
+        cedula: inputValue('m_cedula'),
+        banco: inputValue('m_banco'),
+        estado_civil: inputValue('m_estado_civil'),
+        profesion: inputValue('m_profesion'),
+        sexo: inputValue('m_sexo'),
+        domicilio: inputValue('m_domicilio'),
+        direccion_personal: inputValue('m_direccion_personal'),
+        direccion_negocio: inputValue('m_direccion_negocio'),
+        fecha_certificacion: inputValue('m_fecha_certificacion'),
+        contacto: inputValue('m_contacto'),
+        regimen: inputValue('m_regimen'),
+        matricula: inputValue('m_matricula'),
+        giro_negocio: inputValue('m_giro_negocio'),
+        antiguedad: inputValue('m_antiguedad'),
+        empleados: numberValue('m_empleados', 0),
+      },
+      period: {
+        end_month: inputValue('m_mes_final'),
+        months: numberValue('m_cantidad_meses', 6),
+        exchange_rate: numberValue('m_tasa_cambio', 36.6243),
+        seed: inputValue('m_semilla'),
+      },
+      income: {
+        base_income_usd: numberValue('m_ingresos_base', 100000),
+        income_variability_pct: numberValue('m_var_ingresos', 15),
+        cost_pct: numberValue('m_costo_pct', 70),
+        cost_variability_pct: numberValue('m_var_costo', 5),
+        cash_sales_pct: numberValue('m_contado_pct', 85),
+      },
+      expenses: {
+        'Sueldos y Salarios': numberValue('m_g_sueldos', 0),
+        'Servicios Publicos': numberValue('m_g_servicios', 0),
+        'Alcaldia y DGI': numberValue('m_g_alcaldia', 0),
+        'Combustible': numberValue('m_g_combustible', 0),
+        'Publicidad': numberValue('m_g_publicidad', 0),
+        'Mantenimientos': numberValue('m_g_mantenimientos', 0),
+        'Renta': numberValue('m_g_renta', 0),
+        'Seguros': numberValue('m_g_seguros', 0),
+        'Otros Gastos': numberValue('m_g_otros', 0),
+      },
+      balances: {
+        cash: numberValue('m_b_cash', 0),
+        accounts_receivable: numberValue('m_b_ar', 0),
+        inventory: numberValue('m_b_inventory', 0),
+        ppe_real_estate: numberValue('m_b_real_estate', 0),
+        ppe_equipment: numberValue('m_b_equipment', 0),
+        ppe_vehicles: numberValue('m_b_vehicles', 0),
+        accum_depreciation: numberValue('m_b_accum_dep', 0),
+        credit_cards: numberValue('m_b_cards', 0),
+        suppliers: numberValue('m_b_suppliers', 0),
+        taxes_payable: numberValue('m_b_taxes', 0),
+        accrued_expenses: numberValue('m_b_accrued', 0),
+        loans_personal: numberValue('m_b_personal', 0),
+        loans_pledge: numberValue('m_b_pledge', 0),
+        loans_commercial: numberValue('m_b_commercial', 0),
+        loans_mortgage: numberValue('m_b_mortgage', 0),
+        retained_earnings: numberValue('m_b_retained', 0),
+      },
+      movements: {
+        purchase_base_usd: numberValue('m_compras_base', 0),
+        purchase_variability_pct: numberValue('m_var_compras', 0),
+        loan_interest_monthly_pct: numberValue('m_interes_creditos', 0),
+        events: parseModelEvents(),
+      },
+    };
+  }
+
+  function formatMoney(value) {
+    const n = Number(value || 0);
+    return n.toLocaleString('es-NI', { maximumFractionDigits: 0 });
+  }
+
+  function renderModelSummary(summary) {
+    const wrap = qs('#modelSummary');
+    if (!wrap) return;
+    wrap.replaceChildren();
+    const items = [
+      ['Ingresos acumulados', formatMoney(summary.income_total)],
+      ['Ingreso promedio', formatMoney(summary.income_average)],
+      ['Utilidad acumulada', formatMoney(summary.net_income_total)],
+      ['Utilidad promedio', formatMoney(summary.net_income_average)],
+      ['Activos finales', formatMoney(summary.ending_assets)],
+      ['Pasivos finales', formatMoney(summary.ending_liabilities)],
+      ['Patrimonio final', formatMoney(summary.ending_equity)],
+      ['Semilla', summary.seed || ''],
+    ];
+    items.forEach(([label, value]) => {
+      const box = document.createElement('div');
+      box.className = 'metric';
+      const span = document.createElement('span');
+      span.textContent = label;
+      const strong = document.createElement('strong');
+      strong.textContent = value;
+      box.append(span, strong);
+      wrap.appendChild(box);
+    });
+  }
+
+  function renderPreviewTable(containerSel, tableData) {
+    const wrap = qs(containerSel);
+    if (!wrap) return;
+    wrap.replaceChildren();
+    const table = document.createElement('table');
+    const thead = document.createElement('thead');
+    const trh = document.createElement('tr');
+    (tableData.columns || []).forEach(col => {
+      const th = document.createElement('th');
+      th.textContent = col;
+      trh.appendChild(th);
+    });
+    thead.appendChild(trh);
+    const tbody = document.createElement('tbody');
+    (tableData.rows || []).forEach(row => {
+      const tr = document.createElement('tr');
+      (tableData.columns || []).forEach(col => {
+        const td = document.createElement('td');
+        const value = row[col];
+        td.textContent = typeof value === 'number' ? formatMoney(value) : (value ?? '');
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.append(thead, tbody);
+    wrap.appendChild(table);
+  }
+
+  async function onModelPreview() {
+    try {
+      setModelMessage('Calculando modelo...');
+      const payload = buildModelPayload();
+      const resp = await fetch('/api/model/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) throw new Error(data.error || 'El modelo tiene validaciones pendientes');
+      lastModelPayload = payload;
+      renderModelSummary(data.summary || {});
+      renderPreviewTable('#modelErPreview', data.preview?.er || {});
+      renderPreviewTable('#modelEsfPreview', data.preview?.esf_mensual || {});
+      qs('#modelPreviewCard')?.classList.remove('hidden');
+      const btn = qs('#btnModeloGenerar');
+      if (btn) btn.disabled = false;
+      setModelMessage('Modelo validado: ER, ESF y balance cuadran.', 'info');
+    } catch (e) {
+      const btn = qs('#btnModeloGenerar');
+      if (btn) btn.disabled = true;
+      setModelMessage(String(e.message || e), 'error');
+    }
+  }
+
+  async function onModelGenerate() {
+    try {
+      const payload = lastModelPayload || buildModelPayload();
+      setModelMessage('Generando documento...');
+      const resp = await fetch('/api/model/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!resp.ok) {
+        let msg = 'Error generando documento';
+        try {
+          const data = await resp.json();
+          msg = data.error || msg;
+        } catch {}
+        throw new Error(msg);
+      }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `certificacion_modelo_${(payload.period.seed || 'app').slice(0, 24)}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setModelMessage('Documento generado.');
+    } catch (e) {
+      setModelMessage(String(e.message || e), 'error');
+    }
+  }
+
+  qsa('.mode-tab').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const target = btn.getAttribute('data-mode-target');
+      qsa('.mode-tab').forEach(b => b.classList.toggle('active', b === btn));
+      qsa('.mode-panel').forEach(panel => panel.classList.toggle('hidden', panel.id !== target));
+    });
+  });
+
+  qs('#btnModeloPreview')?.addEventListener('click', onModelPreview);
+  qs('#btnModeloGenerar')?.addEventListener('click', onModelGenerate);
 })();
