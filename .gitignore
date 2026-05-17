@@ -38,6 +38,7 @@ input_docs/
 data/models/
 data/*.db
 data/*.db-*
+data/documentos/
 
 # Tools caches
 .pytest_cache/

@@ -432,6 +432,28 @@ def api_delete_periodo(periodo_id: str):
         return _service_error_response(exc)
 
 
+@app.post("/api/periodos/<periodo_id>/generar-documento")
+def api_generate_periodo_document(periodo_id: str):
+    try:
+        result = PeriodoService(_db_session()).generate_document(periodo_id, cpa_user=_cpa_user())
+        return {"ok": True, **result}
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.get("/api/periodos/<periodo_id>/documento")
+def api_download_periodo_document(periodo_id: str):
+    try:
+        path = PeriodoService(_db_session()).get_document_path(periodo_id)
+        if not path:
+            return {"ok": False, "error": "Documento no generado o archivo no encontrado"}, 404
+        from pathlib import Path
+        filename = Path(path).name
+        return send_file(path, as_attachment=True, download_name=filename)
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
 @app.post("/api/upload")
 def upload():
     """Sube archivos y devuelve un token para usarlos en validación/generación."""

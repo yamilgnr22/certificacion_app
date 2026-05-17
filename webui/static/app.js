@@ -959,6 +959,25 @@
         del.addEventListener('click', () => deletePeriodo(periodo.id, periodo));
         actions.appendChild(del);
       } else {
+        // Estado finalizado o certificado
+        if (periodo.documento_generado_at) {
+          const download = document.createElement('button');
+          download.className = 'btn primary';
+          download.textContent = 'Descargar documento';
+          download.addEventListener('click', () => downloadPeriodoDocument(periodo.id));
+          actions.appendChild(download);
+          const regen = document.createElement('button');
+          regen.className = 'btn';
+          regen.textContent = 'Regenerar';
+          regen.addEventListener('click', () => generatePeriodoDocument(periodo.id, true));
+          actions.appendChild(regen);
+        } else {
+          const gen = document.createElement('button');
+          gen.className = 'btn primary';
+          gen.textContent = 'Generar documento';
+          gen.addEventListener('click', () => generatePeriodoDocument(periodo.id, false));
+          actions.appendChild(gen);
+        }
         const dup = document.createElement('button');
         dup.className = 'btn';
         dup.textContent = 'Duplicar como borrador';
@@ -967,6 +986,23 @@
       }
       wrap.appendChild(item);
     });
+  }
+
+  async function generatePeriodoDocument(periodoId, isRegen) {
+    if (isRegen && !window.confirm('Regenerar documento sobreescribira el archivo anterior. Continuar?')) return;
+    setPeriodosMessage('Generando documento...', 'info');
+    try {
+      await fetchJson(`/api/periodos/${periodoId}/generar-documento`, { method: 'POST' });
+      setPeriodosMessage('Documento generado correctamente.', 'success');
+      await loadClienteDetail(currentClienteId, { openForm: true });
+    } catch (e) {
+      setPeriodosMessage(String(e.message || e), 'error');
+    }
+  }
+
+  function downloadPeriodoDocument(periodoId) {
+    // Navegacion directa al endpoint binario; el navegador maneja la descarga.
+    window.open(`/api/periodos/${periodoId}/documento`, '_blank');
   }
 
   // ====================== Periodos: formulario y acciones ======================

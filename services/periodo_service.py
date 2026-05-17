@@ -21,9 +21,10 @@ from typing import Any, Mapping
 import pandas as pd
 from sqlalchemy.orm import Session
 
-from db.models import PeriodoCertificacion
-from repositories import ClienteRepository, PeriodoRepository
+from db.models import GiroNegocio, PeriodoCertificacion
+from repositories import ClienteRepository, GiroRepository, PeriodoRepository
 from services.audit_service import AuditService
+from services.periodo_document_adapter import periodo_to_dataframes
 from services.rollforward_service import RollforwardService
 from services.serializers import (
     cliente_to_dict,
@@ -31,6 +32,9 @@ from services.serializers import (
     parse_json_object,
     periodo_to_basic_dict,
 )
+
+
+DOCUMENTOS_DIRNAME = "documentos"
 
 
 class PeriodoServiceError(ValueError):
@@ -68,6 +72,7 @@ class PeriodoService:
         self.session = session
         self.periodos = PeriodoRepository(session)
         self.clientes = ClienteRepository(session)
+        self.giros = GiroRepository(session)
         self.audit = AuditService(session)
         self.rollforward = RollforwardService(session)
 
@@ -397,6 +402,90 @@ class PeriodoService:
             self.session.rollback()
             raise
 
+    # ------------------------------------------------------- generate document
+    def generate_document(self, periodo_id: str, *, cpa_user: str = "system") -> dict:
+        """Genera el DOCX y persiste documento_path/documento_generado_at.
+
+        Reglas:
+          - Solo periodos en estado 'finalizado' o 'certificado'.
+          - Sobrescribe si ya existia (regenerar permitido).
+          - Audit log con action='generate_document'.
+        """
+        from datetime import datetime, timezone
+        from pathlib import Path
+
+        from document_generator import generar_documento_completo
+
+        periodo = self.periodos.get(periodo_id)
+        if not periodo:
+            raise PeriodoNotFoundError("Periodo no encontrado")
+        if periodo.estado not in ("finalizado", "certificado"):
+            raise PeriodoConflictError(
+                "Solo se puede generar el documento de un periodo finalizado. "
+                f"Estado actual: '{periodo.estado}'."
+            )
+        cliente = self.clientes.get(periodo.cliente_id)
+        if not cliente:
+            raise PeriodoNotFoundError("Cliente del periodo no encontrado")
+        giro = self.giros.get(cliente.giro_negocio_id) if cliente.giro_negocio_id else None
+
+        before = self._full_dict(periodo)
+        try:
+            df_esf, df_er, df_datos, df_cert = periodo_to_dataframes(periodo, cliente, giro)
+
+            out_dir = _documentos_dir() / cliente.id
+            out_dir.mkdir(parents=True, exist_ok=True)
+            filename = f"{periodo.id}_{periodo.mes_inicial}_{periodo.mes_final}.docx"
+            out_path = out_dir / filename
+
+            generar_documento_completo(
+                df_esf,
+                df_er,
+                df_datos,
+                df_cert,
+                str(out_path),
+                incluir_validacion=False,
+                tolerancia_validacion=1.0,
+                detener_si_error=False,
+                validacion_documentos=None,
+                validacion_llm=None,
+                esf_tipo="mensual",
+            )
+
+            periodo.documento_path = str(out_path)
+            periodo.documento_generado_at = datetime.now(timezone.utc)
+            self.session.flush()
+
+            after = self._full_dict(periodo)
+            self.audit.log(
+                cpa_user=cpa_user,
+                entity_type="periodo",
+                entity_id=periodo.id,
+                action="generate_document",
+                summary=f"Genero documento DOCX para {periodo.mes_inicial}..{periodo.mes_final}",
+                before=before,
+                after=after,
+                metadata={"documento_path": str(out_path), "size_bytes": out_path.stat().st_size},
+            )
+            self.session.commit()
+            return {"periodo": after, "documento_path": str(out_path)}
+        except (PeriodoConflictError, PeriodoNotFoundError):
+            self.session.rollback()
+            raise
+        except Exception:
+            self.session.rollback()
+            raise
+
+    def get_document_path(self, periodo_id: str) -> str | None:
+        """Devuelve la ruta absoluta del DOCX si existe, sino None."""
+        from pathlib import Path
+
+        periodo = self.periodos.get(periodo_id)
+        if not periodo or not periodo.documento_path:
+            return None
+        p = Path(periodo.documento_path)
+        return str(p) if p.exists() else None
+
     # ----------------------------------------------------- rollforward preview
     def rollforward_preview(self, cliente_id: str, mes_inicial: str) -> dict:
         cliente = self.clientes.get(cliente_id)
@@ -524,3 +613,13 @@ def _opt_float(value: Any) -> float | None:
 def _utc_now():
     from datetime import datetime, timezone
     return datetime.now(timezone.utc)
+
+
+def _documentos_dir():
+    """Carpeta raiz para documentos generados (configurable via env)."""
+    import os
+    from pathlib import Path
+    base = os.getenv("CERTAPP_DOCUMENTOS_DIR")
+    if base:
+        return Path(base)
+    return Path(__file__).resolve().parents[1] / "data" / DOCUMENTOS_DIRNAME
