@@ -374,6 +374,15 @@ def api_rollforward_preview(cliente_id: str):
         return _service_error_response(exc)
 
 
+@app.get("/api/periodos/editables")
+def api_list_editables():
+    try:
+        records = PeriodoService(_db_session()).list_editables()
+        return {"ok": True, "periodos": records}
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
 @app.get("/api/periodos/<periodo_id>")
 def api_get_periodo(periodo_id: str):
     try:
@@ -389,6 +398,17 @@ def api_get_periodo(periodo_id: str):
 def api_update_periodo(periodo_id: str):
     try:
         result = PeriodoService(_db_session()).update(periodo_id, _json_body(), cpa_user=_cpa_user())
+        return {"ok": True, **result}
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.put("/api/periodos/<periodo_id>/payload")
+def api_update_periodo_payload(periodo_id: str):
+    try:
+        body = _json_body()
+        payload = body.get("payload") if isinstance(body.get("payload"), dict) else body
+        result = PeriodoService(_db_session()).update_payload(periodo_id, payload, cpa_user=_cpa_user())
         return {"ok": True, **result}
     except Exception as exc:
         return _service_error_response(exc)

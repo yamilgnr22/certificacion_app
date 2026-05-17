@@ -1520,6 +1520,175 @@
     };
   }
 
+  // ====================== Editor avanzado del Periodo ======================
+  let activePeriodoId = null;
+  let activePeriodoDetail = null;
+  let editorDirty = false;
+
+  function setEditorMessage(text, type = 'info') {
+    setScopedMessage('#editorMessages', text, type);
+  }
+
+  function markEditorDirty(dirty = true) {
+    editorDirty = !!(dirty && activePeriodoId && activePeriodoDetail?.periodo?.estado === 'borrador');
+    const badge = qs('#epHeaderDirty');
+    if (badge) badge.classList.toggle('hidden', !editorDirty);
+    const saveBtn = qs('#btnSavePeriodoChanges');
+    if (saveBtn) saveBtn.disabled = !editorDirty;
+  }
+
+  function updateEditorHeader() {
+    const wrap = qs('#editorPeriodoHeader');
+    const banner = qs('#editorReadonlyBanner');
+    if (!wrap) return;
+    if (!activePeriodoDetail) {
+      wrap.classList.add('hidden');
+      banner?.classList.add('hidden');
+      return;
+    }
+    wrap.classList.remove('hidden');
+    const per = activePeriodoDetail.periodo || {};
+    const cli = activePeriodoDetail.cliente || {};
+    qs('#epHeaderCliente').textContent = cli.nombre_completo || cli.nombre_negocio || 'Cliente';
+    qs('#epHeaderRango').textContent = `${per.mes_inicial} a ${per.mes_final}`;
+    const estadoBadge = qs('#epHeaderEstado');
+    estadoBadge.textContent = per.estado || '';
+    estadoBadge.classList.toggle('ok', per.estado === 'borrador');
+    estadoBadge.classList.toggle('warn', per.estado !== 'borrador');
+    qs('#epHeaderRecompute').classList.toggle('hidden', !per.recompute_required);
+
+    const isBorrador = per.estado === 'borrador';
+    qs('#btnSavePeriodoChanges').classList.toggle('hidden', !isBorrador);
+    qs('#btnDuplicateActivePeriodo').classList.toggle('hidden', isBorrador);
+    if (banner) {
+      banner.classList.toggle('hidden', isBorrador);
+      const erbEstado = qs('#erbEstado');
+      if (erbEstado) erbEstado.textContent = per.estado || '';
+    }
+    // Deshabilitar inputs del modelMode si no es borrador
+    setModelModeReadonly(!isBorrador);
+  }
+
+  function setModelModeReadonly(readonly) {
+    const panel = qs('#modelMode');
+    if (!panel) return;
+    qsa('#modelMode input, #modelMode select, #modelMode textarea, #modelMode button').forEach(el => {
+      // Excluir controles del editor mismo y del chat
+      if (el.id === 'editableSelector' || el.id === 'btnRefreshEditablePeriodos'
+          || el.id === 'btnSavePeriodoChanges' || el.id === 'btnDuplicateActivePeriodo'
+          || el.id === 'btnModelChatSend' || el.id === 'modelChatInput'
+          || el.id === 'modelChatScopeSelect' || el.id === 'modelAccountSelect'
+          || el.id === 'modelBlockSelectSummary' || el.id === 'modelVoucherTypeFilter'
+          || el.id === 'modelVoucherAccountFilter'
+          || el.classList.contains('chat-chip') || el.classList.contains('model-block-select')) {
+        return;
+      }
+      el.disabled = readonly;
+    });
+  }
+
+  async function loadEditablePeriodos() {
+    try {
+      const data = await fetchJson('/api/periodos/editables');
+      const select = qs('#editableSelector');
+      if (!select) return;
+      const current = activePeriodoId || '';
+      select.replaceChildren();
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = 'Seleccione un periodo...';
+      select.appendChild(placeholder);
+      (data.periodos || []).forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        const dirty = p.recompute_required ? ' ⟳' : '';
+        opt.textContent = `${p.cliente_nombre} · ${p.mes_inicial}..${p.mes_final} · ${p.estado}${dirty}`;
+        select.appendChild(opt);
+      });
+      if (current) select.value = current;
+    } catch (e) {
+      setEditorMessage(`No se pudieron cargar los periodos editables: ${e.message || e}`, 'error');
+    }
+  }
+
+  async function selectEditablePeriodo(periodoId) {
+    if (!periodoId) {
+      activePeriodoId = null;
+      activePeriodoDetail = null;
+      editorDirty = false;
+      updateEditorHeader();
+      setModelModeReadonly(false);
+      return;
+    }
+    // Confirmar si hay cambios sin guardar
+    if (editorDirty && !window.confirm('Tiene cambios sin guardar en el periodo actual. ¿Descartarlos?')) {
+      const select = qs('#editableSelector');
+      if (select) select.value = activePeriodoId || '';
+      return;
+    }
+    try {
+      const data = await fetchJson(`/api/periodos/${periodoId}`);
+      activePeriodoId = periodoId;
+      activePeriodoDetail = data;
+      editorDirty = false;
+      // Aplicar el payload del periodo a los inputs del modelo
+      if (data.periodo?.payload) {
+        applyModelPayload(data.periodo.payload, { draftId: null });
+      }
+      updateEditorHeader();
+      setEditorMessage(`Periodo cargado: ${data.cliente?.nombre_completo} ${data.periodo.mes_inicial}..${data.periodo.mes_final}`, 'success');
+    } catch (e) {
+      setEditorMessage(`Error cargando periodo: ${e.message || e}`, 'error');
+    }
+  }
+
+  async function saveActivePeriodoChanges() {
+    if (!activePeriodoId) return;
+    if (activePeriodoDetail?.periodo?.estado !== 'borrador') {
+      setEditorMessage('Solo se pueden guardar cambios en borradores.', 'error');
+      return;
+    }
+    const payload = buildModelPayload();
+    // Preservar el bloque client del periodo (no viene del form)
+    if (activePeriodoDetail?.periodo?.payload?.client) {
+      payload.client = activePeriodoDetail.periodo.payload.client;
+    }
+    const btn = qs('#btnSavePeriodoChanges');
+    if (btn) btn.disabled = true;
+    try {
+      const data = await fetchJson(`/api/periodos/${activePeriodoId}/payload`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payload }),
+      });
+      const warn = data.invalidated_descendants?.length
+        ? ` ⚠ Se marcaron ${data.invalidated_descendants.length} periodo(s) hijo(s) para recalcular.`
+        : '';
+      setEditorMessage(`Cambios guardados. Bloques: ${(data.changed_blocks || []).join(', ') || 'sin cambios detectados'}.${warn}`, 'success');
+      // Recargar el detail
+      activePeriodoDetail = await fetchJson(`/api/periodos/${activePeriodoId}`);
+      markEditorDirty(false);
+      updateEditorHeader();
+      await loadEditablePeriodos();
+    } catch (e) {
+      setEditorMessage(`Error al guardar: ${e.message || e}`, 'error');
+    } finally {
+      if (btn) btn.disabled = !editorDirty;
+    }
+  }
+
+  async function duplicateActivePeriodo() {
+    if (!activePeriodoId) return;
+    try {
+      const data = await fetchJson(`/api/periodos/${activePeriodoId}/duplicar`, { method: 'POST' });
+      setEditorMessage(`Borrador duplicado creado.`, 'success');
+      await loadEditablePeriodos();
+      await selectEditablePeriodo(data.periodo.id);
+    } catch (e) {
+      setEditorMessage(`Error al duplicar: ${e.message || e}`, 'error');
+    }
+  }
+
   function applyModelPayload(payload, { draftId = null } = {}) {
     payload = payload || {};
     const client = payload.client || {};
@@ -2874,6 +3043,7 @@
     const removedEvents = pendingChatData?.removed_events || [];
     const removedJournalEntries = pendingChatData?.removed_journal_entries || [];
     applyModelPayload(payloadToApply, { draftId: currentDraftId });
+    markEditorDirty(true);
     if (proposalKind === 'journal_entry' || proposalKind === 'voucher_reversal') {
       appendChatMessage(`${journalEntries.length || 1} comprobante(s) aplicado(s) al modelo.`, 'app');
     } else if (proposalKind === 'compound_events') {
@@ -3012,6 +3182,21 @@
   });
   qs('#modelChatScopeSelect')?.addEventListener('change', clearPendingChatProposal);
   qs('#btnModelChatSend')?.addEventListener('click', onModelChatSend);
+
+  // ====================== Editor avanzado: event listeners ======================
+  qs('#editableSelector')?.addEventListener('change', (ev) => selectEditablePeriodo(ev.target.value));
+  qs('#btnRefreshEditablePeriodos')?.addEventListener('click', loadEditablePeriodos);
+  qs('#btnSavePeriodoChanges')?.addEventListener('click', saveActivePeriodoChanges);
+  qs('#btnDuplicateActivePeriodo')?.addEventListener('click', duplicateActivePeriodo);
+  // Marcar dirty cuando el usuario cambia cualquier input del editor (solo si hay periodo activo borrador)
+  qsa('#modelMode input, #modelMode select, #modelMode textarea').forEach(el => {
+    if (['editableSelector', 'modelChatInput', 'modelChatScopeSelect', 'modelAccountSelect',
+         'modelBlockSelectSummary', 'modelVoucherTypeFilter', 'modelVoucherAccountFilter'].includes(el.id)) return;
+    el.addEventListener('input', () => markEditorDirty(true));
+    el.addEventListener('change', () => markEditorDirty(true));
+  });
+  // Cargar periodos editables al inicio
+  loadEditablePeriodos();
   qs('#btnUndoLastChatAdjustment')?.addEventListener('click', onUndoLastChatAdjustment);
   qsa('.chat-chip').forEach(chip => {
     chip.addEventListener('click', () => {

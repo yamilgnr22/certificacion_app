@@ -16,7 +16,7 @@
     <main class="container">
       <section class="mode-switcher" aria-label="Modo de trabajo">
         <button class="mode-tab" type="button" data-mode-target="clientesMode">Clientes</button>
-        <button class="mode-tab active" type="button" data-mode-target="modelMode">Crear certificación desde app</button>
+        <button class="mode-tab active" type="button" data-mode-target="modelMode">Editor avanzado</button>
         <button class="mode-tab" type="button" data-mode-target="excelMode">Generar desde Excel</button>
       </section>
 
@@ -169,48 +169,38 @@
       <div id="modelMode" class="mode-panel">
         <section class="card">
           <div class="workbench-header">
-            <h2>Datos del cliente</h2>
-            <span id="selectedClienteBadge" class="client-snapshot-badge hidden"></span>
-          </div>
-          <div class="doc-extract-panel">
-            <div class="doc-extract-header">
-              <div>
-                <h3>Extraer datos desde cédula y matrícula</h3>
-                <p class="workbench-subtitle">Adjunte los soportes y revise la propuesta antes de cargarla al formulario.</p>
-              </div>
-              <button id="btnExtractClientDocs" class="btn primary" type="button">Extraer datos</button>
+            <div>
+              <h2>Editor avanzado del periodo</h2>
+              <p class="workbench-subtitle">Seleccione un periodo creado desde el tab Clientes para editarlo, previsualizarlo y generar el documento.</p>
             </div>
-            <div class="doc-extract-grid">
-              <div class="field"><label>Cédula - Frente</label><input id="m_doc_cedula_front" type="file" accept=".png,.jpg,.jpeg,.bmp,.tif,.tiff,.pdf"></div>
-              <div class="field"><label>Cédula - Reverso</label><input id="m_doc_cedula_back" type="file" accept=".png,.jpg,.jpeg,.bmp,.tif,.tiff,.pdf"></div>
-              <div class="field"><label>Matrícula</label><input id="m_doc_matricula" type="file" accept=".png,.jpg,.jpeg,.bmp,.tif,.tiff,.pdf"></div>
+            <div class="actions">
+              <button id="btnRefreshEditablePeriodos" class="btn" type="button">Actualizar</button>
             </div>
-            <div id="modelDocExtractMessage" class="messages"></div>
-            <div id="modelDocExtractResult" class="doc-extract-result hidden"></div>
           </div>
-          <div class="grid-3">
-            <div class="field"><label>Nombre completo</label><input id="m_nombre_completo" type="text" value="Kitiel Rosibel Montiel González"></div>
-            <div class="field"><label>Cédula</label><input id="m_cedula" type="text" value="361-060491-0000X"></div>
-            <div class="field"><label>Banco</label><input id="m_banco" type="text" value="BAC"></div>
-            <div class="field"><label>Estado civil</label><input id="m_estado_civil" type="text" value="casada"></div>
-            <div class="field"><label>Profesión</label><input id="m_profesion" type="text" value="Licenciada en Economía"></div>
+          <div id="editorMessages" class="messages"></div>
+          <div class="active-periodo-toolbar">
             <div class="field">
-              <label>Sexo</label>
-              <select id="m_sexo">
-                <option>Femenino</option>
-                <option>Masculino</option>
+              <label>Periodo activo</label>
+              <select id="editableSelector">
+                <option value="">Seleccione un periodo...</option>
               </select>
             </div>
-            <div class="field"><label>Domicilio</label><input id="m_domicilio" type="text" value="Municipio de Managua, Departamento de Managua."></div>
-            <div class="field"><label>Dirección personal</label><input id="m_direccion_personal" type="text" value="Managua, Residencial Daniela Chavarría"></div>
-            <div class="field"><label>Dirección negocio</label><input id="m_direccion_negocio" type="text" value="Managua, Altamira"></div>
-            <div class="field"><label>Fecha certificación</label><input id="m_fecha_certificacion" type="date" value="2026-05-02"></div>
-            <div class="field"><label>Contacto</label><input id="m_contacto" type="text" value="+505 5712 6278"></div>
-            <div class="field"><label>Régimen</label><input id="m_regimen" type="text" value="Cuota Fija"></div>
-            <div class="field"><label>Matrícula/ROC</label><input id="m_matricula" type="text" value="RNVD-117331; ROC nº 138034303"></div>
-            <div class="field"><label>Giro del negocio</label><input id="m_giro_negocio" type="text" value="Venta de celulares, accesorios y mercadería en general"></div>
-            <div class="field"><label>Antigüedad</label><input id="m_antiguedad" type="text" value="6 años"></div>
-            <div class="field"><label>Empleados</label><input id="m_empleados" type="number" value="6"></div>
+          </div>
+          <div id="editorPeriodoHeader" class="active-periodo-header hidden">
+            <div class="active-periodo-info">
+              <strong id="epHeaderCliente">—</strong>
+              <span id="epHeaderRango">—</span>
+              <span class="badge" id="epHeaderEstado">—</span>
+              <span class="badge warn hidden" id="epHeaderRecompute">Recalcular</span>
+              <span class="badge ok hidden" id="epHeaderDirty">Cambios sin guardar</span>
+            </div>
+            <div class="active-periodo-actions">
+              <button id="btnSavePeriodoChanges" class="btn primary hidden" type="button">Guardar cambios al periodo</button>
+              <button id="btnDuplicateActivePeriodo" class="btn hidden" type="button">Duplicar como borrador</button>
+            </div>
+          </div>
+          <div id="editorReadonlyBanner" class="readonly-banner hidden">
+            Este periodo esta <strong id="erbEstado">finalizado</strong>. Para modificarlo, duplicarlo como borrador.
           </div>
         </section>
 

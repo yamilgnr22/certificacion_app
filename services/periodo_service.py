@@ -80,6 +80,42 @@ class PeriodoService:
     def list_for_cliente(self, cliente_id: str) -> list[dict]:
         return [periodo_to_basic_dict(p) for p in self.periodos.list_for_cliente(cliente_id)]
 
+    def list_editables(self) -> list[dict]:
+        """Lista periodos para el selector del editor avanzado.
+
+        Devuelve borradores primero (editables), despues finalizados/certificados
+        (solo lectura). Solo de clientes activos.
+        """
+        from sqlalchemy import select
+        from db.models import Cliente as ClienteModel
+        from db.models import PeriodoCertificacion as Per
+
+        # Orden custom: borrador=0, finalizado=1, certificado=2, otros=3
+        # Dentro de cada grupo, por updated_at desc
+        stmt = (
+            select(Per, ClienteModel)
+            .join(ClienteModel, Per.cliente_id == ClienteModel.id)
+            .where(ClienteModel.activo == 1)
+            .order_by(Per.updated_at.desc())
+        )
+        rows = list(self.session.execute(stmt))
+        estado_rank = {"borrador": 0, "finalizado": 1, "certificado": 2}
+        rows.sort(key=lambda r: (estado_rank.get(r[0].estado, 3), -(r[0].updated_at.timestamp() if r[0].updated_at else 0)))
+        return [
+            {
+                "id": p.id,
+                "cliente_id": p.cliente_id,
+                "cliente_nombre": c.nombre_completo,
+                "cliente_negocio": c.nombre_negocio,
+                "mes_inicial": p.mes_inicial,
+                "mes_final": p.mes_final,
+                "estado": p.estado,
+                "recompute_required": bool(p.recompute_required),
+                "updated_at": iso(p.updated_at),
+            }
+            for p, c in rows
+        ]
+
     def get_detail(self, periodo_id: str) -> dict | None:
         periodo = self.periodos.get(periodo_id)
         if not periodo:
@@ -279,6 +315,97 @@ class PeriodoService:
             )
             self.session.commit()
             return {"periodo": after, "invalidated_descendants": invalidated}
+        except Exception:
+            self.session.rollback()
+            raise
+
+    # ------------------------------------------------------------- update_payload
+    def update_payload(
+        self,
+        periodo_id: str,
+        new_payload: Mapping[str, Any],
+        *,
+        cpa_user: str = "system",
+    ) -> dict:
+        """Reemplaza el payload completo del periodo (solo borradores).
+
+        - Solo permitido si estado=borrador.
+        - Recalcula validation_json.
+        - Marca recompute_required en descendants.
+        - Audit con changed_blocks (top-level keys que cambiaron).
+        """
+        periodo = self.periodos.get(periodo_id)
+        if not periodo:
+            raise PeriodoNotFoundError("Periodo no encontrado")
+        if periodo.estado != "borrador":
+            raise PeriodoConflictError(
+                f"Solo se puede editar el payload de un borrador. Estado actual: '{periodo.estado}'."
+            )
+        if not isinstance(new_payload, Mapping):
+            raise PeriodoValidationError("El payload debe ser un objeto JSON")
+        if not new_payload.get("period"):
+            raise PeriodoValidationError("Falta el bloque 'period' en el payload")
+
+        before = self._full_dict(periodo)
+        old_payload = parse_json_object(periodo.payload_json)
+        try:
+            # Sincronizar campos individuales del periodo con el payload
+            period_block = dict(new_payload.get("period") or {})
+            income_block = dict(new_payload.get("income") or {})
+            # Si el payload trae mes_inicial/final, validamos
+            mes_inicial = str(period_block.get("start_month") or period_block.get("mes_inicio") or periodo.mes_inicial)[:7]
+            mes_final = str(period_block.get("end_month") or period_block.get("mes_final") or periodo.mes_final)[:7]
+            meses = self._validate_meses({"mes_inicial": mes_inicial, "mes_final": mes_final})
+            periodo.mes_inicial = meses["mes_inicial"]
+            periodo.mes_final = meses["mes_final"]
+            periodo.periodo_meses = meses["periodo_meses"]
+            if period_block.get("exchange_rate") is not None:
+                periodo.tasa_cambio = float(period_block["exchange_rate"])
+            if period_block.get("seed"):
+                periodo.seed = str(period_block["seed"])
+            for src, attr in (
+                ("base_income_usd", "ingresos_base_usd"),
+                ("income_variability_pct", "variabilidad_ingresos_pct"),
+                ("cost_pct", "cost_pct"),
+                ("cost_variability_pct", "variabilidad_costos_pct"),
+                ("cash_sales_pct", "cash_sales_pct"),
+            ):
+                if income_block.get(src) is not None:
+                    setattr(periodo, attr, float(income_block[src]))
+
+            payload_dict = dict(new_payload)
+            validation_json = self._run_and_capture_validation(payload_dict)
+            periodo.payload_json = json.dumps(payload_dict, ensure_ascii=False, sort_keys=True, default=str)
+            periodo.validation_json = json.dumps(validation_json, ensure_ascii=False, sort_keys=True, default=str)
+
+            self.session.flush()
+            invalidated = self.rollforward.invalidate_descendants(periodo.id)
+
+            # Detectar bloques cambiados a nivel top-level
+            changed_blocks = sorted({
+                k for k in set(old_payload.keys()) | set(payload_dict.keys())
+                if old_payload.get(k) != payload_dict.get(k)
+            })
+
+            after = self._full_dict(periodo)
+            self.audit.log(
+                cpa_user=cpa_user,
+                entity_type="periodo",
+                entity_id=periodo.id,
+                action="update_payload",
+                summary=f"Actualizo payload del periodo {periodo.mes_inicial}..{periodo.mes_final}",
+                before=before,
+                after=after,
+                metadata={
+                    "changed_blocks": changed_blocks,
+                    "invalidated_descendants": invalidated,
+                },
+            )
+            self.session.commit()
+            return {"periodo": after, "invalidated_descendants": invalidated, "changed_blocks": changed_blocks}
+        except (PeriodoValidationError, PeriodoConflictError, PeriodoNotFoundError):
+            self.session.rollback()
+            raise
         except Exception:
             self.session.rollback()
             raise
@@ -513,6 +640,7 @@ class PeriodoService:
             "recompute_required": bool(periodo.recompute_required),
             "saldos_finales": parse_json_object(periodo.saldos_finales_json) if periodo.saldos_finales_json else None,
             "validation": parse_json_object(periodo.validation_json) if periodo.validation_json else None,
+            "payload": parse_json_object(periodo.payload_json) if periodo.payload_json else {},
         })
         return base
 
