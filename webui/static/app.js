@@ -388,7 +388,15 @@
         }
       }
       const resp = await fetch(`/api/generate?token=${encodeURIComponent(currentToken)}`);
-      if (!resp.ok) throw new Error('Error generando el documento');
+      if (!resp.ok) {
+        // Intentar leer el error real del backend (JSON)
+        let detail = 'Error generando el documento';
+        try {
+          const data = await resp.json();
+          if (data && data.error) detail = data.error;
+        } catch (_) { /* respuesta no es JSON */ }
+        throw new Error(detail);
+      }
       const blob = await resp.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');

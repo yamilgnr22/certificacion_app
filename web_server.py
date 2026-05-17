@@ -586,51 +586,59 @@ def generate_doc():
     files = job["files"]
     opts = job["opts"]
 
-    # Cargar Excel
-    data = ExcelData(files["excel"])
-    esf_tipo = (opts.get("esf_tipo") or "corte").lower()
-    df_esf = data.get_situacion_financiera(esf_tipo)
-    df_er = data.get_resultados()
-    df_datos = data.get_datos()
-    df_cert = data.get_certificacion()
+    try:
+        # Cargar Excel
+        data = ExcelData(files["excel"])
+        esf_tipo = (opts.get("esf_tipo") or "corte").lower()
+        df_esf = data.get_situacion_financiera(esf_tipo)
+        df_er = data.get_resultados()
+        df_datos = data.get_datos()
+        df_cert = data.get_certificacion()
 
-    # Usar resultados previos si existen; si no, revalidar mínimo ER/ESF
-    res = job.get("results", {}) or {}
-    tol = float(opts.get("tolerancia", 1.0) or 1.0)
-    v_er = res.get("er") or validate_er(df_er, tolerance=tol)
-    v_esf = res.get("esf") or validate_esf(df_esf, tolerance=tol, mode=esf_tipo)
-    # Revalidar documentos si hay archivos disponibles
-    ced_front = files.get("cedula_front") or files.get("cedula")
-    ced_back = files.get("cedula_back")
-    if ced_front:
-        from vision_validation import validate_cedula_vision  # import local por peso
-        v_docs = validate_cedula_vision(df_cert, cedula_front=ced_front, cedula_back=ced_back)
-    else:
-        v_docs = None
-    # LLM opcional: ejecutar si está habilitado y tenemos API key
-    if bool(opts.get("use_llm")):
-        snap = build_snapshot(df_er, df_esf, df_cert, v_er, v_esf, v_docs)
-        v_llm = llm_validate(snap)
-    else:
-        v_llm = None
+        # Usar resultados previos si existen; si no, revalidar mínimo ER/ESF
+        res = job.get("results", {}) or {}
+        tol = float(opts.get("tolerancia", 1.0) or 1.0)
+        v_er = res.get("er") or validate_er(df_er, tolerance=tol)
+        v_esf = res.get("esf") or validate_esf(df_esf, tolerance=tol, mode=esf_tipo)
+        # Revalidar documentos si hay archivos disponibles
+        ced_front = files.get("cedula_front") or files.get("cedula")
+        ced_back = files.get("cedula_back")
+        if ced_front:
+            from vision_validation import validate_cedula_vision  # import local por peso
+            v_docs = validate_cedula_vision(df_cert, cedula_front=ced_front, cedula_back=ced_back)
+        else:
+            v_docs = None
+        # LLM opcional: ejecutar si está habilitado y tenemos API key
+        if bool(opts.get("use_llm")):
+            snap = build_snapshot(df_er, df_esf, df_cert, v_er, v_esf, v_docs)
+            v_llm = llm_validate(snap)
+        else:
+            v_llm = None
 
-    # Generar documento en temporal
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
-        out_path = tmp.name
+        # Generar documento en temporal
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
+            out_path = tmp.name
 
-    generar_documento_completo(
-        df_esf,
-        df_er,
-        df_datos,
-        df_cert,
-        out_path,
-        incluir_validacion=False,
-        tolerancia_validacion=tol,
-        detener_si_error=bool(opts.get("strict_contable")),
-        validacion_documentos=v_docs,
-        validacion_llm=v_llm,
-        esf_tipo=esf_tipo,
-    )
+        generar_documento_completo(
+            df_esf,
+            df_er,
+            df_datos,
+            df_cert,
+            out_path,
+            incluir_validacion=False,
+            tolerancia_validacion=tol,
+            detener_si_error=bool(opts.get("strict_contable")),
+            validacion_documentos=v_docs,
+            validacion_llm=v_llm,
+            esf_tipo=esf_tipo,
+        )
+    except Exception as exc:
+        import traceback
+        app.logger.error("Error generando documento: %s\n%s", exc, traceback.format_exc())
+        return {
+            "ok": False,
+            "error": f"{type(exc).__name__}: {exc}",
+        }, 400
 
     # Guardar reporte JSON junto al DOCX en la misma carpeta temporal
     report = build_report(v_er=v_er, v_esf=v_esf, v_docs=v_docs, v_llm=v_llm, meta={"token": token, "esf_tipo": esf_tipo})
