@@ -65,6 +65,13 @@ app = Flask(
     static_folder=str(BASE_DIR / "webui" / "static"),
     template_folder=str(BASE_DIR / "webui" / "templates"),
 )
+# Recargar templates Jinja2 al modificarlos sin reiniciar el server.
+# Si querés cachear en produccion, exportá CERTAPP_TEMPLATE_CACHE=1.
+if os.getenv("CERTAPP_TEMPLATE_CACHE", "0").strip().lower() not in {"1", "true", "yes", "on"}:
+    app.config["TEMPLATES_AUTO_RELOAD"] = True
+    app.jinja_env.auto_reload = True
+    # Que el navegador no cachee estaticos: re-pide app.js/styles.css en cada refresh
+    app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
 # En memoria, simple. Para producción usar almacenamiento persistente o DB.
 JOBS: Dict[str, Dict[str, Any]] = {}
