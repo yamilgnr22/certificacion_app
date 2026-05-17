@@ -435,6 +435,20 @@
   });
 
   let lastModelPayload = null;
+  let lastModelPreviewData = null;
+  let selectedModelBlockId = '';
+  let lastModelRenderedEsf = false;
+  let lastAccountMovementPreview = null;
+  let pendingChatPayload = null;
+  let pendingChatData = null;
+  let pendingDocExtraction = null;
+  let currentDraftId = null;
+  let savedModelsCache = { drafts: [], finals: [] };
+  let modelMonthlyOverrides = [];
+  let modelJournalEntries = [];
+  let modelAccountingVouchers = [];
+  let modelChatCommands = [];
+  let selectedChatVoucherId = '';
 
   function setModelMessage(text, type = 'info') {
     const wrap = qs('#modelMessages');
@@ -445,6 +459,169 @@
     div.className = `msg ${type}`;
     div.textContent = text;
     wrap.appendChild(div);
+  }
+
+  function setDocExtractMessage(text, type = 'info') {
+    const wrap = qs('#modelDocExtractMessage');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+    if (!text) return;
+    const div = document.createElement('div');
+    div.className = `msg ${type}`;
+    div.textContent = text;
+    wrap.appendChild(div);
+  }
+
+  function clearDocExtraction() {
+    pendingDocExtraction = null;
+    const wrap = qs('#modelDocExtractResult');
+    if (wrap) {
+      wrap.classList.add('hidden');
+      wrap.replaceChildren();
+    }
+  }
+
+  function docFieldLabel(key) {
+    const labels = {
+      nombre_completo: 'Nombre completo',
+      cedula: 'Cedula',
+      sexo: 'Sexo',
+      domicilio: 'Domicilio',
+      direccion_personal: 'Direccion personal',
+      regimen: 'Regimen',
+      matricula: 'Matricula/ROC',
+      direccion_negocio: 'Direccion negocio',
+      giro_negocio: 'Giro del negocio',
+    };
+    return labels[key] || key;
+  }
+
+  function renderDocExtraction(data) {
+    const wrap = qs('#modelDocExtractResult');
+    if (!wrap) return;
+    wrap.replaceChildren();
+    wrap.classList.remove('hidden');
+    const patch = data?.client_patch || {};
+    const title = document.createElement('h3');
+    title.textContent = 'Datos extraidos';
+    wrap.appendChild(title);
+
+    const fields = document.createElement('div');
+    fields.className = 'doc-extract-fields';
+    Object.entries(patch).forEach(([key, value]) => {
+      const box = document.createElement('div');
+      box.className = 'doc-extract-field';
+      const label = document.createElement('span');
+      label.textContent = docFieldLabel(key);
+      const strong = document.createElement('strong');
+      strong.textContent = String(value || '');
+      box.append(label, strong);
+      fields.appendChild(box);
+    });
+    if (!Object.keys(patch).length) {
+      const empty = document.createElement('div');
+      empty.className = 'doc-extract-field';
+      empty.textContent = 'No se extrajeron campos aplicables al formulario.';
+      fields.appendChild(empty);
+    }
+    wrap.appendChild(fields);
+
+    const actions = document.createElement('div');
+    actions.className = 'doc-extract-actions';
+    const apply = document.createElement('button');
+    apply.className = 'btn primary';
+    apply.type = 'button';
+    apply.textContent = 'Aplicar al formulario';
+    const discard = document.createElement('button');
+    discard.className = 'btn';
+    discard.type = 'button';
+    discard.textContent = 'Descartar';
+    apply.addEventListener('click', applyDocExtraction);
+    discard.addEventListener('click', () => {
+      clearDocExtraction();
+      setDocExtractMessage('Extraccion descartada.', 'info');
+    });
+    actions.append(apply, discard);
+    wrap.appendChild(actions);
+  }
+
+  function setFieldValue(id, value) {
+    if (value === undefined || value === null || value === '') return;
+    const el = qs(`#${id}`);
+    if (!el) return;
+    el.value = String(value);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  function applyDocExtraction() {
+    const patch = pendingDocExtraction?.client_patch || {};
+    const mapping = {
+      nombre_completo: 'm_nombre_completo',
+      cedula: 'm_cedula',
+      sexo: 'm_sexo',
+      domicilio: 'm_domicilio',
+      direccion_personal: 'm_direccion_personal',
+      regimen: 'm_regimen',
+      matricula: 'm_matricula',
+      direccion_negocio: 'm_direccion_negocio',
+      giro_negocio: 'm_giro_negocio',
+    };
+    Object.entries(mapping).forEach(([key, id]) => setFieldValue(id, patch[key]));
+    lastModelPayload = null;
+    setGenerateEnabled(false);
+    clearDocExtraction();
+    setDocExtractMessage('Datos cargados al formulario. Revise antes de generar.', 'info');
+  }
+
+  async function onExtractClientDocs() {
+    clearDocExtraction();
+    const front = qs('#m_doc_cedula_front')?.files?.[0];
+    const back = qs('#m_doc_cedula_back')?.files?.[0];
+    const matricula = qs('#m_doc_matricula')?.files?.[0];
+    if (!front && !back && !matricula) {
+      setDocExtractMessage('Adjunte al menos una imagen de cedula o matricula.', 'error');
+      return;
+    }
+    const btn = qs('#btnExtractClientDocs');
+    if (btn) btn.disabled = true;
+    setDocExtractMessage('Extrayendo datos desde imagenes...', 'info');
+    const form = new FormData();
+    if (front) form.append('cedula_front', front);
+    if (back) form.append('cedula_back', back);
+    if (matricula) form.append('matricula', matricula);
+    try {
+      const resp = await fetch('/api/model/documents/extract', { method: 'POST', body: form });
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) throw new Error(data.error || 'No se pudo extraer datos.');
+      pendingDocExtraction = data;
+      renderDocExtraction(data);
+      setDocExtractMessage('Extraccion lista. Revise los campos y aplique si estan correctos.', 'info');
+    } catch (e) {
+      setDocExtractMessage(String(e.message || e), 'error');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  function appendChatMessage(text, type = 'app') {
+    const wrap = qs('#modelChatMessages');
+    if (!wrap || !text) return;
+    const div = document.createElement('div');
+    div.className = `chat-bubble ${type}`;
+    div.textContent = text;
+    wrap.appendChild(div);
+    div.scrollIntoView({ block: 'nearest' });
+  }
+
+  function clearPendingChatProposal() {
+    pendingChatPayload = null;
+    pendingChatData = null;
+    const proposal = qs('#modelChatProposal');
+    if (proposal) {
+      proposal.classList.add('hidden');
+      proposal.replaceChildren();
+    }
   }
 
   function inputValue(id) {
@@ -465,8 +642,23 @@
       .map(line => line.trim())
       .filter(Boolean)
       .map(line => {
-        const [month, account, amount, currency] = line.split(',').map(x => (x || '').trim());
-        return { month, account, amount: Number(amount || 0), currency: currency || 'nio' };
+        if (line.startsWith('{')) {
+          try {
+            const parsed = JSON.parse(line);
+            parsed.amount = Number(parsed.amount || parsed.amount_nio || 0);
+            return parsed;
+          } catch {}
+        }
+        const parts = line.split(',').map(x => (x || '').trim());
+        const [month, account, amount, currency, source, instructionId, locked, createdAt] = parts;
+        const event = { month, account, amount: Number(amount || 0), currency: currency || 'nio' };
+        if (source) event.source = source;
+        if (instructionId) event.instruction_id = instructionId;
+        if (locked) event.locked = locked === 'true' || locked === '1' || locked === 'locked';
+        if (createdAt) event.created_at = createdAt;
+        const message = parts.slice(8).join(',').trim();
+        if (message) event.message = message;
+        return event;
       })
       .filter(ev => ev.month && ev.account && Number.isFinite(ev.amount));
   }
@@ -492,8 +684,9 @@
         empleados: numberValue('m_empleados', 0),
       },
       period: {
+        start_month: inputValue('m_mes_inicio'),
         end_month: inputValue('m_mes_final'),
-        months: numberValue('m_cantidad_meses', 6),
+        months: numberValue('m_cantidad_meses', 0) || undefined,
         exchange_rate: numberValue('m_tasa_cambio', 36.6243),
         seed: inputValue('m_semilla'),
       },
@@ -503,6 +696,7 @@
         cost_pct: numberValue('m_costo_pct', 70),
         cost_variability_pct: numberValue('m_var_costo', 5),
         cash_sales_pct: numberValue('m_contado_pct', 85),
+        monthly_overrides: modelMonthlyOverrides,
       },
       expenses: {
         'Sueldos y Salarios': numberValue('m_g_sueldos', 0),
@@ -538,8 +732,281 @@
         purchase_variability_pct: numberValue('m_var_compras', 0),
         loan_interest_monthly_pct: numberValue('m_interes_creditos', 0),
         events: parseModelEvents(),
+        journal_entries: modelJournalEntries,
+      },
+      accounting: {
+        vouchers: modelAccountingVouchers,
+      },
+      chat: {
+        commands: modelChatCommands,
       },
     };
+  }
+
+  function applyModelPayload(payload, { draftId = null } = {}) {
+    payload = payload || {};
+    const client = payload.client || {};
+    const period = payload.period || {};
+    const income = payload.income || {};
+    const expenses = payload.expenses || {};
+    const balances = payload.balances || {};
+    const movements = payload.movements || {};
+    const accounting = payload.accounting || {};
+    const chat = payload.chat || {};
+    modelMonthlyOverrides = Array.isArray(income.monthly_overrides) ? income.monthly_overrides.map(item => ({ ...item })) : [];
+    modelJournalEntries = Array.isArray(movements.journal_entries) ? movements.journal_entries.map(item => ({ ...item })) : [];
+    modelAccountingVouchers = Array.isArray(accounting.vouchers) ? accounting.vouchers.map(item => ({ ...item })) : [];
+    modelChatCommands = Array.isArray(chat.commands) ? chat.commands.map(item => ({ ...item })) : [];
+
+    const mapping = {
+      m_nombre_completo: client.nombre_completo,
+      m_cedula: client.cedula,
+      m_banco: client.banco,
+      m_estado_civil: client.estado_civil,
+      m_profesion: client.profesion,
+      m_sexo: client.sexo,
+      m_domicilio: client.domicilio,
+      m_direccion_personal: client.direccion_personal,
+      m_direccion_negocio: client.direccion_negocio,
+      m_fecha_certificacion: client.fecha_certificacion,
+      m_contacto: client.contacto,
+      m_regimen: client.regimen,
+      m_matricula: client.matricula,
+      m_giro_negocio: client.giro_negocio,
+      m_antiguedad: client.antiguedad,
+      m_empleados: client.empleados,
+      m_mes_inicio: period.start_month,
+      m_mes_final: period.end_month,
+      m_tasa_cambio: period.exchange_rate,
+      m_semilla: period.seed,
+      m_ingresos_base: income.base_income_usd,
+      m_var_ingresos: income.income_variability_pct,
+      m_costo_pct: income.cost_pct,
+      m_var_costo: income.cost_variability_pct,
+      m_contado_pct: income.cash_sales_pct,
+      m_g_sueldos: expenses['Sueldos y Salarios'],
+      m_g_servicios: expenses['Servicios Publicos'],
+      m_g_alcaldia: expenses['Alcaldia y DGI'],
+      m_g_combustible: expenses.Combustible,
+      m_g_publicidad: expenses.Publicidad,
+      m_g_mantenimientos: expenses.Mantenimientos,
+      m_g_renta: expenses.Renta,
+      m_g_seguros: expenses.Seguros,
+      m_g_otros: expenses['Otros Gastos'],
+      m_b_cash: balances.cash,
+      m_b_ar: balances.accounts_receivable,
+      m_b_inventory: balances.inventory,
+      m_b_real_estate: balances.ppe_real_estate,
+      m_b_equipment: balances.ppe_equipment,
+      m_b_vehicles: balances.ppe_vehicles,
+      m_b_accum_dep: balances.accum_depreciation,
+      m_b_cards: balances.credit_cards,
+      m_b_suppliers: balances.suppliers,
+      m_b_taxes: balances.taxes_payable,
+      m_b_accrued: balances.accrued_expenses,
+      m_b_personal: balances.loans_personal,
+      m_b_pledge: balances.loans_pledge,
+      m_b_commercial: balances.loans_commercial,
+      m_b_mortgage: balances.loans_mortgage,
+      m_b_retained: balances.retained_earnings,
+      m_compras_base: movements.purchase_base_usd,
+      m_var_compras: movements.purchase_variability_pct,
+      m_interes_creditos: movements.loan_interest_monthly_pct,
+    };
+    Object.entries(mapping).forEach(([id, value]) => setFieldValue(id, value));
+    setModelEventsFromPayload(payload);
+    currentDraftId = draftId;
+    lastModelPayload = payload;
+    lastModelPreviewData = null;
+    clearPendingChatProposal();
+    setGenerateEnabled(false);
+  }
+
+  function savedSearchText(record) {
+    return [
+      record.client_name,
+      record.cedula,
+      record.bank,
+      record.period_label,
+      record.start_month,
+      record.end_month,
+      record.id,
+    ].filter(Boolean).join(' ').toLowerCase();
+  }
+
+  function renderSavedModels() {
+    const filter = inputValue('savedModelsFilter').toLowerCase();
+    renderSavedList('#draftsList', savedModelsCache.drafts, 'draft', filter);
+    renderSavedList('#finalsList', savedModelsCache.finals, 'final', filter);
+  }
+
+  function renderSavedList(containerSel, records, type, filter) {
+    const wrap = qs(containerSel);
+    if (!wrap) return;
+    wrap.replaceChildren();
+    const visible = (records || []).filter(record => !filter || savedSearchText(record).includes(filter));
+    if (!visible.length) {
+      wrap.classList.add('empty-state');
+      wrap.textContent = type === 'draft' ? 'Sin borradores.' : 'Sin historicos.';
+      return;
+    }
+    wrap.classList.remove('empty-state');
+    visible.forEach(record => {
+      const item = document.createElement('div');
+      item.className = 'saved-item';
+      const title = document.createElement('strong');
+      title.textContent = record.client_name || 'Cliente sin nombre';
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = `${record.period_label || 'Sin periodo'} | ${record.bank || 'Sin banco'} | ${record.updated_at || record.created_at || ''}`;
+      const actions = document.createElement('div');
+      actions.className = 'saved-actions';
+
+      const open = document.createElement('button');
+      open.className = 'btn';
+      open.type = 'button';
+      open.textContent = type === 'draft' ? 'Abrir' : 'Ver';
+      open.addEventListener('click', () => type === 'draft' ? loadDraft(record.id) : viewFinal(record.id));
+      actions.appendChild(open);
+
+      if (type === 'draft') {
+        const del = document.createElement('button');
+        del.className = 'btn';
+        del.type = 'button';
+        del.textContent = 'Eliminar';
+        del.addEventListener('click', () => deleteDraftRecord(record.id));
+        actions.appendChild(del);
+      } else {
+        const dup = document.createElement('button');
+        dup.className = 'btn';
+        dup.type = 'button';
+        dup.textContent = 'Duplicar';
+        dup.addEventListener('click', () => duplicateFinalRecord(record.id));
+        const doc = document.createElement('button');
+        doc.className = 'btn';
+        doc.type = 'button';
+        doc.textContent = 'DOCX';
+        doc.addEventListener('click', () => { window.location.href = `/api/model/finals/${encodeURIComponent(record.id)}/document`; });
+        actions.append(dup, doc);
+      }
+
+      item.append(title, meta, actions);
+      wrap.appendChild(item);
+    });
+  }
+
+  async function refreshSavedModels() {
+    const [draftsResp, finalsResp] = await Promise.all([
+      fetch('/api/model/drafts'),
+      fetch('/api/model/finals'),
+    ]);
+    const drafts = await draftsResp.json();
+    const finals = await finalsResp.json();
+    if (!draftsResp.ok || !drafts.ok) throw new Error(drafts.error || 'No se pudieron cargar borradores.');
+    if (!finalsResp.ok || !finals.ok) throw new Error(finals.error || 'No se pudieron cargar historicos.');
+    savedModelsCache = { drafts: drafts.records || [], finals: finals.records || [] };
+    renderSavedModels();
+  }
+
+  async function showSavedModelsPanel() {
+    const panel = qs('#savedModelsPanel');
+    if (panel) panel.classList.toggle('hidden', false);
+    try {
+      await refreshSavedModels();
+    } catch (e) {
+      setModelMessage(String(e.message || e), 'error');
+    }
+  }
+
+  async function saveCurrentDraft() {
+    try {
+      const payload = buildModelPayload();
+      const resp = await fetch('/api/model/drafts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ draft_id: currentDraftId, payload }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) throw new Error(data.error || 'No se pudo guardar el borrador.');
+      currentDraftId = data.record?.id || currentDraftId;
+      lastModelPayload = payload;
+      setModelMessage('Borrador guardado.', 'info');
+      await showSavedModelsPanel();
+    } catch (e) {
+      setModelMessage(String(e.message || e), 'error');
+    }
+  }
+
+  async function saveCurrentFinal() {
+    try {
+      const payload = buildModelPayload();
+      setModelMessage('Generando y guardando version final...');
+      const resp = await fetch('/api/model/finals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payload }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) throw new Error(data.error || 'No se pudo guardar final.');
+      setModelMessage('Version final guardada en historico.', 'info');
+      await showSavedModelsPanel();
+    } catch (e) {
+      setModelMessage(String(e.message || e), 'error');
+    }
+  }
+
+  async function loadDraft(recordId) {
+    try {
+      const resp = await fetch(`/api/model/drafts/${encodeURIComponent(recordId)}`);
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) throw new Error(data.error || 'No se pudo cargar el borrador.');
+      applyModelPayload(data.record.payload, { draftId: data.record.id });
+      setModelMessage('Borrador cargado. Recalculando vista previa...', 'info');
+      await onModelPreview();
+    } catch (e) {
+      setModelMessage(String(e.message || e), 'error');
+    }
+  }
+
+  async function viewFinal(recordId) {
+    try {
+      const resp = await fetch(`/api/model/finals/${encodeURIComponent(recordId)}`);
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) throw new Error(data.error || 'No se pudo cargar el historico.');
+      applyModelPayload(data.record.payload, { draftId: null });
+      setModelMessage('Historico cargado solo para revision. Use Duplicar para editarlo como borrador.', 'info');
+      await onModelPreview();
+    } catch (e) {
+      setModelMessage(String(e.message || e), 'error');
+    }
+  }
+
+  async function duplicateFinalRecord(recordId) {
+    try {
+      const resp = await fetch(`/api/model/finals/${encodeURIComponent(recordId)}/duplicate`, { method: 'POST' });
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) throw new Error(data.error || 'No se pudo duplicar el historico.');
+      applyModelPayload(data.record.payload, { draftId: data.record.id });
+      setModelMessage('Historico duplicado como nuevo borrador. Recalculando vista previa...', 'info');
+      await refreshSavedModels();
+      await onModelPreview();
+    } catch (e) {
+      setModelMessage(String(e.message || e), 'error');
+    }
+  }
+
+  async function deleteDraftRecord(recordId) {
+    if (!confirm('Eliminar este borrador?')) return;
+    try {
+      const resp = await fetch(`/api/model/drafts/${encodeURIComponent(recordId)}`, { method: 'DELETE' });
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) throw new Error(data.error || 'No se pudo eliminar el borrador.');
+      if (currentDraftId === recordId) currentDraftId = null;
+      await refreshSavedModels();
+      setModelMessage('Borrador eliminado.', 'info');
+    } catch (e) {
+      setModelMessage(String(e.message || e), 'error');
+    }
   }
 
   function formatMoney(value) {
@@ -547,7 +1014,451 @@
     return n.toLocaleString('es-NI', { maximumFractionDigits: 0 });
   }
 
+  function formatSignedMoney(value) {
+    const n = Number(value || 0);
+    const sign = n > 0 ? '+' : '';
+    return `${sign}${formatMoney(n)}`;
+  }
+
+  function formatEventAmount(value) {
+    const n = Number(value || 0);
+    if (!Number.isFinite(n)) return '0';
+    if (Math.abs(n - Math.round(n)) < 0.0001) return String(Math.round(n));
+    return n.toFixed(2).replace(/\.?0+$/, '');
+  }
+
+  function formatModelEvents(events) {
+    return (events || [])
+      .map(ev => {
+        const base = `${ev.month || ''},${ev.account || ''},${formatEventAmount(ev.amount)},${ev.currency || 'nio'}`;
+        if (!ev.source && !ev.instruction_id) return base;
+        const source = ev.source || '';
+        const instructionId = ev.instruction_id || '';
+        const locked = ev.locked === undefined ? '' : String(!!ev.locked);
+        const createdAt = ev.created_at || '';
+        const message = String(ev.message || '').replace(/[\r\n]+/g, ' ').replace(/,/g, ';');
+        return `${base},${source},${instructionId},${locked},${createdAt},${message}`;
+      })
+      .join('\n');
+  }
+
+  function setModelEventsFromPayload(payload) {
+    const textarea = qs('#m_eventos');
+    if (!textarea) return;
+    const events = payload?.movements?.events || payload?.events || [];
+    modelJournalEntries = Array.isArray(payload?.movements?.journal_entries)
+      ? payload.movements.journal_entries.map(item => ({ ...item }))
+      : [];
+    textarea.value = formatModelEvents(events);
+    renderAdjustmentHistory();
+  }
+
+  function leverLabel(lever) {
+    const labels = {
+      purchase_adjustment: 'Ajuste de compras',
+      supplier_financing: 'Financiamiento de proveedores',
+      loan_commercial_new: 'Nuevo credito comercial',
+      capital_contribution: 'Aporte de capital',
+      owner_withdrawal: 'Retiro contra capital',
+      retained_earnings_distribution: 'Retiro contra resultados acumulados',
+      capital_reclassification: 'Reclasificacion patrimonial',
+      undo_last_adjustment: 'Deshacer ultimo ajuste',
+    };
+    return labels[lever] || lever || '';
+  }
+
+  function journalAccountLabel(account) {
+    const labels = {
+      cash: 'Efectivo y Equivalentes de Efectivo',
+      accounts_receivable: 'Cuentas por Cobrar Clientes',
+      inventory: 'Inventarios',
+      ppe_real_estate: 'Bienes Inmuebles',
+      ppe_equipment: 'Mobiliario y Equipos',
+      ppe_vehicles: 'Vehiculos',
+      accum_depreciation: 'Depreciacion Acumulada',
+      credit_cards: 'Tarjetas de Credito',
+      suppliers: 'Proveedores',
+      taxes_payable: 'Impuestos por Pagar',
+      accrued_expenses: 'Gastos Acumulados por pagar',
+      loans_mortgage: 'Creditos Hipotecarios',
+      loans_consumo: 'Creditos Consumo',
+      loans_personal: 'Creditos Personales',
+      loans_pledge: 'Creditos Prendarios',
+      loans_commercial: 'Creditos Comerciales',
+      capital: 'Capital',
+      retained_earnings: 'Resultados Acumulados',
+      current_earnings: 'Resultados del Ejercicio',
+    };
+    return labels[account] || account || '';
+  }
+
+  function renderChatProposal(data) {
+    const wrap = qs('#modelChatProposal');
+    if (!wrap) return;
+    wrap.replaceChildren();
+    wrap.classList.remove('hidden');
+    const proposal = data?.proposal || {};
+    const event = proposal.event;
+    const events = data?.new_events || proposal.events || (event ? [event] : []);
+    const journalEntries = data?.new_journal_entries || (proposal.journal_entry ? [proposal.journal_entry] : []);
+    const removedEvents = data?.removed_events || [];
+    const removedJournalEntries = data?.removed_journal_entries || [];
+    const preservedEvents = data?.existing_events_preserved || [];
+    const proposalKind = proposal.kind || ((events.length && proposal.target_cash === undefined && proposal.adjusted_cash === undefined) ? 'compound_events' : '');
+
+    const title = document.createElement('h3');
+    title.textContent = proposalTitle(proposalKind);
+    wrap.appendChild(title);
+
+    const grid = document.createElement('div');
+    grid.className = 'proposal-grid';
+    let items = [];
+    if (proposalKind === 'workflow') {
+      items = [
+        ['Accion', proposal.confirm_label || 'Confirmar'],
+        ['Requiere confirmacion', 'Si'],
+      ];
+    } else if (proposalKind === 'period_change') {
+      items = [
+        ['Nuevo periodo', proposal.target_month || ''],
+        ['Impacto caja', formatSignedMoney(proposal.impact?.cash || 0)],
+        ['Impacto activos', formatSignedMoney(proposal.impact?.assets || 0)],
+        ['Impacto pasivos', formatSignedMoney(proposal.impact?.liabilities || 0)],
+        ['Impacto patrimonio', formatSignedMoney(proposal.impact?.equity || 0)],
+      ];
+    } else if (proposalKind === 'assumption_change') {
+      items = [
+        ['Supuesto', proposal.assumption_label || 'Supuesto'],
+        ['Nuevo valor', `${formatMoney(proposal.assumption_value)}%`],
+        ['Variabilidad', `+/- ${formatMoney(proposal.assumption_variability_pct)}%`],
+        ['Alcance', proposal.scope_label || ''],
+        ['Periodo', proposal.target_month || ''],
+        ['Meses afectados', formatMoney(proposal.affected_months_count || 0)],
+      ];
+    } else if (proposalKind === 'journal_entry' || proposalKind === 'voucher_reversal') {
+      items = [
+        ['Mes', proposal.target_month || ''],
+        ['Debe', proposal.debit_label || journalAccountLabel(proposal.debit_account)],
+        ['Haber', proposal.credit_label || journalAccountLabel(proposal.credit_account)],
+        ['Monto', formatMoney(proposal.amount)],
+        ['Alcance', proposal.scope_label || 'bloque seleccionado'],
+        ['Impacto patrimonio', formatSignedMoney(proposal.impact?.equity || 0)],
+      ];
+    } else if (proposalKind === 'compound_events') {
+      items = [
+        ['Mes', proposal.target_month || ''],
+        ['Eventos nuevos', formatMoney(events.length)],
+        ['Impacto caja', formatSignedMoney(proposal.impact?.cash || 0)],
+        ['Impacto activos', formatSignedMoney(proposal.impact?.assets || 0)],
+        ['Impacto pasivos', formatSignedMoney(proposal.impact?.liabilities || 0)],
+        ['Impacto patrimonio', formatSignedMoney(proposal.impact?.equity || 0)],
+      ];
+    } else {
+      items = [
+        ['Mes objetivo', proposal.target_month || ''],
+        ['Caja objetivo', formatMoney(proposal.target_cash)],
+        ['Caja ajustada', formatMoney(proposal.adjusted_cash)],
+        ['Diferencia', formatSignedMoney(proposal.difference)],
+        ['Palanca', leverLabel(proposal.lever)],
+      ];
+    }
+    if (!['journal_entry', 'compound_events'].includes(proposalKind) && proposal.cash_variability_pct !== undefined && proposal.cash_variability_pct !== null) {
+      items.push(['Variabilidad caja', `+/- ${formatMoney(proposal.cash_variability_pct)}%`]);
+    }
+    if (!['journal_entry', 'compound_events'].includes(proposalKind) && proposal.target_min_cash !== undefined && proposal.target_max_cash !== undefined) {
+      items.push(['Rango objetivo', `${formatMoney(proposal.target_min_cash)} - ${formatMoney(proposal.target_max_cash)}`]);
+    }
+    if (!['journal_entry', 'compound_events'].includes(proposalKind) && proposal.purchase_average_nio !== undefined) items.push(['Compras promedio C$', formatMoney(proposal.purchase_average_nio)]);
+    if (!['journal_entry', 'compound_events'].includes(proposalKind) && proposal.purchase_average_usd !== undefined) items.push(['Compras promedio USD', formatMoney(proposal.purchase_average_usd)]);
+    if (proposal.adjusted_min_cash !== undefined) items.push(['Caja mínima ajustada', formatMoney(proposal.adjusted_min_cash)]);
+    if (proposal.adjusted_max_cash !== undefined) items.push(['Caja máxima ajustada', formatMoney(proposal.adjusted_max_cash)]);
+    if (!['journal_entry', 'compound_events'].includes(proposalKind) && events.length) items.push(['Eventos nuevos', formatMoney(events.length)]);
+    if (!['journal_entry', 'compound_events'].includes(proposalKind) && removedEvents.length) items.push(['Eventos removidos', formatMoney(removedEvents.length)]);
+    items.forEach(([label, value]) => {
+      const box = document.createElement('div');
+      box.className = 'proposal-item';
+      const span = document.createElement('span');
+      span.textContent = label;
+      const strong = document.createElement('strong');
+      strong.textContent = value;
+      box.append(span, strong);
+      grid.appendChild(box);
+    });
+    wrap.appendChild(grid);
+
+    if ((proposalKind === 'journal_entry' || proposalKind === 'compound_events' || proposalKind === 'voucher_reversal') && Array.isArray(proposal.journal_rows)) {
+      const journalTable = document.createElement('table');
+      journalTable.className = 'journal-proposal-table';
+      journalTable.innerHTML = '<thead><tr><th>Cuenta</th><th>Debe</th><th>Haber</th></tr></thead>';
+      const tbody = document.createElement('tbody');
+      proposal.journal_rows.forEach(row => {
+        const tr = document.createElement('tr');
+        const account = document.createElement('td');
+        account.textContent = row.account || '';
+        const debit = document.createElement('td');
+        debit.textContent = row.debit ? formatMoney(row.debit) : '-';
+        const credit = document.createElement('td');
+        credit.textContent = row.credit ? formatMoney(row.credit) : '-';
+        tr.append(account, debit, credit);
+        tbody.appendChild(tr);
+      });
+      journalTable.appendChild(tbody);
+      wrap.appendChild(journalTable);
+    }
+    if (proposalKind === 'compound_events' && Array.isArray(proposal.event_labels)) {
+      const list = document.createElement('ul');
+      list.className = 'proposal-event-list';
+      proposal.event_labels.forEach(label => {
+        const li = document.createElement('li');
+        li.textContent = label;
+        list.appendChild(li);
+      });
+      wrap.appendChild(list);
+    }
+
+    if (proposal.explanation) {
+      const note = document.createElement('p');
+      note.className = 'proposal-note';
+      note.textContent = proposal.explanation;
+      wrap.appendChild(note);
+    }
+
+    const technicalLines = [];
+    if (events.length) technicalLines.push(events.map(ev => formatEventLine(ev, { includeMessage: true })).join('\n'));
+    if (journalEntries.length) technicalLines.push(journalEntries.map(entry => formatJournalLine(entry, { includeMessage: true })).join('\n'));
+    if (removedEvents.length) technicalLines.push(`Eventos a remover:\n${removedEvents.map(ev => formatEventLine(ev, { includeMessage: true })).join('\n')}`);
+    if (removedJournalEntries.length) technicalLines.push(`Partidas a remover:\n${removedJournalEntries.map(entry => formatJournalLine(entry, { includeMessage: true })).join('\n')}`);
+    if (technicalLines.length) {
+      const details = document.createElement('details');
+      details.className = 'proposal-technical';
+      const summary = document.createElement('summary');
+      summary.textContent = `Ver registros tecnicos (${events.length + removedEvents.length + journalEntries.length + removedJournalEntries.length})`;
+      const eventLine = document.createElement('div');
+      eventLine.className = 'proposal-event';
+      eventLine.textContent = technicalLines.join('\n\n');
+      details.append(summary, eventLine);
+      wrap.appendChild(details);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'proposal-actions';
+    const apply = document.createElement('button');
+    apply.id = 'btnModelChatApply';
+    apply.className = 'btn primary';
+    apply.type = 'button';
+    apply.textContent = proposal.confirm_label || (proposalKind === 'workflow'
+      ? 'Confirmar'
+      : (proposalKind === 'voucher_reversal' ? 'Aplicar reverso'
+        : (['journal_entry', 'compound_events'].includes(proposalKind) ? 'Aplicar registro' : 'Aplicar propuesta')));
+    const discard = document.createElement('button');
+    discard.id = 'btnModelChatDiscard';
+    discard.className = 'btn';
+    discard.type = 'button';
+    discard.textContent = 'Descartar';
+    actions.append(apply, discard);
+    wrap.appendChild(actions);
+
+    apply.addEventListener('click', onModelChatApply);
+    discard.addEventListener('click', onModelChatDiscard);
+  }
+
+  function proposalTitle(kind) {
+    if (kind === 'journal_entry' || kind === 'compound_events' || kind === 'voucher_reversal') return 'Registro contable propuesto';
+    if (kind === 'assumption_change') return 'Cambio de supuesto propuesto';
+    if (kind === 'workflow') return 'Accion propuesta';
+    if (kind === 'period_change') return 'Cambio de periodo propuesto';
+    return 'Propuesta del asistente';
+  }
+
+  function formatEventLine(ev, { includeMessage = false } = {}) {
+    const base = `${ev.month || ''},${ev.account || ''},${formatEventAmount(ev.amount)},${ev.currency || 'nio'}`;
+    if (!ev.source && !ev.instruction_id) return base;
+    const metadata = `${base},${ev.source || ''},${ev.instruction_id || ''},${ev.locked === undefined ? '' : String(!!ev.locked)},${ev.created_at || ''}`;
+    if (!includeMessage || !ev.message) return metadata;
+    return `${metadata},${String(ev.message).replace(/[\r\n]+/g, ' ').replace(/,/g, ';')}`;
+  }
+
+  function formatJournalLine(entry, { includeMessage = false } = {}) {
+    const base = `${entry.month || ''},${entry.debit_account || ''},${entry.credit_account || ''},${formatEventAmount(entry.amount)},${entry.currency || 'nio'}`;
+    const metadata = `${base},${entry.source || ''},${entry.instruction_id || ''},${entry.locked === undefined ? '' : String(!!entry.locked)},${entry.created_at || ''}`;
+    if (!includeMessage || !entry.message) return metadata;
+    return `${metadata},${String(entry.message).replace(/[\r\n]+/g, ' ').replace(/,/g, ';')}`;
+  }
+
+  function renderAdjustmentHistory() {
+    const wrap = qs('#modelChatHistory');
+    if (!wrap) return;
+    const events = parseModelEvents().filter(ev => ev.source === 'chat_financiero');
+    const journalEntries = (modelJournalEntries || []).filter(entry => entry.source === 'chat_financiero');
+    wrap.replaceChildren();
+    if (!events.length && !journalEntries.length) {
+      wrap.classList.add('empty-state');
+      wrap.textContent = 'Sin ajustes aplicados por chat.';
+      return;
+    }
+    wrap.classList.remove('empty-state');
+    const groups = [];
+    events.forEach(ev => {
+      const id = ev.instruction_id || 'sin_id';
+      let group = groups.find(item => item.id === id);
+      if (!group) {
+        group = {
+          id,
+          message: ev.message || 'Ajuste aplicado por chat',
+          created_at: ev.created_at || '',
+          events: [],
+        };
+        groups.push(group);
+      }
+      group.events.push(ev);
+    });
+    journalEntries.forEach(entry => {
+      const id = entry.instruction_id || 'sin_id';
+      let group = groups.find(item => item.id === id);
+      if (!group) {
+        group = {
+          id,
+          message: entry.message || 'Partida aplicada por chat',
+          created_at: entry.created_at || '',
+          events: [],
+          journalEntries: [],
+        };
+        groups.push(group);
+      }
+      if (!group.journalEntries) group.journalEntries = [];
+      group.journalEntries.push(entry);
+    });
+    groups.reverse().forEach(group => {
+      const item = document.createElement('div');
+      item.className = 'history-item';
+      const strong = document.createElement('strong');
+      strong.textContent = group.message;
+      const meta = document.createElement('span');
+      const journalCount = (group.journalEntries || []).length;
+      meta.textContent = `${group.created_at || 'sin fecha'} | ${group.events.length} evento(s), ${journalCount} partida(s) | ${group.id}`;
+      const lines = document.createElement('div');
+      lines.className = 'history-events';
+      lines.textContent = [
+        ...group.events.map(formatEventLine),
+        ...(group.journalEntries || []).map(formatJournalLine),
+      ].join('\n');
+      item.append(strong, meta, lines);
+      wrap.appendChild(item);
+    });
+  }
+
+  function formatAccountingMoney(value, { zeroAsDash = false, zeroDecimals = false } = {}) {
+    const n = Number(value || 0);
+    if (Math.abs(n) < 0.5) return zeroAsDash ? '-' : (zeroDecimals ? '0.00' : '0');
+    const abs = Math.abs(n).toLocaleString('es-NI', { maximumFractionDigits: 0 });
+    return n < 0 ? `(${abs})` : abs;
+  }
+
+  function formatDecimal(value, digits) {
+    const n = Number(value || 0);
+    return n.toLocaleString('es-NI', {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    });
+  }
+
+  function formatPercent(value) {
+    const n = Number(value || 0) * 100;
+    return `${n.toLocaleString('es-NI', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
+  }
+
+  function rowLabel(row) {
+    const raw = row?.Descripcion ?? row?.Concepto ?? row?.Movimiento ?? row?.Cuenta ?? '';
+    return String(raw ?? '').trim();
+  }
+
+  function isMonthColumn(col) {
+    return /^\d{4}-\d{2}$/.test(String(col || ''));
+  }
+
+  function displayColumnHeader(col) {
+    const text = String(col || '');
+    if (isMonthColumn(text)) {
+      const match = /^(\d{4})-(\d{2})$/.exec(text);
+      const year = match?.[1] || '';
+      const month = match?.[2] || '';
+      const monthNames = {
+        '01': 'ene', '02': 'feb', '03': 'mar', '04': 'abr',
+        '05': 'may', '06': 'jun', '07': 'jul', '08': 'ago',
+        '09': 'sept', '10': 'oct', '11': 'nov', '12': 'dic',
+      };
+      return `${monthNames[month] || month}-${year.slice(2)}`;
+    }
+    if (text === 'Descripcion') return 'Descripción';
+    if (text === 'Acumulado del periodo') return 'Acumulado del período';
+    return text;
+  }
+
+  function displayStatementLabel(value, rowIndex, tableKind) {
+    if (tableKind === 'er') {
+      if (rowIndex === 3) return `Contado ${formatPercent(value)}`;
+      if (rowIndex === 4) return `Crédito ${formatPercent(value)}`;
+    }
+    return value ?? '';
+  }
+
+  function classifyStatementRow(row, rowIndex, tableKind) {
+    const label = rowLabel(row);
+    const plain = label.toLowerCase();
+    const classes = [];
+    if (!label) classes.push('stmt-empty-row');
+    if (tableKind === 'er') {
+      if (rowIndex <= 4) classes.push('stmt-assumption-row');
+      if (plain === '(-) gastos operativos') classes.push('stmt-section-row', 'stmt-negative-label');
+      if (plain.startsWith('(-)')) classes.push('stmt-negative-label');
+      if (plain.startsWith('(=)')) classes.push('stmt-formula-row');
+      if (plain === 'ingresos' || plain === '(=) ingresos brutos' || plain === 'total gastos operativos' || plain === 'ingresos/utilidad neta') {
+        classes.push('stmt-total-row');
+      }
+      if (plain === 'ingresos/utilidad neta') classes.push('stmt-grand-total-row');
+      const expenseRows = [
+        'sueldos y salarios', 'servicios publicos', 'alcaldia y dgi', 'combustible', 'publicidad',
+        'gastos financieros', 'mantenimientos', 'renta', 'gasto por depreciacion', 'seguros', 'otros gastos',
+      ];
+      if (expenseRows.includes(plain)) classes.push('stmt-subitem-row');
+    }
+    if (tableKind === 'esf') {
+      const sectionRows = ['activos', 'pasivos', 'patrimonio', 'corrientes', 'no corrientes', 'propiedad planta y equipos'];
+      if (sectionRows.includes(plain)) classes.push('stmt-section-row');
+      if (plain.startsWith('(-)')) classes.push('stmt-negative-label');
+      if (plain.startsWith('total ')) classes.push('stmt-total-row');
+      if (['total activos', 'total pasivos', 'total patrimonio', 'total pasivo + patrimonio'].includes(plain)) {
+        classes.push('stmt-grand-total-row');
+      }
+      if (label && !sectionRows.includes(plain) && !plain.startsWith('total ')) classes.push('stmt-subitem-row');
+    }
+    if (tableKind === 'movement') {
+      if (['saldo inicial', 'aumentos', 'disminuciones', 'saldo final'].includes(plain)) classes.push('stmt-total-row');
+    }
+    return classes;
+  }
+
+  function formatTableValue(value, col, row, rowIndex, colIndex, tableKind) {
+    if (value === null || value === undefined || value === '') return '';
+    if (colIndex === 0) return displayStatementLabel(value, rowIndex, tableKind);
+    if (tableKind === 'er') {
+      if (isMonthColumn(col)) {
+        if (rowIndex === 0) return formatDecimal(value, 2);
+        if (rowIndex === 1) return formatPercent(value);
+        if (rowIndex === 2) return formatDecimal(value, 4);
+      }
+      if (col === 'Base' && typeof value === 'number') return formatDecimal(value, 2);
+      if (typeof value === 'number') return formatAccountingMoney(value, { zeroAsDash: true });
+    }
+    if (tableKind === 'esf') {
+      if (typeof value === 'number') return formatAccountingMoney(value, { zeroDecimals: true });
+    }
+    if (typeof value === 'number') return formatMoney(value);
+    return value ?? '';
+  }
+
   function renderModelSummary(summary) {
+    summary = summary || {};
     const wrap = qs('#modelSummary');
     if (!wrap) return;
     wrap.replaceChildren();
@@ -573,26 +1484,124 @@
     });
   }
 
-  function renderPreviewTable(containerSel, tableData) {
+  function getModelBlock(data) {
+    const blocks = data?.period_blocks || [];
+    const previews = data?.preview?.blocks || {};
+    let blockId = selectedModelBlockId;
+    if (!blockId || !previews[blockId]) {
+      blockId = blocks[0]?.id || '';
+      selectedModelBlockId = blockId;
+    }
+    const preview = blockId && previews[blockId] ? previews[blockId] : (data?.preview || {});
+    const meta = blocks.find(block => block.id === blockId) || null;
+    const summary = preview?.summary || data?.summary || {};
+    return { blockId, preview, meta, summary };
+  }
+
+  function syncModelBlockSelector(data) {
+    const toolbars = qsa('.model-block-toolbar');
+    const selects = qsa('.model-block-select');
+    if (!selects.length) return;
+    const blocks = data?.period_blocks || [];
+    selects.forEach(select => select.replaceChildren());
+    if (blocks.length <= 1) {
+      toolbars.forEach(toolbar => toolbar.classList.add('hidden'));
+      selectedModelBlockId = blocks[0]?.id || '';
+      return;
+    }
+    selects.forEach(select => {
+      blocks.forEach(block => {
+        const opt = document.createElement('option');
+        opt.value = block.id;
+        opt.textContent = block.label || block.id;
+        select.appendChild(opt);
+      });
+    });
+    if (!selectedModelBlockId || !blocks.some(block => block.id === selectedModelBlockId)) {
+      selectedModelBlockId = blocks[0].id;
+    }
+    selects.forEach(select => { select.value = selectedModelBlockId; });
+    toolbars.forEach(toolbar => toolbar.classList.remove('hidden'));
+  }
+
+  function renderModelData(data, { includeEsf = false, preferredAccount = '' } = {}) {
+    lastModelPreviewData = data;
+    lastModelRenderedEsf = !!includeEsf;
+    syncModelBlockSelector(data);
+    const block = getModelBlock(data);
+    renderModelSummary(block.summary || data.summary || {});
+    renderPreviewTable('#modelErPreview', block.preview?.er || {}, 'Sin Estado de Resultados.', 'er');
+    if (includeEsf) {
+      const negativeCash = block.summary?.negative_cash_months || [];
+      populateAccountSelector(
+        block.preview?.movimiento_cuentas || {},
+        preferredAccount || (negativeCash.length ? 'Efectivo y Equivalentes de Efectivo' : '')
+      );
+      renderPreviewTable('#modelEsfPreview', block.preview?.esf_mensual || {}, 'Sin Estado de Situacion Financiera.', 'esf');
+    }
+    renderAccounting(data, preferredAccount);
+    qs('#modelPreviewCard')?.classList.remove('hidden');
+  }
+
+  function buildModelChatScope() {
+    const mode = inputValue('modelChatScopeSelect') || 'block';
+    if (mode === 'global') return { mode: 'global' };
+    if (!lastModelPreviewData) return { mode: 'block' };
+    const block = getModelBlock(lastModelPreviewData);
+    return {
+      mode: 'block',
+      block_id: block.meta?.id || block.blockId || '',
+      label: block.meta?.label || '',
+      months: block.meta?.months || [],
+    };
+  }
+
+  function buildModelChatUiContext() {
+    const block = lastModelPreviewData ? getModelBlock(lastModelPreviewData) : null;
+    const months = block?.meta?.months || lastModelPreviewData?.summary?.months || [];
+    return {
+      scope: buildModelChatScope(),
+      selected_block_id: block?.meta?.id || block?.blockId || '',
+      selected_block_label: block?.meta?.label || '',
+      selected_account: selectedAccountingAccount() || qs('#modelAccountSelect')?.value || '',
+      selected_month: months[months.length - 1] || '',
+      selected_voucher_type: selectedAccountingType(),
+      selected_voucher: selectedChatVoucherId,
+    };
+  }
+
+  function renderPreviewTable(containerSel, tableData, emptyText = 'Sin datos para mostrar.', tableKind = 'generic') {
     const wrap = qs(containerSel);
     if (!wrap) return;
     wrap.replaceChildren();
+    wrap.classList.remove('empty-state');
+    const columns = tableData?.columns || [];
+    const rows = tableData?.rows || [];
+    if (!columns.length || !rows.length) {
+      wrap.classList.add('empty-state');
+      wrap.textContent = emptyText;
+      return;
+    }
     const table = document.createElement('table');
+    table.className = `statement-table statement-${tableKind}`;
     const thead = document.createElement('thead');
     const trh = document.createElement('tr');
-    (tableData.columns || []).forEach(col => {
+    columns.forEach(col => {
       const th = document.createElement('th');
-      th.textContent = col;
+      th.textContent = displayColumnHeader(col);
       trh.appendChild(th);
     });
     thead.appendChild(trh);
     const tbody = document.createElement('tbody');
-    (tableData.rows || []).forEach(row => {
+    rows.forEach((row, rowIndex) => {
       const tr = document.createElement('tr');
-      (tableData.columns || []).forEach(col => {
+      classifyStatementRow(row, rowIndex, tableKind).forEach(cls => tr.classList.add(cls));
+      columns.forEach((col, colIndex) => {
         const td = document.createElement('td');
         const value = row[col];
-        td.textContent = typeof value === 'number' ? formatMoney(value) : (value ?? '');
+        td.textContent = formatTableValue(value, col, row, rowIndex, colIndex, tableKind);
+        if (typeof value === 'number' && value < 0) td.classList.add('negative');
+        if (colIndex === 0) td.classList.add('label-cell');
         tr.appendChild(td);
       });
       tbody.appendChild(tr);
@@ -601,28 +1610,282 @@
     wrap.appendChild(table);
   }
 
+  function populateAccountSelector(tableData, preferredAccount = '') {
+    const select = qs('#modelAccountSelect');
+    if (!select) return;
+    lastAccountMovementPreview = tableData || null;
+    select.replaceChildren();
+    const rows = tableData?.rows || [];
+    const accounts = [];
+    rows.forEach(row => {
+      const account = row.Cuenta;
+      if (account && !accounts.includes(account)) accounts.push(account);
+    });
+    if (!accounts.length) {
+      renderPreviewTable('#modelAccountMovementPreview', {}, 'Sin movimientos de cuentas.');
+      return;
+    }
+    accounts.forEach(account => {
+      const opt = document.createElement('option');
+      opt.value = account;
+      opt.textContent = account;
+      select.appendChild(opt);
+    });
+    if (preferredAccount && accounts.includes(preferredAccount)) {
+      select.value = preferredAccount;
+    } else if (accounts.length) {
+      select.value = accounts[0];
+    }
+    renderSelectedAccountMovement();
+  }
+
+  function renderSelectedAccountMovement() {
+    const select = qs('#modelAccountSelect');
+    if (!select || !lastAccountMovementPreview) {
+      renderPreviewTable('#modelAccountMovementPreview', {}, 'Sin movimientos de cuentas.');
+      return;
+    }
+    const account = select.value;
+    const filtered = {
+      columns: lastAccountMovementPreview.columns || [],
+      rows: (lastAccountMovementPreview.rows || []).filter(row => row.Cuenta === account),
+    };
+    renderPreviewTable('#modelAccountMovementPreview', filtered, 'Sin movimientos para la cuenta seleccionada.', 'movement');
+    renderAccounting(lastModelPreviewData, account);
+  }
+
+  function renderAccounting(data, preferredAccount = '') {
+    const accounting = data?.accounting || {};
+    const vouchers = accounting.vouchers || [];
+    const ledger = accounting.ledger || [];
+    if (!vouchers.length) {
+      setEmpty('#modelVoucherPreview', 'Sin comprobantes.');
+      setEmpty('#modelLedgerPreview', 'Sin mayor contable.');
+      setEmpty('#modelTracePreview', 'Sin trazabilidad.');
+      return;
+    }
+    populateAccountingFilters(vouchers, ledger, preferredAccount);
+    renderVoucherTable(vouchers);
+    renderLedgerTable(ledger);
+    renderTracePanel(accounting);
+  }
+
+  function setEmpty(sel, text) {
+    const el = qs(sel);
+    if (!el) return;
+    el.classList.add('empty-state');
+    el.replaceChildren();
+    el.textContent = text;
+  }
+
+  function populateAccountingFilters(vouchers, ledger, preferredAccount = '') {
+    const typeSelect = qs('#modelVoucherTypeFilter');
+    const accountSelect = qs('#modelVoucherAccountFilter');
+    if (typeSelect && !typeSelect.options.length) {
+      const types = ['Todos', ...Array.from(new Set(vouchers.map(v => v.type).filter(Boolean))).sort()];
+      types.forEach(type => {
+        const opt = document.createElement('option');
+        opt.value = type === 'Todos' ? '' : type;
+        opt.textContent = type;
+        typeSelect.appendChild(opt);
+      });
+    }
+    if (accountSelect) {
+      const current = preferredAccount || accountSelect.value || qs('#modelAccountSelect')?.value || '';
+      const accounts = Array.from(new Set(ledger.map(line => line.account).filter(Boolean))).sort();
+      accountSelect.replaceChildren();
+      accounts.forEach(account => {
+        const opt = document.createElement('option');
+        opt.value = account;
+        opt.textContent = account;
+        accountSelect.appendChild(opt);
+      });
+      if (current && accounts.includes(current)) accountSelect.value = current;
+      else if (accounts.length) accountSelect.value = accounts[0];
+    }
+  }
+
+  function selectedAccountingType() {
+    return qs('#modelVoucherTypeFilter')?.value || '';
+  }
+
+  function selectedAccountingAccount() {
+    return qs('#modelVoucherAccountFilter')?.value || qs('#modelAccountSelect')?.value || '';
+  }
+
+  function renderVoucherTable(vouchers) {
+    const type = selectedAccountingType();
+    const account = selectedAccountingAccount();
+    const rows = [];
+    vouchers.forEach(voucher => {
+      if (type && voucher.type !== type) return;
+      const lines = voucher.lines || [];
+      if (account && !lines.some(line => line.account === account)) return;
+      rows.push({
+        Comprobante: voucher.voucher_id,
+        Mes: voucher.month,
+        Tipo: voucher.type,
+        Origen: voucher.source,
+        Descripcion: voucher.description,
+        Debe: voucher.debit_total,
+        Haber: voucher.credit_total,
+      });
+    });
+    renderSimpleTable('#modelVoucherPreview', ['Comprobante', 'Mes', 'Tipo', 'Origen', 'Descripcion', 'Debe', 'Haber'], rows, 'Sin comprobantes para el filtro.');
+  }
+
+  function renderLedgerTable(ledger) {
+    const account = selectedAccountingAccount();
+    const rows = ledger
+      .filter(line => !account || line.account === account)
+      .map(line => ({
+        Mes: line.month,
+        Comprobante: line.voucher_id,
+        Descripcion: line.description,
+        Debe: line.debit,
+        Haber: line.credit,
+        Saldo: line.running_balance,
+      }));
+    renderSimpleTable('#modelLedgerPreview', ['Mes', 'Comprobante', 'Descripcion', 'Debe', 'Haber', 'Saldo'], rows, 'Sin movimientos para la cuenta.');
+  }
+
+  function renderTracePanel(accounting) {
+    const wrap = qs('#modelTracePreview');
+    if (!wrap) return;
+    const account = selectedAccountingAccount();
+    const block = lastModelPreviewData ? getModelBlock(lastModelPreviewData) : null;
+    const months = block?.meta?.months || lastModelPreviewData?.summary?.months || [];
+    const month = months[months.length - 1] || '';
+    const trace = accounting?.trace?.[`${account}|${month}`];
+    wrap.replaceChildren();
+    wrap.classList.remove('empty-state');
+    if (!trace) {
+      wrap.classList.add('empty-state');
+      wrap.textContent = 'Sin trazabilidad para la cuenta seleccionada.';
+      return;
+    }
+    const summary = document.createElement('div');
+    summary.className = 'trace-summary';
+    summary.textContent = `${account} ${month}: saldo inicial ${formatMoney(trace.opening_balance)}, debe ${formatMoney(trace.debits)}, haber ${formatMoney(trace.credits)}, saldo final ${formatMoney(trace.closing_balance)}.`;
+    wrap.appendChild(summary);
+    renderSimpleTableElement(
+      wrap,
+      ['Comprobante', 'Descripcion', 'Debe', 'Haber', 'Saldo'],
+      (trace.entries || []).map(line => ({
+        Comprobante: line.voucher_id,
+        Descripcion: line.description,
+        Debe: line.debit,
+        Haber: line.credit,
+        Saldo: line.running_balance,
+      }))
+    );
+  }
+
+  function renderSimpleTable(containerSel, columns, rows, emptyText) {
+    const wrap = qs(containerSel);
+    if (!wrap) return;
+    wrap.replaceChildren();
+    wrap.classList.remove('empty-state');
+    if (!rows.length) {
+      wrap.classList.add('empty-state');
+      wrap.textContent = emptyText;
+      return;
+    }
+    renderSimpleTableElement(wrap, columns, rows);
+  }
+
+  function renderSimpleTableElement(wrap, columns, rows) {
+    const table = document.createElement('table');
+    table.className = 'statement-table statement-ledger';
+    const thead = document.createElement('thead');
+    const trh = document.createElement('tr');
+    columns.forEach(col => {
+      const th = document.createElement('th');
+      th.textContent = col;
+      trh.appendChild(th);
+    });
+    thead.appendChild(trh);
+    const tbody = document.createElement('tbody');
+    rows.forEach(row => {
+      const tr = document.createElement('tr');
+      columns.forEach((col, idx) => {
+        const td = document.createElement('td');
+        const value = row[col];
+        td.textContent = typeof value === 'number' ? formatAccountingMoney(value, { zeroAsDash: true }) : (value ?? '');
+        if (typeof value === 'number' && value < 0) td.classList.add('negative');
+        if (idx === 0) td.classList.add('label-cell');
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.append(thead, tbody);
+    wrap.appendChild(table);
+  }
+
+  async function fetchModelPreview(loadingText) {
+    setModelMessage(loadingText);
+    const payload = buildModelPayload();
+    const resp = await fetch('/api/model/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.ok) throw new Error(data.error || 'El modelo tiene validaciones pendientes');
+    lastModelPayload = payload;
+    lastModelPreviewData = data;
+    return data;
+  }
+
+  function setGenerateEnabled(enabled) {
+    const btn = qs('#btnModeloGenerar');
+    if (btn) btn.disabled = !enabled;
+  }
+
+  function showModelOutcome(data, fallbackMessage, enableGenerate, showCashWarning = true) {
+    const block = getModelBlock(data);
+    renderModelSummary(block.summary || data.summary || {});
+    qs('#modelPreviewCard')?.classList.remove('hidden');
+    setGenerateEnabled(enableGenerate);
+
+    const negativeCash = block.summary?.negative_cash_months || [];
+    if (showCashWarning && negativeCash.length) {
+      const months = negativeCash.map(x => `${x.month}: ${formatMoney(x.cash)}`).join('; ');
+      setModelMessage(`Advertencia de caja: el efectivo queda negativo. Seleccione Efectivo y Equivalentes de Efectivo para revisar el detalle (${months}).`, 'warning');
+      return;
+    }
+    setModelMessage(fallbackMessage, 'info');
+  }
+
+  async function onModelErPreview() {
+    try {
+      const data = await fetchModelPreview('Calculando Estado de Resultados...');
+      renderModelData(data, { includeEsf: false });
+      showModelOutcome(data, 'ER calculado. Puede continuar con saldos iniciales y generar el ESF.', false, false);
+    } catch (e) {
+      setGenerateEnabled(false);
+      setModelMessage(String(e.message || e), 'error');
+    }
+  }
+
+  async function onModelEsfPreview() {
+    try {
+      const data = await fetchModelPreview('Calculando Estado de Situacion Financiera...');
+      renderModelData(data, { includeEsf: true });
+      showModelOutcome(data, 'Modelo validado: ER, ESF, caja y balance cuadran.', true);
+    } catch (e) {
+      setGenerateEnabled(false);
+      setModelMessage(String(e.message || e), 'error');
+    }
+  }
+
   async function onModelPreview() {
     try {
-      setModelMessage('Calculando modelo...');
-      const payload = buildModelPayload();
-      const resp = await fetch('/api/model/preview', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const data = await resp.json();
-      if (!resp.ok || !data.ok) throw new Error(data.error || 'El modelo tiene validaciones pendientes');
-      lastModelPayload = payload;
-      renderModelSummary(data.summary || {});
-      renderPreviewTable('#modelErPreview', data.preview?.er || {});
-      renderPreviewTable('#modelEsfPreview', data.preview?.esf_mensual || {});
-      qs('#modelPreviewCard')?.classList.remove('hidden');
-      const btn = qs('#btnModeloGenerar');
-      if (btn) btn.disabled = false;
-      setModelMessage('Modelo validado: ER, ESF y balance cuadran.', 'info');
+      const data = await fetchModelPreview('Calculando modelo completo...');
+      renderModelData(data, { includeEsf: true });
+      showModelOutcome(data, 'Modelo validado: ER, ESF, caja y balance cuadran.', true);
     } catch (e) {
-      const btn = qs('#btnModeloGenerar');
-      if (btn) btn.disabled = true;
+      setGenerateEnabled(false);
       setModelMessage(String(e.message || e), 'error');
     }
   }
@@ -659,6 +1922,245 @@
     }
   }
 
+  async function executeChatWorkflow(workflow) {
+    const action = workflow?.action || workflow?.workflow_action || '';
+    markPendingChatCommandApplied();
+    if (action === 'save_draft') {
+      appendChatMessage('Guardando borrador...', 'app');
+      await saveCurrentDraft();
+      appendChatMessage('Borrador guardado.', 'app');
+      return;
+    }
+    if (action === 'save_final') {
+      appendChatMessage('Guardando version final...', 'app');
+      await saveCurrentFinal();
+      appendChatMessage('Version final guardada.', 'app');
+      return;
+    }
+    if (action === 'generate_document') {
+      appendChatMessage('Generando documento...', 'app');
+      await onModelGenerate();
+      appendChatMessage('Documento generado.', 'app');
+      return;
+    }
+    appendChatMessage('No reconozco el flujo solicitado.', 'error');
+  }
+
+  function applyChatUiActions(actions) {
+    (actions || []).forEach(action => {
+      if (!action || !action.type) return;
+      if (action.type === 'select_account') {
+        selectAccountEverywhere(action.account || '');
+      } else if (action.type === 'open_saved_models') {
+        showSavedModelsPanel();
+        if (action.filter) setFieldValue('savedModelsFilter', action.filter);
+        renderSavedModels();
+      } else if (action.type === 'scroll_to') {
+        scrollToChatTarget(action.target || '');
+      } else if (action.type === 'select_voucher') {
+        highlightVoucher(action.voucher_id || '');
+      }
+    });
+  }
+
+  function selectAccountEverywhere(account) {
+    if (!account) return;
+    const accountSelect = qs('#modelAccountSelect');
+    if (accountSelect && Array.from(accountSelect.options).some(opt => opt.value === account)) {
+      accountSelect.value = account;
+      renderSelectedAccountMovement();
+    }
+    const voucherAccount = qs('#modelVoucherAccountFilter');
+    if (voucherAccount && Array.from(voucherAccount.options).some(opt => opt.value === account)) {
+      voucherAccount.value = account;
+      if (lastModelPreviewData) renderAccounting(lastModelPreviewData, account);
+    }
+  }
+
+  function highlightVoucher(voucherId) {
+    if (!voucherId) return;
+    selectedChatVoucherId = voucherId;
+    const typeSelect = qs('#modelVoucherTypeFilter');
+    if (typeSelect) typeSelect.value = '';
+    if (lastModelPreviewData) renderAccounting(lastModelPreviewData);
+    qsa('#modelVoucherPreview tr').forEach(row => {
+      const firstCell = row.querySelector('td');
+      row.classList.toggle('row-highlight', !!firstCell && firstCell.textContent === voucherId);
+    });
+  }
+
+  function scrollToChatTarget(target) {
+    const targets = {
+      accounting: '#accountingWorkbench',
+      client_documents: '.doc-extract-panel',
+      saved_models: '#savedModelsPanel',
+      chat: '#modelChatCard',
+    };
+    const el = qs(targets[target] || target);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  async function onModelChatSend() {
+    const input = qs('#modelChatInput');
+    const message = input ? input.value.trim() : '';
+    if (!message) return;
+    appendChatMessage(message, 'user');
+    if (pendingChatData && isChatApplyCommand(message)) {
+      await onModelChatApply();
+      if (input) input.value = '';
+      return;
+    }
+    if (pendingChatData && isChatDiscardCommand(message)) {
+      onModelChatDiscard();
+      if (input) input.value = '';
+      return;
+    }
+    await requestModelChatProposal(message);
+    if (input) input.value = '';
+  }
+
+  async function requestModelChatProposal(message) {
+    clearPendingChatProposal();
+    try {
+      appendChatMessage('Estoy revisando el modelo...', 'app');
+      const payload = buildModelPayload();
+      const resp = await fetch('/api/model/chat/command', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payload, message, scope: buildModelChatScope(), ui_context: buildModelChatUiContext() }),
+      });
+      const data = await resp.json();
+      const bubbles = qsa('#modelChatMessages .chat-bubble');
+      const lastBubble = bubbles[bubbles.length - 1];
+      if (lastBubble && lastBubble.textContent === 'Estoy revisando el modelo...') lastBubble.remove();
+      const assistantText = data.assistant_message || data.error || 'No pude completar la instruccion.';
+      if (data.ui_actions) applyChatUiActions(data.ui_actions);
+      if (data.response_type === 'answer' || data.response_type === 'ui_action') {
+        appendChatMessage(assistantText, 'app');
+        setModelMessage(assistantText, 'info');
+        return;
+      }
+      if (data.response_type === 'clarification') {
+        appendChatMessage(assistantText, 'app');
+        setModelMessage(assistantText, 'warning');
+        return;
+      }
+      if (!resp.ok || !data.ok) {
+        appendChatMessage(assistantText, 'error');
+        setModelMessage(assistantText, 'error');
+        return;
+      }
+      pendingChatPayload = data.adjusted_payload;
+      pendingChatData = data;
+      appendChatMessage(assistantText || data.proposal?.explanation || 'Propuesta lista para revisar.', 'app');
+      renderChatProposal(data);
+      setModelMessage('Propuesta calculada. Revise el impacto y aplique el ajuste si esta conforme.', 'info');
+    } catch (e) {
+      appendChatMessage(String(e.message || e), 'error');
+      setModelMessage(String(e.message || e), 'error');
+    }
+  }
+
+  function normalizeChatCommand(text) {
+    return String(text || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim();
+  }
+
+  function isChatApplyCommand(text) {
+    const value = normalizeChatCommand(text);
+    return ['aplica', 'aplicalo', 'aplicar', 'dale', 'ok', 'confirmo', 'confirmar', 'si', 'proceda', 'procede'].includes(value)
+      || value.startsWith('aplica ')
+      || value.startsWith('confirmo ');
+  }
+
+  function isChatDiscardCommand(text) {
+    const value = normalizeChatCommand(text);
+    return ['descarta', 'descartar', 'cancelar', 'cancela', 'no', 'olvidalo'].includes(value);
+  }
+
+  async function onModelChatApply() {
+    if (!pendingChatData) return;
+    if (pendingChatData.response_type === 'workflow') {
+      await executeChatWorkflow(pendingChatData.workflow || pendingChatData.proposal || {});
+      clearPendingChatProposal();
+      return;
+    }
+    if (!pendingChatPayload) return;
+    markPendingChatCommandApplied(pendingChatPayload);
+    const payloadToApply = pendingChatPayload;
+    const proposalKind = pendingChatData?.proposal?.kind || '';
+    const events = pendingChatData?.new_events || pendingChatData?.proposal?.events || [];
+    const journalEntries = pendingChatData?.new_journal_entries || [];
+    const removedEvents = pendingChatData?.removed_events || [];
+    const removedJournalEntries = pendingChatData?.removed_journal_entries || [];
+    applyModelPayload(payloadToApply, { draftId: currentDraftId });
+    if (proposalKind === 'journal_entry' || proposalKind === 'voucher_reversal') {
+      appendChatMessage(`${journalEntries.length || 1} comprobante(s) aplicado(s) al modelo.`, 'app');
+    } else if (proposalKind === 'compound_events') {
+      appendChatMessage(`Comprobante compuesto aplicado al modelo (${events.length} evento(s) tecnicos).`, 'app');
+    } else if (proposalKind === 'assumption_change') {
+      appendChatMessage('Supuesto aplicado al modelo.', 'app');
+    } else if (events.length) {
+      appendChatMessage(`${events.length} evento(s) aplicado(s) al listado de eventos.`, 'app');
+    } else if (removedEvents.length || removedJournalEntries.length) {
+      appendChatMessage(`${removedEvents.length + removedJournalEntries.length} registro(s) removido(s) del modelo.`, 'app');
+    } else {
+      appendChatMessage('No habia ajuste que aplicar.', 'app');
+    }
+    setGenerateEnabled(false);
+    await onModelPreview();
+  }
+
+  function markPendingChatCommandApplied(targetPayload = null) {
+    const audit = pendingChatData?.audit || {};
+    if (!audit.command_id) return;
+    const appliedAt = new Date().toISOString();
+    const target = targetPayload || buildModelPayload();
+    const chat = { ...(target.chat || {}) };
+    const commands = Array.isArray(chat.commands) ? chat.commands.map(item => ({ ...item })) : [];
+    let found = false;
+    commands.forEach(command => {
+      if (command.command_id === audit.command_id) {
+        command.status = 'applied';
+        command.applied_at = appliedAt;
+        found = true;
+      }
+    });
+    if (!found) {
+      commands.push({
+        command_id: audit.command_id,
+        message: audit.message || '',
+        intent: pendingChatData?.intent || '',
+        source: audit.source || 'chat_financiero',
+        created_at: audit.created_at || appliedAt,
+        applied_at: appliedAt,
+        status: 'applied',
+      });
+    }
+    chat.commands = commands;
+    target.chat = chat;
+    modelChatCommands = commands.map(item => ({ ...item }));
+  }
+
+  function onModelChatDiscard() {
+    clearPendingChatProposal();
+    appendChatMessage('Propuesta descartada.', 'app');
+  }
+
+  async function onUndoLastChatAdjustment() {
+    const hasChatEvents = parseModelEvents().some(ev => ev.source === 'chat_financiero' && ev.instruction_id);
+    if (!hasChatEvents) {
+      setModelMessage('No hay ajustes aplicados por chat para deshacer.', 'warning');
+      appendChatMessage('No hay ajustes aplicados por chat para deshacer.', 'error');
+      return;
+    }
+    appendChatMessage('deshacer ultimo ajuste', 'user');
+    await requestModelChatProposal('deshacer último ajuste');
+  }
+
   qsa('.mode-tab').forEach((btn) => {
     btn.addEventListener('click', () => {
       const target = btn.getAttribute('data-mode-target');
@@ -667,6 +2169,60 @@
     });
   });
 
+  qsa('#modelMode input, #modelMode select, #modelMode textarea').forEach((el) => {
+    if (!el.id || !el.id.startsWith('m_')) return;
+    el.addEventListener('input', () => {
+      clearPendingChatProposal();
+      if (el.id === 'm_costo_pct' || el.id === 'm_var_costo') modelMonthlyOverrides = [];
+      if (el.id === 'm_eventos') renderAdjustmentHistory();
+      setGenerateEnabled(false);
+    });
+    el.addEventListener('change', () => {
+      clearPendingChatProposal();
+      if (el.id === 'm_eventos') renderAdjustmentHistory();
+      setGenerateEnabled(false);
+    });
+  });
+
+  qs('#btnModeloER')?.addEventListener('click', onModelErPreview);
+  qs('#btnModeloESF')?.addEventListener('click', onModelEsfPreview);
   qs('#btnModeloPreview')?.addEventListener('click', onModelPreview);
   qs('#btnModeloGenerar')?.addEventListener('click', onModelGenerate);
+  qs('#btnSaveDraft')?.addEventListener('click', saveCurrentDraft);
+  qs('#btnOpenSavedModels')?.addEventListener('click', showSavedModelsPanel);
+  qs('#btnSaveFinal')?.addEventListener('click', saveCurrentFinal);
+  qs('#btnRefreshSavedModels')?.addEventListener('click', refreshSavedModels);
+  qs('#savedModelsFilter')?.addEventListener('input', renderSavedModels);
+  qs('#btnExtractClientDocs')?.addEventListener('click', onExtractClientDocs);
+  qs('#modelAccountSelect')?.addEventListener('change', renderSelectedAccountMovement);
+  qs('#modelVoucherTypeFilter')?.addEventListener('change', () => {
+    if (lastModelPreviewData) renderAccounting(lastModelPreviewData);
+  });
+  qs('#modelVoucherAccountFilter')?.addEventListener('change', () => {
+    if (lastModelPreviewData) renderAccounting(lastModelPreviewData);
+  });
+  qsa('.model-block-select').forEach(select => {
+    select.addEventListener('change', () => {
+      selectedModelBlockId = select.value;
+      if (lastModelPreviewData) renderModelData(lastModelPreviewData, { includeEsf: lastModelRenderedEsf });
+    });
+  });
+  qs('#modelChatScopeSelect')?.addEventListener('change', clearPendingChatProposal);
+  qs('#btnModelChatSend')?.addEventListener('click', onModelChatSend);
+  qs('#btnUndoLastChatAdjustment')?.addEventListener('click', onUndoLastChatAdjustment);
+  qsa('.chat-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const input = qs('#modelChatInput');
+      if (!input) return;
+      input.value = chip.getAttribute('data-chat-message') || '';
+      input.focus();
+    });
+  });
+  qs('#modelChatInput')?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      onModelChatSend();
+    }
+  });
+  renderAdjustmentHistory();
 })();

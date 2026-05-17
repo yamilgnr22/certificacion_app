@@ -22,6 +22,22 @@
       <div id="modelMode" class="mode-panel">
         <section class="card">
           <h2>Datos del cliente</h2>
+          <div class="doc-extract-panel">
+            <div class="doc-extract-header">
+              <div>
+                <h3>Extraer datos desde cédula y matrícula</h3>
+                <p class="workbench-subtitle">Adjunte los soportes y revise la propuesta antes de cargarla al formulario.</p>
+              </div>
+              <button id="btnExtractClientDocs" class="btn primary" type="button">Extraer datos</button>
+            </div>
+            <div class="doc-extract-grid">
+              <div class="field"><label>Cédula - Frente</label><input id="m_doc_cedula_front" type="file" accept=".png,.jpg,.jpeg,.bmp,.tif,.tiff,.pdf"></div>
+              <div class="field"><label>Cédula - Reverso</label><input id="m_doc_cedula_back" type="file" accept=".png,.jpg,.jpeg,.bmp,.tif,.tiff,.pdf"></div>
+              <div class="field"><label>Matrícula</label><input id="m_doc_matricula" type="file" accept=".png,.jpg,.jpeg,.bmp,.tif,.tiff,.pdf"></div>
+            </div>
+            <div id="modelDocExtractMessage" class="messages"></div>
+            <div id="modelDocExtractResult" class="doc-extract-result hidden"></div>
+          </div>
           <div class="grid-3">
             <div class="field"><label>Nombre completo</label><input id="m_nombre_completo" type="text" value="Kitiel Rosibel Montiel González"></div>
             <div class="field"><label>Cédula</label><input id="m_cedula" type="text" value="361-060491-0000X"></div>
@@ -49,92 +65,208 @@
         </section>
 
         <section class="card">
-          <h2>Periodo, ingresos y costos</h2>
-          <div class="grid-4">
+          <h2>Periodo financiero</h2>
+          <div class="grid-4 compact-grid">
+            <div class="field"><label>Mes inicio</label><input id="m_mes_inicio" type="month" value="2025-11"></div>
             <div class="field"><label>Mes final</label><input id="m_mes_final" type="month" value="2026-04"></div>
-            <div class="field"><label>Cantidad de meses</label><input id="m_cantidad_meses" type="number" min="1" max="36" value="6"></div>
             <div class="field"><label>Tasa de cambio</label><input id="m_tasa_cambio" type="number" step="0.0001" value="36.6243"></div>
             <div class="field"><label>Semilla</label><input id="m_semilla" type="text" value="kitiel-2026-04"></div>
-            <div class="field"><label>Ingresos base USD</label><input id="m_ingresos_base" type="number" step="0.01" value="108000"></div>
-            <div class="field"><label>Variabilidad ingresos %</label><input id="m_var_ingresos" type="number" step="0.1" value="15"></div>
-            <div class="field"><label>Costo base %</label><input id="m_costo_pct" type="number" step="0.1" value="70"></div>
-            <div class="field"><label>Variabilidad costo +/- %</label><input id="m_var_costo" type="number" step="0.1" value="5"></div>
-            <div class="field"><label>Ventas contado %</label><input id="m_contado_pct" type="number" step="0.1" value="85"></div>
-            <div class="field"><label>Compras base USD</label><input id="m_compras_base" type="number" step="0.01" value="120000"></div>
-            <div class="field"><label>Variabilidad compras %</label><input id="m_var_compras" type="number" step="0.1" value="10"></div>
-            <div class="field"><label>Interés mensual créditos %</label><input id="m_interes_creditos" type="number" step="0.1" value="0"></div>
           </div>
         </section>
 
-        <section class="card">
-          <h2>Gastos operativos mensuales en USD</h2>
-          <div class="grid-4">
-            <div class="field"><label>Sueldos y salarios</label><input id="m_g_sueldos" type="number" value="2700"></div>
-            <div class="field"><label>Servicios públicos</label><input id="m_g_servicios" type="number" value="600"></div>
-            <div class="field"><label>Alcaldía y DGI</label><input id="m_g_alcaldia" type="number" value="50"></div>
-            <div class="field"><label>Combustible</label><input id="m_g_combustible" type="number" value="500"></div>
-            <div class="field"><label>Publicidad</label><input id="m_g_publicidad" type="number" value="1500"></div>
-            <div class="field"><label>Mantenimientos</label><input id="m_g_mantenimientos" type="number" value="0"></div>
-            <div class="field"><label>Renta</label><input id="m_g_renta" type="number" value="440"></div>
-            <div class="field"><label>Seguros</label><input id="m_g_seguros" type="number" value="0"></div>
-            <div class="field"><label>Otros gastos</label><input id="m_g_otros" type="number" value="350"></div>
+        <section id="modelPreviewCard" class="card hidden">
+          <h2>Resumen del modelo</h2>
+          <div class="account-toolbar model-block-toolbar hidden">
+            <label for="modelBlockSelectSummary">Bloque</label>
+            <select id="modelBlockSelectSummary" class="model-block-select"></select>
+          </div>
+          <div id="modelSummary" class="model-summary"></div>
+        </section>
+
+        <section id="modelChatCard" class="card model-chat-card">
+          <div class="workbench-header">
+            <div>
+              <h2>Asistente contable</h2>
+              <p class="workbench-subtitle">Escriba lo que necesita: consultar saldos, filtrar el libro diario, reversar comprobantes, guardar o generar documentos.</p>
+            </div>
+          </div>
+          <div class="account-toolbar chat-scope-toolbar">
+            <label for="modelChatScopeSelect">Alcance</label>
+            <select id="modelChatScopeSelect">
+              <option value="block">Bloque seleccionado</option>
+              <option value="global">Modelo completo</option>
+            </select>
+          </div>
+          <div id="modelChatMessages" class="chat-thread" aria-live="polite"></div>
+          <div class="chat-quick-actions" aria-label="Acciones rapidas del asistente">
+            <button class="chat-chip" type="button" data-chat-message="Explicame de donde sale el saldo de la cuenta seleccionada">Explicar saldo</button>
+            <button class="chat-chip" type="button" data-chat-message="Muestrame el mayor de la cuenta seleccionada">Ver mayor</button>
+            <button class="chat-chip" type="button" data-chat-message="Reversa el comprobante ">Reversar comprobante</button>
+            <button class="chat-chip" type="button" data-chat-message="Guarda este borrador">Guardar borrador</button>
+            <button class="chat-chip" type="button" data-chat-message="Genera el documento">Generar documento</button>
+          </div>
+          <div class="chat-compose">
+            <textarea id="modelChatInput" rows="2" spellcheck="false" placeholder="Ej: traslada resultados del ejercicio 2025 a resultados acumulados en enero 2026"></textarea>
+            <button id="btnModelChatSend" class="btn primary" type="button">Enviar</button>
+          </div>
+          <div id="modelChatProposal" class="chat-proposal hidden"></div>
+          <div class="chat-history-panel">
+            <div class="chat-history-header">
+              <h3>Historial de ajustes</h3>
+              <button id="btnUndoLastChatAdjustment" class="btn" type="button">Deshacer último ajuste</button>
+            </div>
+            <div id="modelChatHistory" class="chat-history empty-state">Sin ajustes aplicados por chat.</div>
           </div>
         </section>
 
-        <section class="card">
-          <h2>Saldos iniciales en córdobas</h2>
-          <div class="grid-4">
-            <div class="field"><label>Efectivo</label><input id="m_b_cash" type="number" value="410193"></div>
-            <div class="field"><label>Cuentas por cobrar</label><input id="m_b_ar" type="number" value="62261"></div>
-            <div class="field"><label>Inventario</label><input id="m_b_inventory" type="number" value="5310538"></div>
-            <div class="field"><label>Bienes inmuebles</label><input id="m_b_real_estate" type="number" value="0"></div>
-            <div class="field"><label>Mobiliario y equipos</label><input id="m_b_equipment" type="number" value="549366"></div>
-            <div class="field"><label>Vehículos</label><input id="m_b_vehicles" type="number" value="0"></div>
-            <div class="field"><label>Depreciación acumulada</label><input id="m_b_accum_dep" type="number" value="-68676"></div>
-            <div class="field"><label>Tarjetas de crédito</label><input id="m_b_cards" type="number" value="183122"></div>
-            <div class="field"><label>Proveedores</label><input id="m_b_suppliers" type="number" value="0"></div>
-            <div class="field"><label>Impuestos por pagar</label><input id="m_b_taxes" type="number" value="0"></div>
-            <div class="field"><label>Gastos acumulados</label><input id="m_b_accrued" type="number" value="0"></div>
-            <div class="field"><label>Créditos personales</label><input id="m_b_personal" type="number" value="47612"></div>
-            <div class="field"><label>Créditos prendarios</label><input id="m_b_pledge" type="number" value="0"></div>
-            <div class="field"><label>Créditos comerciales</label><input id="m_b_commercial" type="number" value="0"></div>
-            <div class="field"><label>Créditos hipotecarios</label><input id="m_b_mortgage" type="number" value="0"></div>
-            <div class="field"><label>Resultados acumulados</label><input id="m_b_retained" type="number" value="3424750"></div>
+        <section class="card model-workbench" id="erWorkbench">
+          <div class="workbench-header">
+            <div>
+              <h2>Estado de Resultados</h2>
+              <p class="workbench-subtitle">Datos base arriba, resultado completo abajo.</p>
+            </div>
+            <button id="btnModeloER" class="btn primary" type="button">Generar ER</button>
+          </div>
+          <div class="workbench-grid">
+            <div class="workbench-inputs">
+              <h3>Periodo, ingresos y costos</h3>
+              <div class="grid-4 compact-grid">
+                <div class="field"><label>Ingresos base USD</label><input id="m_ingresos_base" type="number" step="0.01" value="108000"></div>
+                <div class="field"><label>Variabilidad ingresos %</label><input id="m_var_ingresos" type="number" step="0.1" value="15"></div>
+                <div class="field"><label>Costo base %</label><input id="m_costo_pct" type="number" step="0.1" value="70"></div>
+                <div class="field"><label>Variabilidad costo +/- %</label><input id="m_var_costo" type="number" step="0.1" value="5"></div>
+                <div class="field"><label>Ventas contado %</label><input id="m_contado_pct" type="number" step="0.1" value="85"></div>
+                <div class="field"><label>Compras base USD</label><input id="m_compras_base" type="number" step="0.01" value="120000"></div>
+                <div class="field"><label>Variabilidad compras %</label><input id="m_var_compras" type="number" step="0.1" value="10"></div>
+                <div class="field"><label>Interés mensual créditos %</label><input id="m_interes_creditos" type="number" step="0.1" value="0"></div>
+              </div>
+
+              <h3>Gastos operativos mensuales en USD</h3>
+              <div class="grid-4 compact-grid">
+                <div class="field"><label>Sueldos y salarios</label><input id="m_g_sueldos" type="number" value="2700"></div>
+                <div class="field"><label>Servicios públicos</label><input id="m_g_servicios" type="number" value="600"></div>
+                <div class="field"><label>Alcaldía y DGI</label><input id="m_g_alcaldia" type="number" value="50"></div>
+                <div class="field"><label>Combustible</label><input id="m_g_combustible" type="number" value="500"></div>
+                <div class="field"><label>Publicidad</label><input id="m_g_publicidad" type="number" value="1500"></div>
+                <div class="field"><label>Mantenimientos</label><input id="m_g_mantenimientos" type="number" value="0"></div>
+                <div class="field"><label>Renta</label><input id="m_g_renta" type="number" value="440"></div>
+                <div class="field"><label>Seguros</label><input id="m_g_seguros" type="number" value="0"></div>
+                <div class="field"><label>Otros gastos</label><input id="m_g_otros" type="number" value="350"></div>
+              </div>
+            </div>
+            <div class="workbench-output">
+              <h3>ER calculado</h3>
+              <div class="account-toolbar model-block-toolbar hidden">
+                <label for="modelBlockSelectEr">Bloque</label>
+                <select id="modelBlockSelectEr" class="model-block-select"></select>
+              </div>
+              <div id="modelErPreview" class="table-preview empty-state">Pulse Generar ER para calcular.</div>
+            </div>
           </div>
         </section>
 
-        <section class="card">
-          <h2>Ajustes puntuales por mes</h2>
-          <div class="field">
-            <label>Eventos</label>
-            <textarea id="m_eventos" rows="5" spellcheck="false">2026-02,owner_withdrawal,600000,nio
+        <section class="card model-workbench" id="esfWorkbench">
+          <div class="workbench-header">
+            <div>
+              <h2>Estado de Situación Financiera</h2>
+              <p class="workbench-subtitle">Saldos y ajustes arriba, balance completo debajo.</p>
+            </div>
+            <button id="btnModeloESF" class="btn primary" type="button">Generar ESF</button>
+          </div>
+          <div class="workbench-grid esf-stack">
+            <div class="workbench-inputs">
+              <h3>Saldos iniciales en córdobas</h3>
+              <div class="grid-4 compact-grid">
+                <div class="field"><label>Efectivo</label><input id="m_b_cash" type="number" value="410193"></div>
+                <div class="field"><label>Cuentas por cobrar</label><input id="m_b_ar" type="number" value="62261"></div>
+                <div class="field"><label>Inventario</label><input id="m_b_inventory" type="number" value="5310538"></div>
+                <div class="field"><label>Bienes inmuebles</label><input id="m_b_real_estate" type="number" value="0"></div>
+                <div class="field"><label>Mobiliario y equipos</label><input id="m_b_equipment" type="number" value="549366"></div>
+                <div class="field"><label>Vehículos</label><input id="m_b_vehicles" type="number" value="0"></div>
+                <div class="field"><label>Depreciación acumulada</label><input id="m_b_accum_dep" type="number" value="-68676"></div>
+                <div class="field"><label>Tarjetas de crédito</label><input id="m_b_cards" type="number" value="183122"></div>
+                <div class="field"><label>Proveedores</label><input id="m_b_suppliers" type="number" value="0"></div>
+                <div class="field"><label>Impuestos por pagar</label><input id="m_b_taxes" type="number" value="0"></div>
+                <div class="field"><label>Gastos acumulados</label><input id="m_b_accrued" type="number" value="0"></div>
+                <div class="field"><label>Créditos personales</label><input id="m_b_personal" type="number" value="47612"></div>
+                <div class="field"><label>Créditos prendarios</label><input id="m_b_pledge" type="number" value="0"></div>
+                <div class="field"><label>Créditos comerciales</label><input id="m_b_commercial" type="number" value="0"></div>
+                <div class="field"><label>Créditos hipotecarios</label><input id="m_b_mortgage" type="number" value="0"></div>
+                <div class="field"><label>Resultados acumulados</label><input id="m_b_retained" type="number" value="3424750"></div>
+              </div>
+
+              <h3>Ajustes puntuales por mes</h3>
+              <div class="field">
+                <label>Eventos</label>
+                <textarea id="m_eventos" rows="5" spellcheck="false">2026-02,owner_withdrawal,600000,nio
 2025-12,asset_vehicle,567677,nio</textarea>
-            <small class="hint">Formato por línea: mes, cuenta, monto, moneda. Ejemplos de cuenta: owner_withdrawal, capital_contribution, asset_equipment, asset_vehicle, loan_pledge_new, loan_pledge_payment.</small>
+                <small class="hint">Formato por línea: mes, cuenta, monto, moneda, origen opcional. Ejemplos de cuenta: owner_withdrawal, capital_contribution, asset_equipment, asset_vehicle, loan_pledge_new, loan_pledge_payment.</small>
+              </div>
+            </div>
+            <div class="workbench-output">
+              <h3>ESF calculado</h3>
+              <div class="account-toolbar model-block-toolbar hidden">
+                <label for="modelBlockSelectEsf">Bloque</label>
+                <select id="modelBlockSelectEsf" class="model-block-select"></select>
+              </div>
+              <div id="modelEsfPreview" class="table-preview empty-state">Pulse Generar ESF para calcular.</div>
+            </div>
+            <div class="workbench-output">
+              <h3>Movimiento por cuenta</h3>
+              <div class="account-toolbar">
+                <label for="modelAccountSelect">Cuenta</label>
+                <select id="modelAccountSelect"></select>
+              </div>
+              <div id="modelAccountMovementPreview" class="table-preview empty-state">Pulse Generar ESF para revisar movimientos.</div>
+            </div>
+            <div id="accountingWorkbench" class="workbench-output accounting-workbench">
+              <h3>Libro diario</h3>
+              <div class="account-toolbar">
+                <label for="modelVoucherTypeFilter">Tipo</label>
+                <select id="modelVoucherTypeFilter"></select>
+                <label for="modelVoucherAccountFilter">Cuenta</label>
+                <select id="modelVoucherAccountFilter"></select>
+              </div>
+              <div id="modelVoucherPreview" class="table-preview empty-state">Pulse Previsualizar todo para revisar comprobantes.</div>
+              <h3>Mayor por cuenta</h3>
+              <div id="modelLedgerPreview" class="table-preview empty-state">Seleccione una cuenta para ver el mayor.</div>
+              <h3>Trazabilidad</h3>
+              <div id="modelTracePreview" class="trace-preview empty-state">Seleccione una cuenta para ver los comprobantes que explican sus saldos.</div>
+            </div>
           </div>
         </section>
 
         <section class="card">
           <div class="actions center">
-            <button id="btnModeloPreview" class="btn primary xl" type="button">Previsualizar modelo</button>
+            <button id="btnSaveDraft" class="btn" type="button">Guardar borrador</button>
+            <button id="btnOpenSavedModels" class="btn" type="button">Cargar</button>
+            <button id="btnModeloPreview" class="btn primary xl" type="button">Previsualizar todo</button>
             <button id="btnModeloGenerar" class="btn xl" type="button" disabled>Generar documento</button>
+            <button id="btnSaveFinal" class="btn" type="button">Guardar final</button>
           </div>
           <div id="modelMessages" class="messages"></div>
-        </section>
-
-        <section id="modelPreviewCard" class="card hidden">
-          <h2>Vista previa</h2>
-          <div id="modelSummary" class="model-summary"></div>
-          <div class="preview-tables">
-            <div>
-              <h3>Estado de Resultados</h3>
-              <div id="modelErPreview" class="table-preview"></div>
+          <div id="savedModelsPanel" class="saved-models hidden">
+            <div class="saved-models-header">
+              <h3>Modelos guardados</h3>
+              <button id="btnRefreshSavedModels" class="btn" type="button">Actualizar</button>
             </div>
-            <div>
-              <h3>Estado de Situación Financiera</h3>
-              <div id="modelEsfPreview" class="table-preview"></div>
+            <div class="field">
+              <label>Filtro</label>
+              <input id="savedModelsFilter" type="text" placeholder="Cliente, cedula, banco o periodo">
+            </div>
+            <div class="saved-models-grid">
+              <div>
+                <h3>Borradores</h3>
+                <div id="draftsList" class="saved-list empty-state">Sin borradores.</div>
+              </div>
+              <div>
+                <h3>Historico final</h3>
+                <div id="finalsList" class="saved-list empty-state">Sin historicos.</div>
+              </div>
             </div>
           </div>
         </section>
+
       </div>
 
       <div id="excelMode" class="mode-panel hidden">

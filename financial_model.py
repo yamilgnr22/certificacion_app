@@ -7,6 +7,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 import pandas as pd
 
+from accounting_model import build_accounting
 from validators import validate_er, validate_esf
 
 
@@ -58,17 +59,48 @@ DEFAULT_BALANCES_NIO: Dict[str, float] = {
     "retained_earnings": 3_424_750.0,
 }
 
+LEDGER_ACCOUNTS: Dict[str, Dict[str, str]] = {
+    "cash": {"label": "Efectivo y Equivalentes de Efectivo", "kind": "asset", "state": "cash"},
+    "accounts_receivable": {"label": "Cuentas por Cobrar Clientes", "kind": "asset", "state": "accounts_receivable"},
+    "inventory": {"label": "Inventarios", "kind": "asset", "state": "inventory"},
+    "ppe_real_estate": {"label": "Bienes Inmuebles", "kind": "asset", "state": "ppe_real_estate"},
+    "ppe_equipment": {"label": "Mobiliario y Equipos", "kind": "asset", "state": "ppe_equipment"},
+    "ppe_vehicles": {"label": "Vehiculos", "kind": "asset", "state": "ppe_vehicles"},
+    "accum_depreciation": {"label": "Depreciacion Acumulada", "kind": "contra_asset", "state": "accum_depreciation"},
+    "credit_cards": {"label": "Tarjetas de Credito", "kind": "liability", "state": "credit_cards"},
+    "suppliers": {"label": "Proveedores", "kind": "liability", "state": "suppliers"},
+    "taxes_payable": {"label": "Impuestos por Pagar", "kind": "liability", "state": "taxes_payable"},
+    "accrued_expenses": {"label": "Gastos Acumulados por pagar", "kind": "liability", "state": "accrued_expenses"},
+    "loans_mortgage": {"label": "Creditos Hipotecarios", "kind": "liability", "state": "loans_mortgage"},
+    "loans_consumo": {"label": "Creditos Consumo", "kind": "liability", "state": "loans_consumo"},
+    "loans_personal": {"label": "Creditos Personales", "kind": "liability", "state": "loans_personal"},
+    "loans_pledge": {"label": "Creditos Prendarios", "kind": "liability", "state": "loans_pledge"},
+    "loans_commercial": {"label": "Creditos Comerciales", "kind": "liability", "state": "loans_commercial"},
+    "capital": {"label": "Capital", "kind": "equity", "state": ""},
+    "retained_earnings": {"label": "Resultados Acumulados", "kind": "equity", "state": "retained_earnings"},
+    "current_earnings": {"label": "Resultados del Ejercicio", "kind": "equity", "state": "result_accum"},
+}
+
 
 @dataclass
 class FinancialModelResult:
     df_certificacion: pd.DataFrame
     df_er: pd.DataFrame
     df_movimientos: pd.DataFrame
+    df_flujo_caja: pd.DataFrame
+    df_movimiento_cuentas: pd.DataFrame
     df_esf_mensual: pd.DataFrame
     df_datos: pd.DataFrame
     validations: Dict[str, Any]
     summary: Dict[str, Any]
     metadata: Dict[str, Any]
+    accounting: Dict[str, Any]
+    statement_blocks: List[Dict[str, Any]]
+    df_er_full: pd.DataFrame
+    df_movimientos_full: pd.DataFrame
+    df_flujo_caja_full: pd.DataFrame
+    df_movimiento_cuentas_full: pd.DataFrame
+    df_esf_mensual_full: pd.DataFrame
 
 
 def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
@@ -81,6 +113,7 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
     movement_payload = dict(payload.get("movements") or {})
 
     months = _build_months(
+        start_month=str(period.get("start_month") or period.get("mes_inicio") or ""),
         end_month=str(period.get("end_month") or period.get("mes_final") or ""),
         count=_to_int(period.get("months") or period.get("cantidad_meses"), 6),
     )
@@ -92,6 +125,7 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
     income_variability = _pct(income.get("income_variability_pct") or income.get("variabilidad_ingresos_pct"), 15.0)
     cost_pct = _pct(income.get("cost_pct") or income.get("porcentaje_costo"), 70.0)
     cost_variability = _pct(income.get("cost_variability_pct") or income.get("variabilidad_costo_pct"), 5.0)
+    income_overrides = _index_income_overrides(income.get("monthly_overrides") or income.get("overrides") or [])
     cash_sales_pct = _pct(income.get("cash_sales_pct") or income.get("porcentaje_contado"), 85.0)
     credit_sales_pct = max(0.0, min(1.0, 1.0 - cash_sales_pct))
 
@@ -120,29 +154,44 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
             expenses_usd[normalized] = _to_float(value, expenses_usd[normalized])
 
     events = _index_events(movement_payload.get("events") or payload.get("events") or [], months, exchange_rate)
+    journal_entries = _index_journal_entries(movement_payload.get("journal_entries") or [], months, exchange_rate)
 
     revenue_factors: List[float] = []
     cost_rates: List[float] = []
     purchase_factors: List[float] = []
-    for _ in months:
+    for month in months:
+        month_override = income_overrides.get(_month_key(month), {})
+        month_cost_pct = _override_pct(month_override, "cost_pct", cost_pct)
+        month_cost_variability = _override_pct(month_override, "cost_variability_pct", cost_variability)
         revenue_factors.append(1.0 + rng.uniform(-income_variability, income_variability))
-        cost_rates.append(max(0.0, min(1.0, cost_pct + rng.uniform(-cost_variability, cost_variability))))
+        cost_rates.append(max(0.0, min(1.0, month_cost_pct + rng.uniform(-month_cost_variability, month_cost_variability))))
         purchase_factors.append(1.0 + rng.uniform(-purchase_variability, purchase_variability))
 
     monthly: List[Dict[str, float]] = []
     state = dict(balances)
     result_accum = 0.0
+    result_accum_adjustment = 0.0
+    opening_capital = _opening_capital(balances)
+    previous_capital = opening_capital
 
     for idx, month in enumerate(months):
         key = _month_key(month)
         month_events = events.get(key, {})
+        month_journal_entries = journal_entries.get(key, [])
 
+        beginning_state = dict(state)
+        beginning_result_accum = result_accum + result_accum_adjustment
+        capital_beginning = previous_capital
+        cash_beginning = state["cash"]
         revenue = _round(base_income_usd * exchange_rate * revenue_factors[idx])
         cash_sales = _round(revenue * cash_sales_pct)
         credit_sales = _round(revenue * credit_sales_pct)
         cogs = _round(revenue * cost_rates[idx])
         gross_profit = revenue - cogs
-        purchases = _round(purchase_base_usd * exchange_rate * purchase_factors[idx])
+        base_purchases = _round(purchase_base_usd * exchange_rate * purchase_factors[idx])
+        purchase_adjustment = _round(month_events.get("purchase_adjustment", 0.0))
+        purchases = _round(max(0.0, base_purchases + purchase_adjustment))
+        effective_purchase_adjustment = _round(purchases - base_purchases)
 
         additions_real_estate = month_events.get("asset_real_estate", 0.0)
         additions_equipment = month_events.get("asset_equipment", 0.0)
@@ -200,7 +249,10 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
 
         credit_card_new = month_events.get("credit_card_new", 0.0)
         credit_card_payment = month_events.get("credit_card_payment", state["credit_cards"] + credit_card_new)
-        supplier_new = month_events.get("supplier_new", 0.0)
+        supplier_financing_requested = _round(max(0.0, month_events.get("supplier_financing", 0.0)))
+        supplier_financing = _round(min(supplier_financing_requested, purchases))
+        cash_purchases = _round(max(0.0, purchases - supplier_financing))
+        supplier_new = month_events.get("supplier_new", 0.0) + supplier_financing
         supplier_payment = month_events.get("supplier_payment", 0.0)
         taxes_new = month_events.get("taxes_new", 0.0)
         taxes_payment = month_events.get("taxes_payment", 0.0)
@@ -223,21 +275,47 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
         asset_purchases = additions_real_estate + additions_equipment + additions_vehicles
         owner_withdrawal = month_events.get("owner_withdrawal", 0.0)
         capital_contribution = month_events.get("capital_contribution", 0.0)
+        retained_earnings_distribution = _round(max(0.0, month_events.get("retained_earnings_distribution", 0.0)))
+        capital_reclassification = _round(month_events.get("capital_reclassification", 0.0))
         sale_ppe = (
             month_events.get("asset_real_estate_sale", 0.0)
             + month_events.get("asset_equipment_sale", 0.0)
             + month_events.get("asset_vehicle_sale", 0.0)
         )
+        state["retained_earnings"] = _round(
+            state["retained_earnings"]
+            + capital_reclassification
+            - retained_earnings_distribution
+        )
+        retained_earnings_increase = capital_reclassification if capital_reclassification > 0 else 0.0
+        retained_earnings_decrease = (
+            retained_earnings_distribution
+            + (abs(capital_reclassification) if capital_reclassification < 0 else 0.0)
+        )
+
+        cash_inflows = cash_sales + collections + new_credit_cash + sale_ppe + capital_contribution
+        cash_outflows = (
+            cash_operating_expenses
+            + cash_purchases
+            + credit_card_payment
+            + supplier_payment
+            + taxes_payment
+            + accrued_payment
+            + principal_payments
+            + asset_purchases
+            + owner_withdrawal
+            + retained_earnings_distribution
+        )
 
         state["cash"] = _round(
-            state["cash"]
+            cash_beginning
             + cash_sales
             + collections
             + new_credit_cash
             + sale_ppe
             + capital_contribution
             - cash_operating_expenses
-            - purchases
+            - cash_purchases
             - credit_card_payment
             - supplier_payment
             - taxes_payment
@@ -245,7 +323,19 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
             - principal_payments
             - asset_purchases
             - owner_withdrawal
+            - retained_earnings_distribution
         )
+
+        journal_effects = _apply_journal_entries_to_state(state, month_journal_entries)
+        result_accum_adjustment += journal_effects.get("result_accum_delta", 0.0)
+        journal_cash_increase = journal_effects.get("cash_journal_increase", 0.0)
+        journal_cash_decrease = journal_effects.get("cash_journal_decrease", 0.0)
+        if journal_cash_increase:
+            cash_inflows = _round(cash_inflows + journal_cash_increase)
+        if journal_cash_decrease:
+            cash_outflows = _round(cash_outflows + journal_cash_decrease)
+        current_earnings_journal_increase = journal_effects.get("result_accum_journal_increase", 0.0)
+        current_earnings_journal_decrease = journal_effects.get("result_accum_journal_decrease", 0.0)
 
         current_assets = state["cash"] + state["accounts_receivable"] + state["inventory"]
         non_current_assets = (
@@ -264,11 +354,15 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
             + state["loans_commercial"]
         )
         total_liabilities = current_liabilities + non_current_liabilities
-        retained = balances["retained_earnings"]
-        capital = total_assets - total_liabilities - retained - result_accum
-        total_equity = capital + retained + result_accum
+        retained = state["retained_earnings"]
+        displayed_result_accum = result_accum + result_accum_adjustment
+        capital = total_assets - total_liabilities - retained - displayed_result_accum
+        capital_change = capital - capital_beginning
+        capital_increase = capital_change if capital_change > 0 else 0.0
+        capital_decrease = abs(capital_change) if capital_change < 0 else 0.0
+        total_equity = capital + retained + displayed_result_accum
 
-        monthly.append({
+        month_data = {
             "month": month,
             "revenue_factor": revenue_factors[idx],
             "cost_rate": cost_rates[idx],
@@ -281,10 +375,63 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
             "expenses": expenses_nio,
             "total_expenses": total_expenses,
             "net_income": net_income,
+            "base_purchases": base_purchases,
+            "purchase_adjustment": effective_purchase_adjustment,
             "purchases": purchases,
+            "supplier_financing": supplier_financing,
+            "cash_purchases": cash_purchases,
             "collections": collections,
             "depreciation": depreciation,
             "financial_expense": financial_expense,
+            "cash_beginning": cash_beginning,
+            "cash_inflows": cash_inflows,
+            "cash_outflows": cash_outflows,
+            "cash_operating_expenses": cash_operating_expenses,
+            "principal_payments": principal_payments,
+            "new_credit_cash": new_credit_cash,
+            "asset_purchases": asset_purchases,
+            "owner_withdrawal": owner_withdrawal,
+            "capital_contribution": capital_contribution,
+            "retained_earnings_distribution": retained_earnings_distribution,
+            "capital_reclassification": capital_reclassification,
+            "retained_earnings_increase": retained_earnings_increase,
+            "retained_earnings_decrease": retained_earnings_decrease,
+            "result_accum_journal_increase": current_earnings_journal_increase,
+            "result_accum_journal_decrease": current_earnings_journal_decrease,
+            "cash_journal_increase": journal_cash_increase,
+            "cash_journal_decrease": journal_cash_decrease,
+            "journal_entries": month_journal_entries,
+            "sale_ppe": sale_ppe,
+            "credit_card_payment": credit_card_payment,
+            "supplier_payment": supplier_payment,
+            "taxes_payment": taxes_payment,
+            "accrued_payment": accrued_payment,
+            "additions_real_estate": additions_real_estate,
+            "additions_equipment": additions_equipment,
+            "additions_vehicles": additions_vehicles,
+            "sale_real_estate": month_events.get("asset_real_estate_sale", 0.0),
+            "sale_equipment": month_events.get("asset_equipment_sale", 0.0),
+            "sale_vehicles": month_events.get("asset_vehicle_sale", 0.0),
+            "credit_card_new": credit_card_new,
+            "supplier_new": supplier_new,
+            "taxes_new": taxes_new,
+            "accrued_new": accrued_new,
+            "loan_mortgage_new": new_loans["loans_mortgage"],
+            "loan_consumo_new": new_loans["loans_consumo"],
+            "loan_personal_new": new_loans["loans_personal"],
+            "loan_pledge_new": new_loans["loans_pledge"],
+            "loan_commercial_new": new_loans["loans_commercial"],
+            "loan_mortgage_payment": loan_payments["loans_mortgage"],
+            "loan_consumo_payment": loan_payments["loans_consumo"],
+            "loan_personal_payment": loan_payments["loans_personal"],
+            "loan_pledge_payment": loan_payments["loans_pledge"],
+            "loan_commercial_payment": loan_payments["loans_commercial"],
+            "capital_beginning": capital_beginning,
+            "capital_increase": capital_increase,
+            "capital_decrease": capital_decrease,
+            "result_accum_beginning": beginning_result_accum,
+            "result_accum_increase": net_income if net_income > 0 else 0.0,
+            "result_accum_decrease": abs(net_income) if net_income < 0 else 0.0,
             "cash": state["cash"],
             "accounts_receivable": state["accounts_receivable"],
             "inventory": state["inventory"],
@@ -309,31 +456,212 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
             "total_liabilities": total_liabilities,
             "capital": capital,
             "retained_earnings": retained,
-            "result_accum": result_accum,
+            "result_accum": displayed_result_accum,
             "total_equity": total_equity,
             "total_liabilities_equity": total_liabilities + total_equity,
             "balance_check": total_assets - (total_liabilities + total_equity),
-        })
+        }
+        for effect_key, effect_value in journal_effects.items():
+            if effect_key != "result_accum_delta":
+                month_data[effect_key] = effect_value
+        for account_key, beginning_value in beginning_state.items():
+            month_data[f"{account_key}_beginning"] = beginning_value
+        monthly.append(month_data)
+        previous_capital = capital
 
-    df_er = _build_er_dataframe(monthly, months, base_income_usd, exchange_rate, cash_sales_pct)
-    df_mov = _build_mov_dataframe(monthly, months, balances)
-    df_esf = _build_esf_dataframe(monthly, months)
-    df_cert = _build_cert_dataframe(payload, months, df_er, seed)
+    full_df_er = _build_er_dataframe(monthly, months, base_income_usd, exchange_rate, cash_sales_pct)
+    full_df_mov = _build_mov_dataframe(monthly, months, balances)
+    full_df_cash = _build_cash_flow_dataframe(monthly, months)
+    full_df_account_mov = _build_account_movement_dataframe(monthly, months)
+    full_df_esf = _build_esf_dataframe(monthly, months)
+    accounting = build_accounting(payload, monthly, months, balances)
     df_datos = _build_datos_dataframe(payload)
 
-    v_er = validate_er(df_er, tolerance=1.0)
-    v_esf = validate_esf(df_esf, tolerance=1.0, mode="mensual")
+    v_er = validate_er(full_df_er, tolerance=1.0)
+    v_esf = validate_esf(full_df_esf, tolerance=1.0, mode="mensual")
     balance_errors = [
         {"month": _month_key(item["month"]), "difference": item["balance_check"]}
         for item in monthly
         if abs(item["balance_check"]) > 1.0
     ]
+    negative_cash = [
+        {"month": _month_key(item["month"]), "cash": _round(item["cash"])}
+        for item in monthly
+        if item["cash"] < 0
+    ]
     validations = {
         "er": v_er,
         "esf": v_esf,
         "balance": {"ok": not balance_errors, "errors": balance_errors},
+        "cash": {"ok": not negative_cash, "warnings": negative_cash},
     }
-    summary = {
+    full_summary = _build_summary(monthly, months, seed, v_er, v_esf, balance_errors, negative_cash)
+    period_blocks = _build_period_blocks(months)
+    statement_blocks = []
+    for block in period_blocks:
+        block_keys = set(block["months"])
+        block_monthly = [item for item in monthly if _month_key(item["month"]) in block_keys]
+        block_months = [m for m in months if _month_key(m) in block_keys]
+        block_balances = _block_opening_balances(block_monthly[0], balances)
+        block_df_er = _build_er_dataframe(block_monthly, block_months, base_income_usd, exchange_rate, cash_sales_pct)
+        block_df_mov = _build_mov_dataframe(block_monthly, block_months, block_balances)
+        block_df_cash = _build_cash_flow_dataframe(block_monthly, block_months)
+        block_df_account_mov = _build_account_movement_dataframe(block_monthly, block_months)
+        block_df_esf = _build_esf_dataframe(block_monthly, block_months)
+        block_df_cert = _build_cert_dataframe(payload, block_months, block_df_er, seed)
+        block_negative_cash = [
+            {"month": _month_key(item["month"]), "cash": _round(item["cash"])}
+            for item in block_monthly
+            if item["cash"] < 0
+        ]
+        block_balance_errors = [
+            {"month": _month_key(item["month"]), "difference": item["balance_check"]}
+            for item in block_monthly
+            if abs(item["balance_check"]) > 1.0
+        ]
+        statement_blocks.append({
+            "meta": block,
+            "df_certificacion": block_df_cert,
+            "df_er": block_df_er,
+            "df_movimientos": block_df_mov,
+            "df_flujo_caja": block_df_cash,
+            "df_movimiento_cuentas": block_df_account_mov,
+            "df_esf_mensual": block_df_esf,
+            "summary": _build_summary(
+                block_monthly,
+                block_months,
+                seed,
+                validate_er(block_df_er, tolerance=1.0),
+                validate_esf(block_df_esf, tolerance=1.0, mode="mensual"),
+                block_balance_errors,
+                block_negative_cash,
+            ),
+        })
+
+    latest_block = statement_blocks[0]
+    df_er = latest_block["df_er"]
+    df_mov = latest_block["df_movimientos"]
+    df_cash = latest_block["df_flujo_caja"]
+    df_account_mov = latest_block["df_movimiento_cuentas"]
+    df_esf = latest_block["df_esf_mensual"]
+    df_cert = latest_block["df_certificacion"]
+    summary = dict(latest_block["summary"])
+    summary["all_months"] = full_summary["months"]
+    metadata = {
+        "exchange_rate": exchange_rate,
+        "seed": seed,
+        "start_month": _month_key(months[0]),
+        "end_month": _month_key(months[-1]),
+        "full_summary": full_summary,
+        "period_blocks": period_blocks,
+        "income_variability_pct": income_variability * 100,
+        "cost_variability_pct": cost_variability * 100,
+        "income_monthly_overrides": income_overrides,
+        "revenue_factors": revenue_factors,
+        "cost_rates": cost_rates,
+        "purchase_factors": purchase_factors,
+    }
+    return FinancialModelResult(
+        df_cert,
+        df_er,
+        df_mov,
+        df_cash,
+        df_account_mov,
+        df_esf,
+        df_datos,
+        validations,
+        summary,
+        metadata,
+        accounting,
+        statement_blocks,
+        full_df_er,
+        full_df_mov,
+        full_df_cash,
+        full_df_account_mov,
+        full_df_esf,
+    )
+
+
+def result_to_json(result: FinancialModelResult) -> Dict[str, Any]:
+    blocks_preview = {}
+    for block in result.statement_blocks:
+        meta = block["meta"]
+        blocks_preview[meta["id"]] = {
+            "er": _df_preview(block["df_er"], max_rows=40),
+            "esf_mensual": _df_preview(block["df_esf_mensual"], max_rows=45),
+            "movimientos": _df_preview(block["df_movimientos"], max_rows=55),
+            "flujo_caja": _df_preview(block["df_flujo_caja"], max_rows=30),
+            "movimiento_cuentas": _df_preview(block["df_movimiento_cuentas"], max_rows=90),
+            "certificacion": _df_preview(block["df_certificacion"], max_rows=30),
+            "summary": _json_safe(block["summary"]),
+        }
+    return {
+        "ok": bool(
+            result.validations["er"].get("ok")
+            and result.validations["esf"].get("ok")
+            and result.validations["balance"].get("ok")
+        ),
+        "summary": _json_safe(result.summary),
+        "full_summary": _json_safe(result.metadata.get("full_summary") or result.summary),
+        "period_blocks": _json_safe(result.metadata.get("period_blocks") or []),
+        "validations": _json_safe(result.validations),
+        "accounting": _json_safe(result.accounting),
+        "preview": {
+            "er": _df_preview(result.df_er, max_rows=40),
+            "esf_mensual": _df_preview(result.df_esf_mensual, max_rows=45),
+            "movimientos": _df_preview(result.df_movimientos, max_rows=55),
+            "flujo_caja": _df_preview(result.df_flujo_caja, max_rows=30),
+            "movimiento_cuentas": _df_preview(result.df_movimiento_cuentas, max_rows=90),
+            "certificacion": _df_preview(result.df_certificacion, max_rows=30),
+            "blocks": blocks_preview,
+        },
+        "metadata": _json_safe(result.metadata),
+    }
+
+
+def _build_months(*, start_month: str = "", end_month: str, count: int) -> List[pd.Timestamp]:
+    if not end_month:
+        end = pd.Timestamp.today().to_period("M").to_timestamp(how="end")
+    else:
+        end = pd.to_datetime(end_month, errors="coerce")
+        if pd.isna(end):
+            raise ValueError("Mes final no valido")
+        end = pd.Timestamp(end).to_period("M").to_timestamp(how="end")
+
+    if start_month:
+        start = pd.to_datetime(start_month, errors="coerce")
+        if pd.isna(start):
+            raise ValueError("Mes inicio no valido")
+        start_period = pd.Timestamp(start).to_period("M")
+        end_period = end.to_period("M")
+        if start_period > end_period:
+            raise ValueError("Mes inicio no puede ser posterior al mes final")
+        period_count = (end_period.year - start_period.year) * 12 + (end_period.month - start_period.month) + 1
+        if period_count > 36:
+            raise ValueError("El rango no puede exceder 36 meses")
+        return [p.to_timestamp(how="end") for p in pd.period_range(start_period, end_period, freq="M")]
+
+    count = max(1, min(int(count or 1), 36))
+    start_period = end.to_period("M") - (count - 1)
+    return [p.to_timestamp(how="end") for p in pd.period_range(start_period, end.to_period("M"), freq="M")]
+
+
+def _default_seed(months: List[pd.Timestamp], payload: Mapping[str, Any]) -> str:
+    client = dict(payload.get("client") or {})
+    name = str(client.get("nombre_completo") or client.get("name") or "").strip().lower()
+    return f"{name or 'certificacion'}-{_month_key(months[-1])}-{len(months)}"
+
+
+def _build_summary(
+    monthly: List[Dict[str, Any]],
+    months: List[pd.Timestamp],
+    seed: str,
+    v_er: Mapping[str, Any],
+    v_esf: Mapping[str, Any],
+    balance_errors: List[Dict[str, Any]],
+    negative_cash: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    return {
         "seed": seed,
         "months": [_month_key(m) for m in months],
         "income_total": _round(sum(item["revenue"] for item in monthly)),
@@ -346,55 +674,73 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
         "er_ok": bool(v_er.get("ok")),
         "esf_ok": bool(v_esf.get("ok")),
         "balance_ok": not balance_errors,
+        "cash_ok": not negative_cash,
+        "negative_cash_months": negative_cash,
     }
-    metadata = {
-        "exchange_rate": exchange_rate,
-        "seed": seed,
-        "income_variability_pct": income_variability * 100,
-        "cost_variability_pct": cost_variability * 100,
-        "revenue_factors": revenue_factors,
-        "cost_rates": cost_rates,
-        "purchase_factors": purchase_factors,
-    }
-    return FinancialModelResult(df_cert, df_er, df_mov, df_esf, df_datos, validations, summary, metadata)
 
 
-def result_to_json(result: FinancialModelResult) -> Dict[str, Any]:
+def _build_period_blocks(months: List[pd.Timestamp]) -> List[Dict[str, Any]]:
+    if len(months) <= 12:
+        return [_period_block("full_range", months, is_latest=True)]
+
+    blocks: List[Dict[str, Any]] = []
+    years = sorted({m.year for m in months}, reverse=True)
+    for idx, year in enumerate(years):
+        year_months = [m for m in months if m.year == year]
+        blocks.append(_period_block(f"year_{year}", year_months, year=year, is_latest=(idx == 0)))
+    return blocks
+
+
+def _period_block(
+    block_id: str,
+    months: List[pd.Timestamp],
+    *,
+    year: Optional[int] = None,
+    is_latest: bool,
+) -> Dict[str, Any]:
     return {
-        "ok": bool(
-            result.validations["er"].get("ok")
-            and result.validations["esf"].get("ok")
-            and result.validations["balance"].get("ok")
-        ),
-        "summary": _json_safe(result.summary),
-        "validations": _json_safe(result.validations),
-        "preview": {
-            "er": _df_preview(result.df_er, max_rows=40),
-            "esf_mensual": _df_preview(result.df_esf_mensual, max_rows=45),
-            "movimientos": _df_preview(result.df_movimientos, max_rows=55),
-            "certificacion": _df_preview(result.df_certificacion, max_rows=30),
-        },
-        "metadata": _json_safe(result.metadata),
+        "id": block_id,
+        "label": _period_label(months[0], months[-1]),
+        "start_month": _month_key(months[0]),
+        "end_month": _month_key(months[-1]),
+        "months": [_month_key(m) for m in months],
+        "month_count": len(months),
+        "year": year,
+        "is_latest": is_latest,
     }
 
 
-def _build_months(*, end_month: str, count: int) -> List[pd.Timestamp]:
-    count = max(1, min(int(count or 1), 36))
-    if not end_month:
-        end = pd.Timestamp.today().to_period("M").to_timestamp(how="end")
-    else:
-        end = pd.to_datetime(end_month, errors="coerce")
-        if pd.isna(end):
-            raise ValueError("Mes final no valido")
-        end = pd.Timestamp(end).to_period("M").to_timestamp(how="end")
-    start_period = end.to_period("M") - (count - 1)
-    return [p.to_timestamp(how="end") for p in pd.period_range(start_period, end.to_period("M"), freq="M")]
+def _period_label(start: pd.Timestamp, end: pd.Timestamp) -> str:
+    if start.year == end.year:
+        if start.month == end.month:
+            return f"{_month_name(start.month)} {start.year}"
+        return f"{_month_name(start.month)}-{_month_name(end.month)} {start.year}"
+    return f"{_month_name(start.month)} {start.year}-{_month_name(end.month)} {end.year}"
 
 
-def _default_seed(months: List[pd.Timestamp], payload: Mapping[str, Any]) -> str:
-    client = dict(payload.get("client") or {})
-    name = str(client.get("nombre_completo") or client.get("name") or "").strip().lower()
-    return f"{name or 'certificacion'}-{_month_key(months[-1])}-{len(months)}"
+def _month_name(month: int) -> str:
+    names = {
+        1: "Enero",
+        2: "Febrero",
+        3: "Marzo",
+        4: "Abril",
+        5: "Mayo",
+        6: "Junio",
+        7: "Julio",
+        8: "Agosto",
+        9: "Septiembre",
+        10: "Octubre",
+        11: "Noviembre",
+        12: "Diciembre",
+    }
+    return names.get(int(month), str(month))
+
+
+def _block_opening_balances(first_month_data: Mapping[str, Any], default_balances: Mapping[str, float]) -> Dict[str, float]:
+    out: Dict[str, float] = {}
+    for key in DEFAULT_BALANCES_NIO:
+        out[key] = _round(first_month_data.get(f"{key}_beginning", default_balances.get(key, 0.0)))
+    return out
 
 
 def _build_er_dataframe(
@@ -475,6 +821,7 @@ def _build_mov_dataframe(
         row("Recuperacion de Cartera", "", "collections"),
         row("Egresos", "", "total_expenses"),
         row("Compras", "", "purchases"),
+        row("Compras financiadas por proveedores", "", "supplier_financing"),
         row("Costo de Venta", "", "cogs"),
         row("Cuentas por cobrar", balances.get("accounts_receivable", 0.0), "accounts_receivable"),
         row("Inventario", balances.get("inventory", 0.0), "inventory"),
@@ -507,6 +854,118 @@ def _build_mov_dataframe(
         row("Total Patrimonio", "", "total_equity"),
         row("Total Pasivo + Patrimonio", "", "total_liabilities_equity"),
     ]
+    return pd.DataFrame(rows, columns=columns)
+
+
+def _build_cash_flow_dataframe(monthly: List[Dict[str, Any]], months: List[pd.Timestamp]) -> pd.DataFrame:
+    columns = ["Concepto", *months]
+
+    def row(label: str, field: str, *, sign: int = 1) -> List[Any]:
+        return [label, *[_round(item.get(field, 0.0) * sign) for item in monthly]]
+
+    rows = [
+        row("Saldo inicial de caja", "cash_beginning"),
+        row("Ventas de contado", "cash_sales"),
+        row("Recuperacion de cartera", "collections"),
+        row("Nuevos creditos recibidos", "new_credit_cash"),
+        row("Venta de activos", "sale_ppe"),
+        row("Aportes de capital", "capital_contribution"),
+        row("Entradas por partidas contables", "cash_journal_increase"),
+        row("Total entradas de efectivo", "cash_inflows"),
+        row("Gastos desembolsables", "cash_operating_expenses", sign=-1),
+        row("Compras de inventario pagadas", "cash_purchases", sign=-1),
+        row("Abonos de tarjetas", "credit_card_payment", sign=-1),
+        row("Pagos a proveedores", "supplier_payment", sign=-1),
+        row("Pago de impuestos", "taxes_payment", sign=-1),
+        row("Pago de gastos acumulados", "accrued_payment", sign=-1),
+        row("Abonos de creditos", "principal_payments", sign=-1),
+        row("Compra de activos", "asset_purchases", sign=-1),
+        row("Retiros de patrimonio", "owner_withdrawal", sign=-1),
+        row("Distribucion de resultados acumulados", "retained_earnings_distribution", sign=-1),
+        row("Salidas por partidas contables", "cash_journal_decrease", sign=-1),
+        row("Total salidas de efectivo", "cash_outflows", sign=-1),
+        row("Saldo final de caja", "cash"),
+    ]
+    return pd.DataFrame(rows, columns=columns)
+
+
+def _build_account_movement_dataframe(monthly: List[Dict[str, Any]], months: List[pd.Timestamp]) -> pd.DataFrame:
+    columns = ["Cuenta", "Movimiento", *months]
+    rows: List[List[Any]] = []
+
+    def add_account(
+        account: str,
+        beginning_field: str,
+        increase_field: str,
+        decrease_field: str,
+        ending_field: str,
+    ) -> None:
+        rows.append([account, "Saldo inicial", *[_round(item.get(beginning_field, 0.0)) for item in monthly]])
+        rows.append([
+            account,
+            "Aumentos",
+            *[
+                _round(item.get(increase_field, 0.0) + item.get(f"{ending_field}_journal_increase", 0.0))
+                for item in monthly
+            ],
+        ])
+        rows.append([
+            account,
+            "Disminuciones",
+            *[
+                -_round(item.get(decrease_field, 0.0) + item.get(f"{ending_field}_journal_decrease", 0.0))
+                for item in monthly
+            ],
+        ])
+        rows.append([account, "Saldo final", *[_round(item.get(ending_field, 0.0)) for item in monthly]])
+
+    def add_cash_account() -> None:
+        account = "Efectivo y Equivalentes de Efectivo"
+
+        def add(label: str, field: str, *, sign: int = 1) -> None:
+            rows.append([account, label, *[_round(item.get(field, 0.0) * sign) for item in monthly]])
+
+        add("Saldo inicial", "cash_beginning")
+        add("Entrada - ventas de contado", "cash_sales")
+        add("Entrada - recuperacion de cartera", "collections")
+        add("Entrada - nuevos creditos recibidos", "new_credit_cash")
+        add("Entrada - venta de activos", "sale_ppe")
+        add("Entrada - aportes de capital", "capital_contribution")
+        add("Entrada - partidas contables", "cash_journal_increase")
+        add("Aumentos", "cash_inflows")
+        add("Salida - gastos desembolsables", "cash_operating_expenses", sign=-1)
+        add("Salida - compras de inventario pagadas", "cash_purchases", sign=-1)
+        add("Salida - abonos de tarjetas", "credit_card_payment", sign=-1)
+        add("Salida - pagos a proveedores", "supplier_payment", sign=-1)
+        add("Salida - pago de impuestos", "taxes_payment", sign=-1)
+        add("Salida - pago de gastos acumulados", "accrued_payment", sign=-1)
+        add("Salida - abonos de creditos", "principal_payments", sign=-1)
+        add("Salida - compra de activos", "asset_purchases", sign=-1)
+        add("Salida - retiros de patrimonio", "owner_withdrawal", sign=-1)
+        add("Salida - distribucion de resultados acumulados", "retained_earnings_distribution", sign=-1)
+        add("Salida - partidas contables", "cash_journal_decrease", sign=-1)
+        add("Disminuciones", "cash_outflows", sign=-1)
+        add("Saldo final", "cash")
+
+    add_cash_account()
+    add_account("Cuentas por Cobrar Clientes", "accounts_receivable_beginning", "credit_sales", "collections", "accounts_receivable")
+    add_account("Inventarios", "inventory_beginning", "purchases", "cogs", "inventory")
+    add_account("Bienes Inmuebles", "ppe_real_estate_beginning", "additions_real_estate", "sale_real_estate", "ppe_real_estate")
+    add_account("Mobiliario y Equipos", "ppe_equipment_beginning", "additions_equipment", "sale_equipment", "ppe_equipment")
+    add_account("Vehiculos", "ppe_vehicles_beginning", "additions_vehicles", "sale_vehicles", "ppe_vehicles")
+    add_account("Depreciacion Acumulada", "accum_depreciation_beginning", "_zero", "depreciation", "accum_depreciation")
+    add_account("Tarjetas de Credito", "credit_cards_beginning", "credit_card_new", "credit_card_payment", "credit_cards")
+    add_account("Proveedores", "suppliers_beginning", "supplier_new", "supplier_payment", "suppliers")
+    add_account("Impuestos por Pagar", "taxes_payable_beginning", "taxes_new", "taxes_payment", "taxes_payable")
+    add_account("Gastos Acumulados por pagar", "accrued_expenses_beginning", "accrued_new", "accrued_payment", "accrued_expenses")
+    add_account("Creditos Hipotecarios", "loans_mortgage_beginning", "loan_mortgage_new", "loan_mortgage_payment", "loans_mortgage")
+    add_account("Creditos Consumo", "loans_consumo_beginning", "loan_consumo_new", "loan_consumo_payment", "loans_consumo")
+    add_account("Creditos Personales", "loans_personal_beginning", "loan_personal_new", "loan_personal_payment", "loans_personal")
+    add_account("Creditos Prendarios", "loans_pledge_beginning", "loan_pledge_new", "loan_pledge_payment", "loans_pledge")
+    add_account("Creditos Comerciales", "loans_commercial_beginning", "loan_commercial_new", "loan_commercial_payment", "loans_commercial")
+    add_account("Capital", "capital_beginning", "capital_increase", "capital_decrease", "capital")
+    add_account("Resultados Acumulados", "retained_earnings_beginning", "retained_earnings_increase", "retained_earnings_decrease", "retained_earnings")
+    add_account("Resultados del Ejercicio", "result_accum_beginning", "result_accum_increase", "result_accum_decrease", "result_accum")
     return pd.DataFrame(rows, columns=columns)
 
 
@@ -555,6 +1014,33 @@ def _build_esf_dataframe(monthly: List[Dict[str, Any]], months: List[pd.Timestam
         row("Total Pasivo + Patrimonio", "total_liabilities_equity"),
     ]
     return pd.DataFrame(rows, columns=columns)
+
+
+def _opening_capital(balances: Mapping[str, float]) -> float:
+    current_assets = (
+        _to_float(balances.get("cash"), 0.0)
+        + _to_float(balances.get("accounts_receivable"), 0.0)
+        + _to_float(balances.get("inventory"), 0.0)
+    )
+    non_current_assets = (
+        _to_float(balances.get("ppe_real_estate"), 0.0)
+        + _to_float(balances.get("ppe_equipment"), 0.0)
+        + _to_float(balances.get("ppe_vehicles"), 0.0)
+        + _to_float(balances.get("accum_depreciation"), 0.0)
+    )
+    liabilities = (
+        _to_float(balances.get("credit_cards"), 0.0)
+        + _to_float(balances.get("suppliers"), 0.0)
+        + _to_float(balances.get("taxes_payable"), 0.0)
+        + _to_float(balances.get("accrued_expenses"), 0.0)
+        + _to_float(balances.get("loans_mortgage"), 0.0)
+        + _to_float(balances.get("loans_consumo"), 0.0)
+        + _to_float(balances.get("loans_personal"), 0.0)
+        + _to_float(balances.get("loans_pledge"), 0.0)
+        + _to_float(balances.get("loans_commercial"), 0.0)
+    )
+    retained = _to_float(balances.get("retained_earnings"), 0.0)
+    return _round(current_assets + non_current_assets - liabilities - retained)
 
 
 def _build_cert_dataframe(
@@ -637,6 +1123,133 @@ def _index_events(raw_events: Any, months: List[pd.Timestamp], exchange_rate: fl
     return out
 
 
+def _index_journal_entries(raw_entries: Any, months: List[pd.Timestamp], exchange_rate: float) -> Dict[str, List[Dict[str, Any]]]:
+    allowed_months = {_month_key(m) for m in months}
+    out: Dict[str, List[Dict[str, Any]]] = {month: [] for month in allowed_months}
+    if not isinstance(raw_entries, list):
+        return out
+    for entry in raw_entries:
+        if not isinstance(entry, Mapping):
+            continue
+        month_key = str(entry.get("month") or entry.get("mes") or "").strip()[:7]
+        if month_key not in allowed_months:
+            continue
+        debit_account = _normalize_ledger_account(entry.get("debit_account") or entry.get("debe") or "")
+        credit_account = _normalize_ledger_account(entry.get("credit_account") or entry.get("haber") or "")
+        if not debit_account or not credit_account or debit_account == credit_account:
+            continue
+        amount_nio = entry.get("amount_nio")
+        if amount_nio is None:
+            amount = _to_float(entry.get("amount") or entry.get("monto") or 0.0, 0.0)
+            currency = str(entry.get("currency") or entry.get("moneda") or "nio").strip().lower()
+            amount_nio = amount * exchange_rate if currency in {"usd", "dolar", "dolares"} else amount
+        amount_nio = _round(_to_float(amount_nio, 0.0))
+        if amount_nio <= 0:
+            continue
+        normalized = dict(entry)
+        normalized["month"] = month_key
+        normalized["debit_account"] = debit_account
+        normalized["credit_account"] = credit_account
+        normalized["amount_nio"] = amount_nio
+        out[month_key].append(normalized)
+    return out
+
+
+def _apply_journal_entries_to_state(state: Dict[str, float], entries: List[Mapping[str, Any]]) -> Dict[str, float]:
+    effects: Dict[str, float] = {"result_accum_delta": 0.0}
+    for entry in entries:
+        amount = _round(_to_float(entry.get("amount_nio") or entry.get("amount") or 0.0, 0.0))
+        if amount <= 0:
+            continue
+        for account, side in (
+            (str(entry.get("debit_account") or ""), "debit"),
+            (str(entry.get("credit_account") or ""), "credit"),
+        ):
+            _apply_journal_side(state, effects, account, side, amount)
+    return {key: _round(value) for key, value in effects.items()}
+
+
+def _apply_journal_side(
+    state: Dict[str, float],
+    effects: Dict[str, float],
+    account: str,
+    side: str,
+    amount: float,
+) -> None:
+    spec = LEDGER_ACCOUNTS.get(account)
+    if not spec:
+        return
+    kind = spec["kind"]
+    state_key = spec.get("state") or ""
+    if account == "capital":
+        return
+    if account == "current_earnings":
+        delta = amount if side == "credit" else -amount
+        effects["result_accum_delta"] = effects.get("result_accum_delta", 0.0) + delta
+        movement_key = "result_accum_journal_increase" if delta > 0 else "result_accum_journal_decrease"
+        effects[movement_key] = effects.get(movement_key, 0.0) + abs(delta)
+        return
+
+    if kind == "asset":
+        delta = amount if side == "debit" else -amount
+    elif kind == "contra_asset":
+        delta = amount if side == "debit" else -amount
+    else:
+        delta = amount if side == "credit" else -amount
+
+    if state_key:
+        state[state_key] = _round(state.get(state_key, 0.0) + delta)
+        movement_key = f"{state_key}_journal_increase" if delta > 0 else f"{state_key}_journal_decrease"
+        effects[movement_key] = effects.get(movement_key, 0.0) + abs(delta)
+        if state_key == "cash":
+            cash_key = "cash_journal_increase" if delta > 0 else "cash_journal_decrease"
+            effects[cash_key] = effects.get(cash_key, 0.0) + abs(delta)
+
+
+def _normalize_ledger_account(value: Any) -> str:
+    canonical = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if canonical in LEDGER_ACCOUNTS:
+        return canonical
+    key = _plain(value)
+    aliases = {
+        "efectivo": "cash",
+        "caja": "cash",
+        "banco": "cash",
+        "bancos": "cash",
+        "efectivo y equivalentes de efectivo": "cash",
+        "cuentas por cobrar": "accounts_receivable",
+        "cuentas por cobrar clientes": "accounts_receivable",
+        "inventario": "inventory",
+        "inventarios": "inventory",
+        "bienes inmuebles": "ppe_real_estate",
+        "vivienda": "ppe_real_estate",
+        "mobiliario y equipos": "ppe_equipment",
+        "equipos": "ppe_equipment",
+        "vehiculos": "ppe_vehicles",
+        "depreciacion acumulada": "accum_depreciation",
+        "tarjetas": "credit_cards",
+        "tarjetas de credito": "credit_cards",
+        "proveedores": "suppliers",
+        "impuestos por pagar": "taxes_payable",
+        "gastos acumulados": "accrued_expenses",
+        "gastos acumulados por pagar": "accrued_expenses",
+        "creditos hipotecarios": "loans_mortgage",
+        "creditos consumo": "loans_consumo",
+        "creditos personales": "loans_personal",
+        "creditos prendarios": "loans_pledge",
+        "creditos comerciales": "loans_commercial",
+        "capital": "capital",
+        "resultados acumulados": "retained_earnings",
+        "resultado acumulado": "retained_earnings",
+        "resultados del ejercicio": "current_earnings",
+        "resultado del ejercicio": "current_earnings",
+        "utilidad del ejercicio": "current_earnings",
+    }
+    if key in LEDGER_ACCOUNTS:
+        return key
+    return aliases.get(key, "")
+
+
 def _normalize_account(value: Any) -> str:
     key = str(value or "").strip().lower().replace(" ", "_").replace("-", "_")
     aliases = {
@@ -644,6 +1257,14 @@ def _normalize_account(value: Any) -> str:
         "retiro": "owner_withdrawal",
         "aporte_capital": "capital_contribution",
         "capital": "capital_contribution",
+        "ajuste_compras": "purchase_adjustment",
+        "ajuste_de_compras": "purchase_adjustment",
+        "purchase": "purchase_adjustment",
+        "compras": "purchase_adjustment",
+        "financiamiento_proveedor": "supplier_financing",
+        "financiamiento_proveedores": "supplier_financing",
+        "compras_financiadas": "supplier_financing",
+        "credito_proveedor": "supplier_financing",
         "equipo": "asset_equipment",
         "activo_equipo": "asset_equipment",
         "vehiculo": "asset_vehicle",
@@ -665,9 +1286,17 @@ def _normalize_account(value: Any) -> str:
         "abono_tarjeta": "credit_card_payment",
         "proveedor": "supplier_new",
         "pago_proveedor": "supplier_payment",
+        "distribucion_resultados": "retained_earnings_distribution",
+        "retiro_resultados": "retained_earnings_distribution",
+        "resultados_acumulados": "retained_earnings_distribution",
+        "retained_earnings_distribution": "retained_earnings_distribution",
+        "reclasificacion_capital": "capital_reclassification",
+        "capital_reclassification": "capital_reclassification",
     }
     allowed = {
         "owner_withdrawal", "capital_contribution",
+        "purchase_adjustment", "supplier_financing",
+        "retained_earnings_distribution", "capital_reclassification",
         "asset_real_estate", "asset_equipment", "asset_vehicle",
         "asset_real_estate_sale", "asset_equipment_sale", "asset_vehicle_sale",
         "loan_mortgage_new", "loan_mortgage_payment",
@@ -753,6 +1382,57 @@ def _pct(value: Any, default_pct: float) -> float:
     if raw > 1:
         raw = raw / 100.0
     return max(0.0, min(1.0, raw))
+
+
+def _override_pct(override: Mapping[str, Any], key: str, default_decimal: float) -> float:
+    if key not in override or override.get(key) in {None, ""}:
+        return default_decimal
+    return _pct(override.get(key), default_decimal * 100.0)
+
+
+def _index_income_overrides(raw: Any) -> Dict[str, Dict[str, float]]:
+    if isinstance(raw, Mapping):
+        items = []
+        for month, values in raw.items():
+            record = dict(values or {}) if isinstance(values, Mapping) else {}
+            record["month"] = month
+            items.append(record)
+    elif isinstance(raw, list):
+        items = raw
+    else:
+        items = []
+
+    out: Dict[str, Dict[str, float]] = {}
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        month = _normalize_month_key(item.get("month") or item.get("mes"))
+        if not month:
+            continue
+        values: Dict[str, float] = {}
+        if item.get("cost_pct") not in {None, ""}:
+            values["cost_pct"] = _to_float(item.get("cost_pct"), 70.0)
+        if item.get("porcentaje_costo") not in {None, ""}:
+            values["cost_pct"] = _to_float(item.get("porcentaje_costo"), 70.0)
+        if item.get("cost_variability_pct") not in {None, ""}:
+            values["cost_variability_pct"] = _to_float(item.get("cost_variability_pct"), 5.0)
+        if item.get("variabilidad_costo_pct") not in {None, ""}:
+            values["cost_variability_pct"] = _to_float(item.get("variabilidad_costo_pct"), 5.0)
+        if values:
+            out[month] = values
+    return out
+
+
+def _normalize_month_key(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if len(text) >= 7 and text[:7].count("-") == 1 and text[:7].replace("-", "").isdigit():
+        return text[:7]
+    parsed = pd.to_datetime(text, errors="coerce")
+    if pd.isna(parsed):
+        return ""
+    return pd.Timestamp(parsed).strftime("%Y-%m")
 
 
 def _round(value: Any) -> float:

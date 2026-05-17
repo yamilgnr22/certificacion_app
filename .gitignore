@@ -16,6 +16,7 @@ env/
 # Editors/OS
 .vscode/
 *.code-workspace
+.claude/
 .DS_Store
 Thumbs.db
 
@@ -30,9 +31,13 @@ dist/
 *.validation.json
 *.page1.jpg
 *.tmp
+*.log
 ~$*
 uploads/
 input_docs/
+data/models/
+data/*.db
+data/*.db-*
 
 # Tools caches
 .pytest_cache/

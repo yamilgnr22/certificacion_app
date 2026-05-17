@@ -8,7 +8,7 @@ from pathlib import Path
 from time import time
 from typing import Dict, Any, Optional
 
-from flask import Flask, request, Response, send_file, render_template, after_this_request
+from flask import Flask, request, Response, send_file, render_template, after_this_request, g
 from dotenv import load_dotenv
 
 from excel_reader import ExcelData
@@ -18,6 +18,25 @@ from llm_validation import build_snapshot, llm_validate
 from document_generator import generar_documento_completo
 from report_utils import build_report, save_report_json
 from financial_model import build_financial_model, result_to_json
+from accounting_model import get_account_ledger, get_trace, reverse_voucher
+from chat_controller import ChatCommandError, handle_chat_command
+from model_chat import ModelChatError, preview_chat_adjustment
+from document_extraction import extract_client_documents
+from model_storage import (
+    ModelStorageError,
+    delete_draft,
+    duplicate_final,
+    final_document_path,
+    get_draft,
+    get_final,
+    list_drafts,
+    list_finals,
+    save_draft,
+    save_final,
+)
+from db.engine import get_engine, get_session
+from db.runtime import DatabaseNotInitialized, require_alembic_version
+from services import ClienteService, GiroService, PlantillaService, ServiceConflictError, ServiceValidationError
 
 
 load_dotenv()
@@ -39,6 +58,73 @@ app = Flask(
 
 # En memoria, simple. Para producción usar almacenamiento persistente o DB.
 JOBS: Dict[str, Dict[str, Any]] = {}
+_DB_ENGINE = None
+
+
+def _get_db_engine():
+    global _DB_ENGINE
+    configured = app.config.get("DB_ENGINE")
+    if configured is not None:
+        return configured
+    if _DB_ENGINE is None:
+        _DB_ENGINE = get_engine()
+    return _DB_ENGINE
+
+
+def _db_requires_alembic() -> bool:
+    if "DB_REQUIRE_ALEMBIC" in app.config:
+        return bool(app.config["DB_REQUIRE_ALEMBIC"])
+    return os.getenv("CERTAPP_DB_REQUIRE_ALEMBIC", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _is_db_api_path(path: str) -> bool:
+    if path == "/api/clientes/extract-from-docs":
+        return False
+    return path.startswith("/api/clientes") or path.startswith("/api/giros")
+
+
+@app.before_request
+def _open_db_session_for_api():
+    if not _is_db_api_path(request.path):
+        return None
+    try:
+        engine = _get_db_engine()
+        if _db_requires_alembic():
+            require_alembic_version(engine)
+        g.db_session = get_session(engine)()
+    except DatabaseNotInitialized as exc:
+        return {"ok": False, "error": str(exc)}, 500
+    except Exception as exc:
+        return {"ok": False, "error": f"No se pudo abrir la base de datos: {type(exc).__name__}: {exc}"}, 500
+    return None
+
+
+@app.teardown_request
+def _close_db_session(exc):
+    session = g.pop("db_session", None)
+    if session is None:
+        return
+    try:
+        if exc is not None:
+            session.rollback()
+    finally:
+        session.close()
+
+
+def _db_session():
+    session = getattr(g, "db_session", None)
+    if session is None:
+        raise RuntimeError("Sesion de base de datos no disponible")
+    return session
+
+
+def _cpa_user() -> str:
+    return request.headers.get("X-CPA-User", "system").strip() or "system"
+
+
+def _json_body() -> dict:
+    body = request.get_json(silent=True) or {}
+    return body if isinstance(body, dict) else {}
 
 
 def _safe_unlink(path: Optional[str]) -> None:
@@ -108,6 +194,138 @@ def _save_upload(file_storage, suffix: str) -> str:
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+def _service_error_response(exc: Exception):
+    if isinstance(exc, ServiceConflictError):
+        return {"ok": False, "error": str(exc)}, 409
+    if isinstance(exc, ServiceValidationError):
+        return {"ok": False, "error": str(exc)}, 400
+    return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 400
+
+
+@app.get("/api/giros")
+def api_list_giros():
+    try:
+        return {"ok": True, "giros": GiroService(_db_session()).list_active()}
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.get("/api/giros/<giro_id>")
+def api_get_giro(giro_id: str):
+    try:
+        giro = GiroService(_db_session()).get(giro_id)
+        if not giro:
+            return {"ok": False, "error": "Giro no encontrado"}, 404
+        return {"ok": True, "giro": giro}
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.get("/api/clientes")
+def api_list_clientes():
+    try:
+        service = ClienteService(_db_session())
+        clientes = service.list(query=request.args.get("q", ""), giro_id=request.args.get("giro") or None)
+        return {"ok": True, "clientes": clientes}
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.post("/api/clientes")
+def api_create_cliente():
+    try:
+        cliente = ClienteService(_db_session()).create(_json_body(), cpa_user=_cpa_user())
+        return {"ok": True, "cliente": cliente}, 201
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.get("/api/clientes/<cliente_id>")
+def api_get_cliente(cliente_id: str):
+    try:
+        detail = ClienteService(_db_session()).get_detail(cliente_id)
+        if not detail:
+            return {"ok": False, "error": "Cliente no encontrado"}, 404
+        return {"ok": True, **detail}
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.put("/api/clientes/<cliente_id>")
+def api_update_cliente(cliente_id: str):
+    try:
+        cliente = ClienteService(_db_session()).update(cliente_id, _json_body(), cpa_user=_cpa_user())
+        if not cliente:
+            return {"ok": False, "error": "Cliente no encontrado"}, 404
+        return {"ok": True, "cliente": cliente}
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.delete("/api/clientes/<cliente_id>")
+def api_delete_cliente(cliente_id: str):
+    try:
+        deleted = ClienteService(_db_session()).soft_delete(cliente_id, cpa_user=_cpa_user())
+        if not deleted:
+            return {"ok": False, "error": "Cliente no encontrado"}, 404
+        return {"ok": True}
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.get("/api/clientes/<cliente_id>/plantilla-gastos")
+def api_get_cliente_plantilla(cliente_id: str):
+    try:
+        detail = ClienteService(_db_session()).get_detail(cliente_id)
+        if not detail:
+            return {"ok": False, "error": "Cliente no encontrado"}, 404
+        return {"ok": True, "plantilla_gastos": detail["plantilla_gastos"]}
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.put("/api/clientes/<cliente_id>/plantilla-gastos")
+def api_set_cliente_plantilla(cliente_id: str):
+    try:
+        body = _json_body()
+        plantilla = body.get("plantilla") if isinstance(body.get("plantilla"), dict) else body
+        result = ClienteService(_db_session()).set_plantilla(cliente_id, plantilla, cpa_user=_cpa_user())
+        if not result:
+            return {"ok": False, "error": "Cliente no encontrado"}, 404
+        return {"ok": True, "plantilla_gastos": result}
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.post("/api/clientes/extract-from-docs")
+def api_cliente_extract_from_docs():
+    prune_uploads()
+    cedula_front = request.files.get("cedula_front")
+    cedula_back = request.files.get("cedula_back")
+    matricula = request.files.get("matricula")
+    if not any([cedula_front, cedula_back, matricula]):
+        return {"ok": False, "error": "Adjunte al menos una imagen de cedula o matricula."}, 400
+
+    saved: list[str] = []
+    try:
+        ced_front_path = _save_upload(cedula_front, ".png") if cedula_front else None
+        ced_back_path = _save_upload(cedula_back, ".png") if cedula_back else None
+        mat_path = _save_upload(matricula, ".png") if matricula else None
+        saved = [p for p in [ced_front_path, ced_back_path, mat_path] if p]
+        data = extract_client_documents(
+            cedula_front=ced_front_path,
+            cedula_back=ced_back_path,
+            matricula_path=mat_path,
+        )
+        status = 200 if data.get("ok") else 400
+        return data, status
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 400
+    finally:
+        for path in saved:
+            _safe_unlink(path)
 
 
 @app.post("/api/upload")
@@ -344,6 +562,221 @@ def model_preview():
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 400
 
 
+def _payload_from_model_reference() -> Dict[str, Any]:
+    draft_id = request.args.get("draft_id") or ""
+    final_id = request.args.get("final_id") or ""
+    if draft_id:
+        return dict(get_draft(draft_id).get("payload") or {})
+    if final_id:
+        return dict(get_final(final_id).get("payload") or {})
+    body = request.get_json(silent=True) or {}
+    return dict(body.get("payload") or body or {})
+
+
+@app.get("/api/model/vouchers")
+def model_vouchers():
+    try:
+        payload = _payload_from_model_reference()
+        result = build_financial_model(payload)
+        return {"ok": True, "vouchers": result.accounting.get("vouchers", [])}
+    except ModelStorageError as exc:
+        return {"ok": False, "error": str(exc)}, 404
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 400
+
+
+@app.get("/api/model/vouchers/<voucher_id>")
+def model_voucher_detail(voucher_id: str):
+    try:
+        payload = _payload_from_model_reference()
+        result = build_financial_model(payload)
+        voucher = next((item for item in result.accounting.get("vouchers", []) if item.get("voucher_id") == voucher_id), None)
+        if not voucher:
+            return {"ok": False, "error": "Comprobante no encontrado"}, 404
+        return {"ok": True, "voucher": voucher}
+    except ModelStorageError as exc:
+        return {"ok": False, "error": str(exc)}, 404
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 400
+
+
+@app.post("/api/model/vouchers/<voucher_id>/reverse")
+def model_voucher_reverse(voucher_id: str):
+    try:
+        payload = _payload_from_model_reference()
+        result = build_financial_model(payload)
+        voucher = next((item for item in result.accounting.get("vouchers", []) if item.get("voucher_id") == voucher_id), None)
+        if not voucher:
+            return {"ok": False, "error": "Comprobante no encontrado"}, 404
+        reversal = reverse_voucher(voucher)
+        adjusted_payload = dict(payload)
+        accounting = dict(adjusted_payload.get("accounting") or {})
+        vouchers = list(accounting.get("vouchers") or [])
+        vouchers.append(reversal)
+        accounting["vouchers"] = vouchers
+        adjusted_payload["accounting"] = accounting
+        return {"ok": True, "reversal": reversal, "adjusted_payload": adjusted_payload}
+    except ModelStorageError as exc:
+        return {"ok": False, "error": str(exc)}, 404
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 400
+
+
+@app.get("/api/model/accounts/<account>/ledger")
+def model_account_ledger(account: str):
+    try:
+        payload = _payload_from_model_reference()
+        result = build_financial_model(payload)
+        return {"ok": True, "account": account, "ledger": get_account_ledger(result.accounting, account)}
+    except ModelStorageError as exc:
+        return {"ok": False, "error": str(exc)}, 404
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 400
+
+
+@app.get("/api/model/trace")
+def model_trace():
+    try:
+        payload = _payload_from_model_reference()
+        account = request.args.get("account") or ""
+        month = request.args.get("month") or ""
+        result = build_financial_model(payload)
+        return {"ok": True, "trace": get_trace(result.accounting, account, month)}
+    except ModelStorageError as exc:
+        return {"ok": False, "error": str(exc)}, 404
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 400
+
+
+@app.post("/api/model/chat/preview")
+def model_chat_preview():
+    """Interpreta una instruccion de chat y devuelve una propuesta de ajuste."""
+    try:
+        body = request.get_json(silent=True) or {}
+        payload = body.get("payload") or {}
+        message = body.get("message") or ""
+        scope = body.get("scope") or {}
+        data = preview_chat_adjustment(payload, message, scope=scope)
+        status = 200 if data.get("ok") else (422 if data.get("needs_clarification") or data.get("not_viable") else 400)
+        return data, status
+    except ModelChatError as exc:
+        return {"ok": False, "error": str(exc)}, exc.status_code
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 400
+
+
+@app.post("/api/model/chat/command")
+def model_chat_command():
+    """Orquesta instrucciones del asistente contable para consultas, UI y propuestas."""
+    try:
+        body = request.get_json(silent=True) or {}
+        payload = body.get("payload") or {}
+        message = body.get("message") or ""
+        ui_context = body.get("ui_context") or {}
+        scope = body.get("scope") or ui_context.get("scope") or {}
+        data = handle_chat_command(payload, message, ui_context=ui_context, scope=scope)
+        status = 200 if data.get("ok") else (422 if data.get("needs_clarification") else 400)
+        return data, status
+    except ChatCommandError as exc:
+        return {"ok": False, "assistant_message": str(exc), "error": str(exc)}, exc.status_code
+    except Exception as exc:
+        return {"ok": False, "assistant_message": f"{type(exc).__name__}: {exc}", "error": f"{type(exc).__name__}: {exc}"}, 400
+
+
+@app.post("/api/model/documents/extract")
+def model_documents_extract():
+    """Extrae datos del cliente desde cedula y matricula para el flujo sin Excel."""
+    prune_uploads()
+    cedula_front = request.files.get("cedula_front")
+    cedula_back = request.files.get("cedula_back")
+    matricula = request.files.get("matricula")
+    if not any([cedula_front, cedula_back, matricula]):
+        return {"ok": False, "error": "Adjunte al menos una imagen de cedula o matricula."}, 400
+
+    saved: list[str] = []
+    try:
+        ced_front_path = _save_upload(cedula_front, ".png") if cedula_front else None
+        ced_back_path = _save_upload(cedula_back, ".png") if cedula_back else None
+        mat_path = _save_upload(matricula, ".png") if matricula else None
+        saved = [p for p in [ced_front_path, ced_back_path, mat_path] if p]
+        data = extract_client_documents(
+            cedula_front=ced_front_path,
+            cedula_back=ced_back_path,
+            matricula_path=mat_path,
+        )
+        status = 200 if data.get("ok") else 400
+        return data, status
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 400
+    finally:
+        for path in saved:
+            _safe_unlink(path)
+
+
+@app.post("/api/model/drafts")
+def model_save_draft():
+    try:
+        body = request.get_json(silent=True) or {}
+        payload = body.get("payload") or body
+        draft_id = body.get("draft_id") or body.get("id")
+        record = save_draft(payload, draft_id=draft_id)
+        return {"ok": True, "record": record}
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 400
+
+
+@app.get("/api/model/drafts")
+def model_list_drafts():
+    return {"ok": True, "records": list_drafts()}
+
+
+@app.get("/api/model/drafts/<record_id>")
+def model_get_draft(record_id: str):
+    try:
+        return {"ok": True, "record": get_draft(record_id)}
+    except ModelStorageError as exc:
+        return {"ok": False, "error": str(exc)}, 404
+
+
+@app.delete("/api/model/drafts/<record_id>")
+def model_delete_draft(record_id: str):
+    try:
+        delete_draft(record_id)
+        return {"ok": True}
+    except ModelStorageError as exc:
+        return {"ok": False, "error": str(exc)}, 404
+
+
+@app.get("/api/model/finals")
+def model_list_finals():
+    return {"ok": True, "records": list_finals()}
+
+
+@app.get("/api/model/finals/<record_id>")
+def model_get_final(record_id: str):
+    try:
+        return {"ok": True, "record": get_final(record_id)}
+    except ModelStorageError as exc:
+        return {"ok": False, "error": str(exc)}, 404
+
+
+@app.post("/api/model/finals/<record_id>/duplicate")
+def model_duplicate_final(record_id: str):
+    try:
+        return {"ok": True, "record": duplicate_final(record_id)}
+    except ModelStorageError as exc:
+        return {"ok": False, "error": str(exc)}, 404
+
+
+@app.get("/api/model/finals/<record_id>/document")
+def model_final_document(record_id: str):
+    try:
+        path, filename = final_document_path(record_id)
+        return send_file(path, as_attachment=True, download_name=filename)
+    except ModelStorageError as exc:
+        return {"ok": False, "error": str(exc)}, 404
+
+
 @app.post("/api/model/generate")
 def model_generate_doc():
     """Genera el DOCX sin Excel, usando el modelo financiero interno."""
@@ -380,6 +813,7 @@ def model_generate_doc():
         detener_si_error=False,
         validacion_documentos=None,
         validacion_llm=None,
+        statement_blocks=result.statement_blocks if len(result.statement_blocks) > 1 else None,
         esf_tipo="mensual",
     )
 
@@ -408,6 +842,59 @@ def model_generate_doc():
     return send_file(out_path, as_attachment=True, download_name=safe_filename)
 
 
+@app.post("/api/model/finals")
+def model_save_final():
+    """Genera el DOCX sin Excel y guarda una version final inmutable."""
+    try:
+        body = request.get_json(silent=True) or {}
+        payload = body.get("payload") or body
+        result = build_financial_model(payload)
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 400
+
+    ok = (
+        result.validations["er"].get("ok")
+        and result.validations["esf"].get("ok")
+        and result.validations["balance"].get("ok")
+    )
+    if not ok:
+        return {
+            "ok": False,
+            "error": "El modelo tiene errores de validacion",
+            "validations": result_to_json(result).get("validations"),
+        }, 422
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
+        out_path = tmp.name
+
+    try:
+        generar_documento_completo(
+            result.df_esf_mensual,
+            result.df_er,
+            result.df_datos,
+            result.df_certificacion,
+            out_path,
+            incluir_validacion=False,
+            tolerancia_validacion=1.0,
+            detener_si_error=False,
+            validacion_documentos=None,
+            validacion_llm=None,
+            statement_blocks=result.statement_blocks if len(result.statement_blocks) > 1 else None,
+            esf_tipo="mensual",
+        )
+        result_json = result_to_json(result)
+        seed_label = str(result.summary.get("seed", "app"))
+        safe_seed = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in seed_label)[:80]
+        safe_filename = f"certificacion_modelo_{safe_seed or 'app'}.docx"
+        record = save_final(payload, result_json=result_json, document_path=out_path, filename=safe_filename)
+        return {"ok": True, "record": record}
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 400
+    finally:
+        Path(out_path).unlink(missing_ok=True)
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8000"))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    debug = os.environ.get("CERTAPP_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
+    app.run(host="0.0.0.0", port=port, debug=debug, use_reloader=False)

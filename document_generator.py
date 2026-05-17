@@ -45,6 +45,7 @@ def generar_documento_completo(
     detener_si_error: bool = False,
     validacion_documentos: Optional[dict] = None,
     validacion_llm: Optional[dict] = None,
+    statement_blocks: Optional[list] = None,
     esf_tipo: str = "corte",
 ):
     """
@@ -159,12 +160,22 @@ def generar_documento_completo(
         doc.add_page_break()
 
     generar_certificacion(doc, df_cert)
-    generar_tabla_er(doc,  df_er,  df_cert)
-    # ESF según tipo
-    if (esf_tipo or "corte").lower() == "mensual":
-        generar_tabla_esf_mensual(doc, df_esf, df_cert)
+
+    blocks = statement_blocks or []
+    if blocks:
+        for block in blocks:
+            block_cert = block.get("df_certificacion")
+            if block_cert is None:
+                block_cert = df_cert
+            generar_tabla_er(doc, block.get("df_er"), block_cert)
+            generar_tabla_esf_mensual(doc, block.get("df_esf_mensual"), block_cert)
     else:
-        generar_tabla_esf(doc, df_esf, df_cert)
+        generar_tabla_er(doc,  df_er,  df_cert)
+        # ESF según tipo
+        if (esf_tipo or "corte").lower() == "mensual":
+            generar_tabla_esf_mensual(doc, df_esf, df_cert)
+        else:
+            generar_tabla_esf(doc, df_esf, df_cert)
     generar_tabla_datos(doc, df_datos)
 
     # -------- NUEVA SECCIÓN --------

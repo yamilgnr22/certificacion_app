@@ -13,7 +13,8 @@ from web_server import app
 
 def main() -> None:
     port = int(os.environ.get("PORT", "8000"))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    debug = os.environ.get("CERTAPP_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
+    app.run(host="0.0.0.0", port=port, debug=debug, use_reloader=False)
 
 
 if __name__ == "__main__":
