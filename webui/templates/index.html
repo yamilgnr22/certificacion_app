@@ -105,9 +105,45 @@
               <div id="clienteTemplateEditor" class="template-editor empty-state">Abra o guarde un cliente para revisar la plantilla.</div>
             </div>
             <div class="client-periods-panel">
-              <h3>Periodos</h3>
-              <div id="clientePeriodosList" class="saved-list empty-state">Proximamente: historico de certificaciones.</div>
+              <div class="workbench-header compact">
+                <h3>Periodos</h3>
+                <button id="btnNewPeriodo" class="btn primary" type="button" disabled>Nuevo periodo</button>
+              </div>
+              <div id="periodosMessages" class="messages"></div>
+              <div id="clientePeriodosList" class="saved-list empty-state">Abra o guarde un cliente para revisar sus periodos.</div>
             </div>
+          </div>
+        </section>
+
+        <section id="periodoFormPanel" class="card periodo-form-panel hidden">
+          <div class="workbench-header">
+            <div>
+              <h2 id="periodoFormTitle">Nuevo periodo</h2>
+              <p class="workbench-subtitle" id="periodoFormSubtitle"></p>
+            </div>
+            <button id="btnClosePeriodoForm" class="btn" type="button">Cerrar</button>
+          </div>
+          <div id="periodoFormMessages" class="messages"></div>
+          <div class="grid-3">
+            <div class="field"><label>Mes inicial</label><input id="periodo_mes_inicial" type="month" /></div>
+            <div class="field"><label>Mes final</label><input id="periodo_mes_final" type="month" /></div>
+            <div class="field"><label>Tasa de cambio</label><input id="periodo_tasa_cambio" type="number" step="0.0001" value="36.6243" /></div>
+            <div class="field"><label>Ingresos base USD/mes</label><input id="periodo_ingresos_base_usd" type="number" step="100" value="50000" /></div>
+            <div class="field"><label>Variabilidad ingresos %</label><input id="periodo_var_ingresos" type="number" step="0.5" value="12" /></div>
+            <div class="field"><label>% Costo sobre ventas</label><input id="periodo_cost_pct" type="number" step="0.5" value="70" /></div>
+            <div class="field"><label>Variabilidad costos %</label><input id="periodo_var_costos" type="number" step="0.5" value="5" /></div>
+            <div class="field"><label>% Ventas contado</label><input id="periodo_cash_sales_pct" type="number" step="1" value="85" /></div>
+            <div class="field"><label>Semilla (opcional)</label><input id="periodo_seed" type="text" placeholder="auto" /></div>
+          </div>
+          <div class="rollforward-block">
+            <label class="checkbox">
+              <input id="periodo_rollforward" type="checkbox" />
+              <span>Roll-forward: usar saldos finales del periodo anterior</span>
+            </label>
+            <div id="rollforwardPreview" class="rollforward-preview hidden"></div>
+          </div>
+          <div class="actions">
+            <button id="btnSavePeriodo" class="btn primary" type="button">Crear periodo (borrador)</button>
           </div>
         </section>
       </div>

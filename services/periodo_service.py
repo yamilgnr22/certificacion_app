@@ -1,0 +1,526 @@
+"""Servicio de Periodos de Certificacion.
+
+Orquesta creacion, lectura, edicion, preview, finalizacion y duplicacion
+de periodos contables, en transacciones unicas con auditoria automatica.
+
+Reglas de negocio:
+- create() siempre nace en estado 'borrador'.
+- update() solo permitido si estado == 'borrador'.
+- finalize() pasa 'borrador' -> 'finalizado' y cachea saldos_finales.
+- duplicate() crea un 'borrador' nuevo, sin documento ni saldos_finales.
+- hard_delete() solo permitido si estado == 'borrador'.
+- editar un periodo con descendientes (rollforward hijos) marca a esos hijos
+  como recompute_required=1 para advertir en UI.
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Any, Mapping
+
+import pandas as pd
+from sqlalchemy.orm import Session
+
+from db.models import PeriodoCertificacion
+from repositories import ClienteRepository, PeriodoRepository
+from services.audit_service import AuditService
+from services.rollforward_service import RollforwardService
+from services.serializers import (
+    cliente_to_dict,
+    iso,
+    parse_json_object,
+    periodo_to_basic_dict,
+)
+
+
+class PeriodoServiceError(ValueError):
+    pass
+
+
+class PeriodoValidationError(PeriodoServiceError):
+    pass
+
+
+class PeriodoConflictError(PeriodoServiceError):
+    pass
+
+
+class PeriodoNotFoundError(PeriodoServiceError):
+    pass
+
+
+class PeriodoService:
+    # Campos editables (borrador) que el cliente UI puede modificar.
+    EDITABLE = {
+        "mes_inicial",
+        "mes_final",
+        "tasa_cambio",
+        "ingresos_base_usd",
+        "variabilidad_ingresos_pct",
+        "cost_pct",
+        "variabilidad_costos_pct",
+        "cash_sales_pct",
+        "seed",
+        "saldos_iniciales_origen",
+    }
+
+    def __init__(self, session: Session):
+        self.session = session
+        self.periodos = PeriodoRepository(session)
+        self.clientes = ClienteRepository(session)
+        self.audit = AuditService(session)
+        self.rollforward = RollforwardService(session)
+
+    # ----------------------------------------------------------------- read
+    def list_for_cliente(self, cliente_id: str) -> list[dict]:
+        return [periodo_to_basic_dict(p) for p in self.periodos.list_for_cliente(cliente_id)]
+
+    def get_detail(self, periodo_id: str) -> dict | None:
+        periodo = self.periodos.get(periodo_id)
+        if not periodo:
+            return None
+        cliente = self.clientes.get(periodo.cliente_id) if periodo.cliente_id else None
+        return {
+            "periodo": self._full_dict(periodo),
+            "cliente": cliente_to_dict(cliente, include_giro=True) if cliente else None,
+        }
+
+    # --------------------------------------------------------------- create
+    def create(
+        self,
+        cliente_id: str,
+        data: Mapping[str, Any],
+        *,
+        cpa_user: str = "system",
+    ) -> dict:
+        """Crea un periodo en estado borrador para el cliente.
+
+        data puede contener:
+          mes_inicial, mes_final, tasa_cambio, ingresos_base_usd,
+          variabilidad_ingresos_pct, cost_pct, variabilidad_costos_pct,
+          cash_sales_pct, seed,
+          rollforward: bool  (si True, usar saldos del periodo anterior),
+          balances_override: dict  (saldos iniciales manuales),
+          expenses_override: dict  (plantilla de gastos custom).
+        """
+        cliente = self.clientes.get(cliente_id)
+        if not cliente or not cliente.activo:
+            raise PeriodoNotFoundError("Cliente no encontrado o inactivo")
+
+        meses = self._validate_meses(data)
+        rollforward_info = None
+        saldos_iniciales: dict[str, float] = {}
+        periodo_anterior_id: str | None = None
+        saldos_origen = "manual"
+
+        if bool(data.get("rollforward")):
+            rollforward_info = self.rollforward.propose_for_new_periodo(
+                cliente_id, meses["mes_inicial"]
+            )
+            if rollforward_info.get("has_anterior"):
+                saldos_iniciales = dict(rollforward_info.get("saldos") or {})
+                periodo_anterior_id = rollforward_info.get("periodo_anterior_id")
+                saldos_origen = "rollforward"
+
+        # Override manual gana sobre rollforward (UI puede ajustar lo propuesto).
+        balances_override = data.get("balances_override") or {}
+        if isinstance(balances_override, dict) and balances_override:
+            saldos_iniciales.update({k: float(v) for k, v in balances_override.items() if v is not None})
+            # Si hubo override sobre rollforward, marcamos origen mixto.
+            if saldos_origen == "rollforward":
+                saldos_origen = "rollforward_ajustado"
+            else:
+                saldos_origen = "manual"
+
+        # Construir payload financiero
+        payload = self._build_payload(
+            meses=meses,
+            data=data,
+            cliente=cliente,
+            balances=saldos_iniciales,
+        )
+
+        # Ejecutar modelo financiero para validaciones iniciales
+        validation_json = self._run_and_capture_validation(payload)
+
+        try:
+            periodo = self.periodos.create(
+                cliente_id=cliente_id,
+                periodo_meses=meses["periodo_meses"],
+                mes_inicial=meses["mes_inicial"],
+                mes_final=meses["mes_final"],
+                estado="borrador",
+                tasa_cambio=float(payload["period"]["exchange_rate"]),
+                ingresos_base_usd=_opt_float(payload["income"].get("base_income_usd")),
+                variabilidad_ingresos_pct=_opt_float(payload["income"].get("income_variability_pct")),
+                cost_pct=_opt_float(payload["income"].get("cost_pct")),
+                variabilidad_costos_pct=_opt_float(payload["income"].get("cost_variability_pct")),
+                cash_sales_pct=_opt_float(payload["income"].get("cash_sales_pct")),
+                seed=str(payload["period"].get("seed") or ""),
+                periodo_anterior_id=periodo_anterior_id,
+                saldos_iniciales_origen=saldos_origen,
+                payload_json=json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
+                validation_json=json.dumps(validation_json, ensure_ascii=False, sort_keys=True, default=str),
+                created_by=cpa_user or "system",
+            )
+
+            after_snapshot = self._full_dict(periodo)
+            self.audit.log(
+                cpa_user=cpa_user,
+                entity_type="periodo",
+                entity_id=periodo.id,
+                action="create",
+                summary=f"Creo periodo {periodo.mes_inicial}..{periodo.mes_final} para cliente {cliente.nombre_completo}",
+                after=after_snapshot,
+                metadata={
+                    "cliente_id": cliente.id,
+                    "rollforward": bool(rollforward_info and rollforward_info.get("has_anterior")),
+                    "warning": (rollforward_info or {}).get("warning"),
+                },
+            )
+            self.session.commit()
+            return {
+                "periodo": after_snapshot,
+                "rollforward": rollforward_info,
+            }
+        except Exception:
+            self.session.rollback()
+            raise
+
+    # --------------------------------------------------------------- update
+    def update(
+        self,
+        periodo_id: str,
+        data: Mapping[str, Any],
+        *,
+        cpa_user: str = "system",
+    ) -> dict:
+        periodo = self.periodos.get(periodo_id)
+        if not periodo:
+            raise PeriodoNotFoundError("Periodo no encontrado")
+        if periodo.estado != "borrador":
+            raise PeriodoConflictError(
+                f"No se puede editar un periodo en estado '{periodo.estado}'. "
+                "Para corregirlo duplicalo como borrador."
+            )
+
+        changes = {key: data.get(key) for key in data.keys() if key in self.EDITABLE}
+        if not changes:
+            raise PeriodoValidationError("No hay campos editables en la solicitud")
+
+        # Validar nuevos meses si cambian
+        new_meses = {
+            "mes_inicial": str(changes.get("mes_inicial") or periodo.mes_inicial),
+            "mes_final": str(changes.get("mes_final") or periodo.mes_final),
+        }
+        meses = self._validate_meses(new_meses)
+
+        before = self._full_dict(periodo)
+
+        try:
+            # Rehacer payload con cambios
+            payload = parse_json_object(periodo.payload_json)
+            period_block = dict(payload.get("period") or {})
+            period_block["start_month"] = meses["mes_inicial"]
+            period_block["end_month"] = meses["mes_final"]
+            period_block["months"] = meses["periodo_meses"]
+            if "tasa_cambio" in changes and changes["tasa_cambio"] is not None:
+                period_block["exchange_rate"] = float(changes["tasa_cambio"])
+            if "seed" in changes and changes["seed"]:
+                period_block["seed"] = str(changes["seed"])
+            payload["period"] = period_block
+
+            income_block = dict(payload.get("income") or {})
+            for src, dst in (
+                ("ingresos_base_usd", "base_income_usd"),
+                ("variabilidad_ingresos_pct", "income_variability_pct"),
+                ("cost_pct", "cost_pct"),
+                ("variabilidad_costos_pct", "cost_variability_pct"),
+                ("cash_sales_pct", "cash_sales_pct"),
+            ):
+                if src in changes and changes[src] is not None:
+                    income_block[dst] = float(changes[src])
+            payload["income"] = income_block
+
+            validation_json = self._run_and_capture_validation(payload)
+
+            periodo.mes_inicial = meses["mes_inicial"]
+            periodo.mes_final = meses["mes_final"]
+            periodo.periodo_meses = meses["periodo_meses"]
+            for src in ("tasa_cambio", "ingresos_base_usd", "variabilidad_ingresos_pct",
+                        "cost_pct", "variabilidad_costos_pct", "cash_sales_pct", "seed"):
+                if src in changes and changes[src] is not None:
+                    setattr(periodo, src, changes[src] if src == "seed" else float(changes[src]))
+            if "saldos_iniciales_origen" in changes and changes["saldos_iniciales_origen"]:
+                periodo.saldos_iniciales_origen = str(changes["saldos_iniciales_origen"])
+            periodo.payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+            periodo.validation_json = json.dumps(validation_json, ensure_ascii=False, sort_keys=True, default=str)
+
+            self.session.flush()
+            # Invalidar descendientes (raro en borrador, pero por consistencia)
+            invalidated = self.rollforward.invalidate_descendants(periodo.id)
+
+            after = self._full_dict(periodo)
+            changed_fields = sorted([k for k in changes.keys() if before.get(k) != after.get(k)])
+            self.audit.log(
+                cpa_user=cpa_user,
+                entity_type="periodo",
+                entity_id=periodo.id,
+                action="update",
+                summary=f"Actualizo periodo {periodo.mes_inicial}..{periodo.mes_final}",
+                before=before,
+                after=after,
+                metadata={"changed_fields": changed_fields, "invalidated_descendants": invalidated},
+            )
+            self.session.commit()
+            return {"periodo": after, "invalidated_descendants": invalidated}
+        except Exception:
+            self.session.rollback()
+            raise
+
+    # ----------------------------------------------------------------- preview
+    def preview(self, periodo_id: str) -> dict:
+        """Recalcula el modelo financiero del payload actual sin persistir."""
+        periodo = self.periodos.get(periodo_id)
+        if not periodo:
+            raise PeriodoNotFoundError("Periodo no encontrado")
+        payload = parse_json_object(periodo.payload_json)
+        from financial_model import build_financial_model, result_to_json
+        result = build_financial_model(payload)
+        return result_to_json(result)
+
+    # ---------------------------------------------------------------- finalize
+    def finalize(self, periodo_id: str, *, cpa_user: str = "system") -> dict:
+        periodo = self.periodos.get(periodo_id)
+        if not periodo:
+            raise PeriodoNotFoundError("Periodo no encontrado")
+        if periodo.estado not in ("borrador",):
+            raise PeriodoConflictError(
+                f"Solo se puede finalizar un periodo en estado 'borrador'. Estado actual: '{periodo.estado}'."
+            )
+
+        before = self._full_dict(periodo)
+        try:
+            periodo.estado = "finalizado"
+            periodo.finalized_at = _utc_now()
+            # Calcular y cachear saldos finales para roll-forward
+            self.rollforward.cache_saldos_finales(periodo)
+            self.session.flush()
+            after = self._full_dict(periodo)
+            self.audit.log(
+                cpa_user=cpa_user,
+                entity_type="periodo",
+                entity_id=periodo.id,
+                action="finalize",
+                summary=f"Finalizo periodo {periodo.mes_inicial}..{periodo.mes_final}",
+                before=before,
+                after=after,
+                metadata={"saldos_finales_keys": sorted(json.loads(periodo.saldos_finales_json or "{}").keys())},
+            )
+            self.session.commit()
+            return {"periodo": after}
+        except Exception:
+            self.session.rollback()
+            raise
+
+    # --------------------------------------------------------------- duplicate
+    def duplicate(self, periodo_id: str, *, cpa_user: str = "system") -> dict:
+        original = self.periodos.get(periodo_id)
+        if not original:
+            raise PeriodoNotFoundError("Periodo no encontrado")
+
+        try:
+            clone = self.periodos.create(
+                cliente_id=original.cliente_id,
+                periodo_meses=original.periodo_meses,
+                mes_inicial=original.mes_inicial,
+                mes_final=original.mes_final,
+                estado="borrador",
+                tasa_cambio=original.tasa_cambio,
+                ingresos_base_usd=original.ingresos_base_usd,
+                variabilidad_ingresos_pct=original.variabilidad_ingresos_pct,
+                cost_pct=original.cost_pct,
+                variabilidad_costos_pct=original.variabilidad_costos_pct,
+                cash_sales_pct=original.cash_sales_pct,
+                seed=original.seed,
+                periodo_anterior_id=original.periodo_anterior_id,
+                saldos_iniciales_origen=original.saldos_iniciales_origen,
+                payload_json=original.payload_json,
+                period_blocks_json=original.period_blocks_json,
+                saldos_finales_json=None,
+                validation_json=original.validation_json,
+                documento_path=None,
+                documento_generado_at=None,
+                recompute_required=0,
+                created_by=cpa_user or "system",
+            )
+            after = self._full_dict(clone)
+            self.audit.log(
+                cpa_user=cpa_user,
+                entity_type="periodo",
+                entity_id=clone.id,
+                action="duplicate",
+                summary=f"Duplico periodo {original.id} como borrador {clone.id}",
+                after=after,
+                metadata={"source_periodo_id": original.id},
+            )
+            self.session.commit()
+            return {"periodo": after, "source_periodo_id": original.id}
+        except Exception:
+            self.session.rollback()
+            raise
+
+    # ----------------------------------------------------------------- delete
+    def hard_delete(self, periodo_id: str, *, cpa_user: str = "system") -> bool:
+        periodo = self.periodos.get(periodo_id)
+        if not periodo:
+            return False
+        if periodo.estado != "borrador":
+            raise PeriodoConflictError(
+                f"Solo se puede eliminar un periodo en estado 'borrador'. Estado actual: '{periodo.estado}'."
+            )
+        before = self._full_dict(periodo)
+        try:
+            self.audit.log(
+                cpa_user=cpa_user,
+                entity_type="periodo",
+                entity_id=periodo.id,
+                action="delete",
+                summary=f"Elimino borrador {periodo.mes_inicial}..{periodo.mes_final}",
+                before=before,
+                metadata={"hard_delete": True},
+            )
+            self.session.delete(periodo)
+            self.session.commit()
+            return True
+        except Exception:
+            self.session.rollback()
+            raise
+
+    # ----------------------------------------------------- rollforward preview
+    def rollforward_preview(self, cliente_id: str, mes_inicial: str) -> dict:
+        cliente = self.clientes.get(cliente_id)
+        if not cliente or not cliente.activo:
+            raise PeriodoNotFoundError("Cliente no encontrado o inactivo")
+        # Validar formato del mes
+        self._validate_mes_key(mes_inicial, "mes_inicial")
+        return self.rollforward.propose_for_new_periodo(cliente_id, mes_inicial)
+
+    # ----------------------------------------------------------------- internals
+    def _full_dict(self, periodo: PeriodoCertificacion) -> dict[str, Any]:
+        base = periodo_to_basic_dict(periodo)
+        base.update({
+            "tasa_cambio": periodo.tasa_cambio,
+            "ingresos_base_usd": periodo.ingresos_base_usd,
+            "variabilidad_ingresos_pct": periodo.variabilidad_ingresos_pct,
+            "cost_pct": periodo.cost_pct,
+            "variabilidad_costos_pct": periodo.variabilidad_costos_pct,
+            "cash_sales_pct": periodo.cash_sales_pct,
+            "seed": periodo.seed,
+            "periodo_anterior_id": periodo.periodo_anterior_id,
+            "saldos_iniciales_origen": periodo.saldos_iniciales_origen,
+            "documento_path": periodo.documento_path,
+            "documento_generado_at": iso(periodo.documento_generado_at),
+            "recompute_required": bool(periodo.recompute_required),
+            "saldos_finales": parse_json_object(periodo.saldos_finales_json) if periodo.saldos_finales_json else None,
+            "validation": parse_json_object(periodo.validation_json) if periodo.validation_json else None,
+        })
+        return base
+
+    def _validate_meses(self, data: Mapping[str, Any]) -> dict[str, Any]:
+        mes_inicial = str(data.get("mes_inicial") or "").strip()[:7]
+        mes_final = str(data.get("mes_final") or "").strip()[:7]
+        self._validate_mes_key(mes_inicial, "mes_inicial")
+        self._validate_mes_key(mes_final, "mes_final")
+        try:
+            inicio = pd.to_datetime(f"{mes_inicial}-01")
+            fin = pd.to_datetime(f"{mes_final}-01")
+        except Exception as exc:
+            raise PeriodoValidationError("Formato de mes invalido (use YYYY-MM)") from exc
+        if inicio > fin:
+            raise PeriodoValidationError("mes_inicial debe ser anterior o igual a mes_final")
+        meses = (fin.year - inicio.year) * 12 + (fin.month - inicio.month) + 1
+        if meses < 1 or meses > 60:
+            raise PeriodoValidationError("Rango invalido: debe abarcar entre 1 y 60 meses")
+        return {"mes_inicial": mes_inicial, "mes_final": mes_final, "periodo_meses": meses}
+
+    @staticmethod
+    def _validate_mes_key(value: str, label: str) -> None:
+        if not value or len(value) != 7 or value[4] != "-":
+            raise PeriodoValidationError(f"{label} debe tener formato YYYY-MM")
+        try:
+            pd.to_datetime(f"{value}-01")
+        except Exception as exc:
+            raise PeriodoValidationError(f"{label} no es un mes valido") from exc
+
+    @staticmethod
+    def _build_payload(
+        *,
+        meses: dict[str, Any],
+        data: Mapping[str, Any],
+        cliente,
+        balances: dict[str, float],
+    ) -> dict[str, Any]:
+        payload = {
+            "period": {
+                "start_month": meses["mes_inicial"],
+                "end_month": meses["mes_final"],
+                "months": meses["periodo_meses"],
+                "exchange_rate": _opt_float(data.get("tasa_cambio")) or 36.6243,
+                "seed": str(data.get("seed") or f"{cliente.id[:8]}-{meses['mes_final']}"),
+            },
+            "income": {},
+            "expenses": {},
+            "balances": dict(balances),
+            "movements": {},
+        }
+        for src, dst in (
+            ("ingresos_base_usd", "base_income_usd"),
+            ("variabilidad_ingresos_pct", "income_variability_pct"),
+            ("cost_pct", "cost_pct"),
+            ("variabilidad_costos_pct", "cost_variability_pct"),
+            ("cash_sales_pct", "cash_sales_pct"),
+        ):
+            value = data.get(src)
+            if value is not None and value != "":
+                try:
+                    payload["income"][dst] = float(value)
+                except (TypeError, ValueError):
+                    continue
+        # expenses override (opcional)
+        expenses_override = data.get("expenses_override") or {}
+        if isinstance(expenses_override, dict):
+            payload["expenses"] = {k: float(v) for k, v in expenses_override.items() if v is not None}
+        return payload
+
+    @staticmethod
+    def _run_and_capture_validation(payload: Mapping[str, Any]) -> dict[str, Any]:
+        from financial_model import build_financial_model
+        try:
+            result = build_financial_model(payload)
+        except Exception as exc:
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        return {
+            "ok": bool(
+                result.validations.get("er", {}).get("ok")
+                and result.validations.get("esf", {}).get("ok")
+                and result.validations.get("balance", {}).get("ok")
+            ),
+            "er": result.validations.get("er"),
+            "esf": result.validations.get("esf"),
+            "balance": result.validations.get("balance"),
+        }
+
+
+def _opt_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _utc_now():
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc)

@@ -36,7 +36,17 @@ from model_storage import (
 )
 from db.engine import get_engine, get_session
 from db.runtime import DatabaseNotInitialized, require_alembic_version
-from services import ClienteService, GiroService, PlantillaService, ServiceConflictError, ServiceValidationError
+from services import (
+    ClienteService,
+    GiroService,
+    PeriodoConflictError,
+    PeriodoNotFoundError,
+    PeriodoService,
+    PeriodoValidationError,
+    PlantillaService,
+    ServiceConflictError,
+    ServiceValidationError,
+)
 
 
 load_dotenv()
@@ -80,7 +90,11 @@ def _db_requires_alembic() -> bool:
 def _is_db_api_path(path: str) -> bool:
     if path == "/api/clientes/extract-from-docs":
         return False
-    return path.startswith("/api/clientes") or path.startswith("/api/giros")
+    return (
+        path.startswith("/api/clientes")
+        or path.startswith("/api/giros")
+        or path.startswith("/api/periodos")
+    )
 
 
 @app.before_request
@@ -197,10 +211,12 @@ def index():
 
 
 def _service_error_response(exc: Exception):
-    if isinstance(exc, ServiceConflictError):
+    if isinstance(exc, (ServiceConflictError, PeriodoConflictError)):
         return {"ok": False, "error": str(exc)}, 409
-    if isinstance(exc, ServiceValidationError):
+    if isinstance(exc, (ServiceValidationError, PeriodoValidationError)):
         return {"ok": False, "error": str(exc)}, 400
+    if isinstance(exc, PeriodoNotFoundError):
+        return {"ok": False, "error": str(exc)}, 404
     return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 400
 
 
@@ -326,6 +342,94 @@ def api_cliente_extract_from_docs():
     finally:
         for path in saved:
             _safe_unlink(path)
+
+
+@app.get("/api/clientes/<cliente_id>/periodos")
+def api_list_periodos(cliente_id: str):
+    try:
+        service = PeriodoService(_db_session())
+        return {"ok": True, "periodos": service.list_for_cliente(cliente_id)}
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.post("/api/clientes/<cliente_id>/periodos")
+def api_create_periodo(cliente_id: str):
+    try:
+        body = _json_body()
+        result = PeriodoService(_db_session()).create(cliente_id, body, cpa_user=_cpa_user())
+        return {"ok": True, **result}, 201
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.post("/api/clientes/<cliente_id>/rollforward-preview")
+def api_rollforward_preview(cliente_id: str):
+    try:
+        body = _json_body()
+        mes_inicial = str(body.get("mes_inicial") or "").strip()
+        result = PeriodoService(_db_session()).rollforward_preview(cliente_id, mes_inicial)
+        return {"ok": True, "rollforward": result}
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.get("/api/periodos/<periodo_id>")
+def api_get_periodo(periodo_id: str):
+    try:
+        detail = PeriodoService(_db_session()).get_detail(periodo_id)
+        if not detail:
+            return {"ok": False, "error": "Periodo no encontrado"}, 404
+        return {"ok": True, **detail}
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.put("/api/periodos/<periodo_id>")
+def api_update_periodo(periodo_id: str):
+    try:
+        result = PeriodoService(_db_session()).update(periodo_id, _json_body(), cpa_user=_cpa_user())
+        return {"ok": True, **result}
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.post("/api/periodos/<periodo_id>/preview")
+def api_preview_periodo(periodo_id: str):
+    try:
+        rendered = PeriodoService(_db_session()).preview(periodo_id)
+        return {"ok": True, "render": rendered}
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.post("/api/periodos/<periodo_id>/finalizar")
+def api_finalize_periodo(periodo_id: str):
+    try:
+        result = PeriodoService(_db_session()).finalize(periodo_id, cpa_user=_cpa_user())
+        return {"ok": True, **result}
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.post("/api/periodos/<periodo_id>/duplicar")
+def api_duplicate_periodo(periodo_id: str):
+    try:
+        result = PeriodoService(_db_session()).duplicate(periodo_id, cpa_user=_cpa_user())
+        return {"ok": True, **result}, 201
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.delete("/api/periodos/<periodo_id>")
+def api_delete_periodo(periodo_id: str):
+    try:
+        ok = PeriodoService(_db_session()).hard_delete(periodo_id, cpa_user=_cpa_user())
+        if not ok:
+            return {"ok": False, "error": "Periodo no encontrado"}, 404
+        return {"ok": True}
+    except Exception as exc:
+        return _service_error_response(exc)
 
 
 @app.post("/api/upload")

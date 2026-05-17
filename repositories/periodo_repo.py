@@ -49,3 +49,23 @@ class PeriodoRepository:
             .limit(1)
         )
         return self.session.scalar(stmt) is not None
+
+    def list_descendants(self, periodo_id: str) -> list[PeriodoCertificacion]:
+        """Periodos que hicieron rollforward desde periodo_id."""
+        stmt = select(PeriodoCertificacion).where(
+            PeriodoCertificacion.periodo_anterior_id == periodo_id
+        )
+        return list(self.session.scalars(stmt))
+
+    def mark_recompute_required(self, periodo_ids: list[str]) -> int:
+        """Marca periodos como recompute_required=1. Devuelve cuantos se afectaron."""
+        if not periodo_ids:
+            return 0
+        count = 0
+        for pid in periodo_ids:
+            p = self.get(pid)
+            if p is not None:
+                p.recompute_required = 1
+                count += 1
+        self.session.flush()
+        return count

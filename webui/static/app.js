@@ -916,18 +916,189 @@
     const wrap = qs('#clientePeriodosList');
     if (!wrap) return;
     wrap.replaceChildren();
+    const btnNew = qs('#btnNewPeriodo');
+    if (btnNew) btnNew.disabled = !currentClienteId;
     if (!periodos || !periodos.length) {
       wrap.className = 'saved-list empty-state';
-      wrap.textContent = 'Proximamente: historico de certificaciones.';
+      wrap.textContent = currentClienteId
+        ? 'Sin periodos. Pulse "Nuevo periodo" para crear el primero.'
+        : 'Abra o guarde un cliente para revisar sus periodos.';
       return;
     }
     wrap.className = 'saved-list';
     periodos.forEach(periodo => {
       const item = document.createElement('div');
       item.className = 'saved-item';
-      item.innerHTML = `<strong>${periodo.mes_inicial || ''} a ${periodo.mes_final || ''}</strong><div class="meta">${periodo.estado || ''}</div>`;
+      const recompute = periodo.recompute_required ? ' <span class="badge warn">Recalcular</span>' : '';
+      const finalizedAt = periodo.finalized_at ? new Date(periodo.finalized_at).toLocaleDateString() : '';
+      item.innerHTML = `
+        <div>
+          <strong>${periodo.mes_inicial} a ${periodo.mes_final}</strong>${recompute}
+          <div class="meta">${periodo.estado} ${finalizedAt ? '· ' + finalizedAt : ''} · saldos: ${periodo.saldos_iniciales_origen || 'manual'}</div>
+        </div>
+        <div class="actions"></div>
+      `;
+      const actions = item.querySelector('.actions');
+      if (periodo.estado === 'borrador') {
+        const finalize = document.createElement('button');
+        finalize.className = 'btn primary';
+        finalize.textContent = 'Finalizar';
+        finalize.addEventListener('click', () => finalizePeriodo(periodo.id));
+        actions.appendChild(finalize);
+        const del = document.createElement('button');
+        del.className = 'btn danger';
+        del.textContent = 'Eliminar';
+        del.addEventListener('click', () => deletePeriodo(periodo.id, periodo));
+        actions.appendChild(del);
+      } else {
+        const dup = document.createElement('button');
+        dup.className = 'btn';
+        dup.textContent = 'Duplicar como borrador';
+        dup.addEventListener('click', () => duplicatePeriodo(periodo.id));
+        actions.appendChild(dup);
+      }
       wrap.appendChild(item);
     });
+  }
+
+  // ====================== Periodos: formulario y acciones ======================
+  function setPeriodosMessage(text, type = 'info') {
+    setScopedMessage('#periodosMessages', text, type);
+  }
+  function setPeriodoFormMessage(text, type = 'info') {
+    setScopedMessage('#periodoFormMessages', text, type);
+  }
+
+  function openPeriodoForm() {
+    if (!currentClienteId) {
+      setPeriodosMessage('Abra o guarde un cliente antes de crear un periodo.', 'error');
+      return;
+    }
+    const panel = qs('#periodoFormPanel');
+    if (!panel) return;
+    panel.classList.remove('hidden');
+    const subtitle = qs('#periodoFormSubtitle');
+    if (subtitle) subtitle.textContent = `Cliente: ${selectedClienteName || ''}`;
+    setPeriodoFormMessage('', 'info');
+    qs('#rollforwardPreview')?.classList.add('hidden');
+    const rfChk = qs('#periodo_rollforward');
+    if (rfChk) rfChk.checked = false;
+    panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function closePeriodoForm() {
+    qs('#periodoFormPanel')?.classList.add('hidden');
+  }
+
+  async function refreshRollforwardPreview() {
+    const wrap = qs('#rollforwardPreview');
+    if (!wrap) return;
+    const checked = qs('#periodo_rollforward')?.checked;
+    if (!checked || !currentClienteId) {
+      wrap.classList.add('hidden');
+      wrap.replaceChildren();
+      return;
+    }
+    const mesInicial = qs('#periodo_mes_inicial')?.value || '';
+    if (!mesInicial) {
+      wrap.classList.remove('hidden');
+      wrap.textContent = 'Indique mes inicial para previsualizar saldos.';
+      return;
+    }
+    try {
+      const data = await fetchJson(`/api/clientes/${currentClienteId}/rollforward-preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mes_inicial: mesInicial.slice(0, 7) }),
+      });
+      const rf = data.rollforward || {};
+      wrap.classList.remove('hidden');
+      if (!rf.has_anterior) {
+        wrap.innerHTML = '<div class="info">No hay periodo anterior finalizado. Se usaran saldos manuales (todos en 0).</div>';
+        return;
+      }
+      const cuentas = Object.entries(rf.saldos || {}).slice(0, 6)
+        .map(([k, v]) => `<li>${k}: ${Number(v).toLocaleString()}</li>`).join('');
+      const warningHtml = rf.warning ? `<div class="warning">${rf.warning}</div>` : '';
+      wrap.innerHTML = `
+        ${warningHtml}
+        <div><strong>Saldos heredados del periodo ${rf.mes_anterior_final}:</strong></div>
+        <ul class="rollforward-saldos">${cuentas}${Object.keys(rf.saldos || {}).length > 6 ? '<li>...</li>' : ''}</ul>
+      `;
+    } catch (e) {
+      wrap.classList.remove('hidden');
+      wrap.innerHTML = `<div class="error">${String(e.message || e)}</div>`;
+    }
+  }
+
+  async function savePeriodo() {
+    if (!currentClienteId) return;
+    const body = {
+      mes_inicial: (qs('#periodo_mes_inicial')?.value || '').slice(0, 7),
+      mes_final: (qs('#periodo_mes_final')?.value || '').slice(0, 7),
+      tasa_cambio: numberValue('periodo_tasa_cambio', 36.6243),
+      ingresos_base_usd: numberValue('periodo_ingresos_base_usd', 0),
+      variabilidad_ingresos_pct: numberValue('periodo_var_ingresos', 12),
+      cost_pct: numberValue('periodo_cost_pct', 70),
+      variabilidad_costos_pct: numberValue('periodo_var_costos', 5),
+      cash_sales_pct: numberValue('periodo_cash_sales_pct', 85),
+      rollforward: !!qs('#periodo_rollforward')?.checked,
+    };
+    const seed = qs('#periodo_seed')?.value?.trim();
+    if (seed) body.seed = seed;
+    if (!body.mes_inicial || !body.mes_final) {
+      setPeriodoFormMessage('Indique mes inicial y mes final.', 'error');
+      return;
+    }
+    const btn = qs('#btnSavePeriodo');
+    if (btn) btn.disabled = true;
+    try {
+      const data = await fetchJson(`/api/clientes/${currentClienteId}/periodos`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const warning = data.rollforward?.warning;
+      setPeriodoFormMessage(`Periodo creado (${data.periodo.mes_inicial}..${data.periodo.mes_final}).${warning ? ' ' + warning : ''}`, warning ? 'warning' : 'success');
+      closePeriodoForm();
+      await loadClienteDetail(currentClienteId, { openForm: true });
+    } catch (e) {
+      setPeriodoFormMessage(String(e.message || e), 'error');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function finalizePeriodo(periodoId) {
+    if (!window.confirm('Finalizar este periodo? Los saldos finales se calcularan y guardaran para el roll-forward del proximo.')) return;
+    try {
+      await fetchJson(`/api/periodos/${periodoId}/finalizar`, { method: 'POST' });
+      setPeriodosMessage('Periodo finalizado.', 'success');
+      await loadClienteDetail(currentClienteId, { openForm: true });
+    } catch (e) {
+      setPeriodosMessage(String(e.message || e), 'error');
+    }
+  }
+
+  async function duplicatePeriodo(periodoId) {
+    try {
+      await fetchJson(`/api/periodos/${periodoId}/duplicar`, { method: 'POST' });
+      setPeriodosMessage('Periodo duplicado como nuevo borrador.', 'success');
+      await loadClienteDetail(currentClienteId, { openForm: true });
+    } catch (e) {
+      setPeriodosMessage(String(e.message || e), 'error');
+    }
+  }
+
+  async function deletePeriodo(periodoId, periodo) {
+    if (!window.confirm(`Eliminar borrador ${periodo.mes_inicial}..${periodo.mes_final}? Esta accion es permanente.`)) return;
+    try {
+      await fetchJson(`/api/periodos/${periodoId}`, { method: 'DELETE' });
+      setPeriodosMessage('Borrador eliminado.', 'success');
+      await loadClienteDetail(currentClienteId, { openForm: true });
+    } catch (e) {
+      setPeriodosMessage(String(e.message || e), 'error');
+    }
   }
 
   function renderClienteTemplate(data) {
@@ -2733,6 +2904,11 @@
   qs('#btnAddTemplateLine')?.addEventListener('click', () => addTemplateRow('', 0));
   qs('#btnResetTemplate')?.addEventListener('click', resetClienteTemplateToGiro);
   qs('#btnSaveTemplate')?.addEventListener('click', saveClienteTemplate);
+  qs('#btnNewPeriodo')?.addEventListener('click', openPeriodoForm);
+  qs('#btnClosePeriodoForm')?.addEventListener('click', closePeriodoForm);
+  qs('#btnSavePeriodo')?.addEventListener('click', savePeriodo);
+  qs('#periodo_rollforward')?.addEventListener('change', refreshRollforwardPreview);
+  qs('#periodo_mes_inicial')?.addEventListener('change', refreshRollforwardPreview);
   qs('#clientesGiroFilter')?.addEventListener('change', loadClientes);
   qs('#c_giro_negocio_id')?.addEventListener('change', () => {
     if (!currentClienteId) resetClienteTemplateToGiro();

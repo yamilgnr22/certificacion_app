@@ -919,5 +919,22 @@ main.container { padding: 20px 0 40px; }
 .preview.clickable { cursor: pointer; }
 .preview.clickable:hover { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(6,182,212,0.15) inset; }
 
+/* Periodos */
+.client-periods-panel { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
+.workbench-header.compact { padding-bottom: 8px; }
+.periodo-form-panel { margin-top: 16px; }
+.rollforward-block { margin-top: 16px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); }
+.rollforward-block label.checkbox { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.rollforward-preview { margin-top: 12px; padding: 10px; background: rgba(6, 182, 212, 0.06); border-left: 3px solid var(--primary); border-radius: 4px; font-size: 13px; }
+.rollforward-preview .warning { color: var(--warn); margin-bottom: 6px; }
+.rollforward-preview .error { color: #f87171; }
+.rollforward-preview .info { color: var(--muted); }
+.rollforward-saldos { list-style: none; padding-left: 0; margin: 6px 0 0; font-family: monospace; font-size: 12px; }
+.rollforward-saldos li { padding: 2px 0; color: var(--muted); }
+.saved-item { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 6px; background: var(--panel-2); }
+.saved-item .meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.saved-item .actions { display: flex; gap: 6px; }
+.badge.warn { background: var(--warn); color: #1f1410; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 6px; }
+
 /* Utility */
 .hidden { display: none !important; }
