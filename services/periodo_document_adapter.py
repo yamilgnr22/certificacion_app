@@ -67,7 +67,7 @@ def _client_block(cliente: Cliente | None, giro: GiroNegocio | None) -> dict[str
     ced = _safe_json(cliente.last_cedula_extracted_json)
     mat = _safe_json(cliente.last_matricula_extracted_json)
 
-    # Mapeo: lo que SI tenemos en SQLite + fallback a campos extraidos por vision IA
+    # Resolucion en cascada: valor persistido en Cliente -> fallback a vision IA -> ""
     block = {
         "nombre_completo": cliente.nombre_completo or _first_str(ced, "nombre_completo", "name"),
         "cedula": cliente.cedula,
@@ -79,18 +79,17 @@ def _client_block(cliente: Cliente | None, giro: GiroNegocio | None) -> dict[str
         "matricula": cliente.matricula_roc or _first_str(mat, "roc", "matricula", "registro"),
         "ruc": cliente.ruc or _first_str(mat, "ruc"),
         "nombre_negocio": cliente.nombre_negocio or _first_str(mat, "nombre_negocio", "nombre"),
-        # Campos no persistidos: intentar extracciones IA
-        "sexo": _first_str(ced, "sexo", "genero"),
-        "estado_civil": _first_str(ced, "estado_civil"),
-        "profesion": _first_str(ced, "profesion", "profession"),
-        "domicilio": _first_str(ced, "lugar_nacimiento", "domicilio"),
+        # Campos de certificacion: directos del Cliente con fallback IA
+        "sexo": cliente.sexo or _first_str(ced, "sexo", "genero"),
+        "estado_civil": cliente.estado_civil or _first_str(ced, "estado_civil"),
+        "profesion": cliente.profesion or _first_str(ced, "profesion", "profession"),
+        "domicilio": cliente.domicilio or _first_str(ced, "lugar_nacimiento", "domicilio"),
         "primer_apellido": _first_str(ced, "primer_apellido", "apellido1", "apellidos"),
-        # Campos a futuro (Cliente no los tiene aun)
-        "banco": "",
-        "regimen": "",
-        "antiguedad": "",
-        "empleados": "",
-        # Giro: si hay catalogo, usar su nombre; sino, vacio
+        "banco": cliente.banco or "",
+        "regimen": cliente.regimen or "",
+        "antiguedad": cliente.antiguedad or "",
+        "empleados": cliente.empleados or "",
+        # Giro: nombre del catalogo
         "giro_negocio": (giro.nombre if giro else "") or "",
         # Fecha certificacion: hoy. El contador puede ajustar en Word.
         "fecha_certificacion": None,

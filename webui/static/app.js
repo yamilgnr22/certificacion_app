@@ -741,7 +741,9 @@
     currentClienteOriginalCedula = '';
     ['c_nombre_completo', 'c_cedula', 'c_telefono', 'c_email', 'c_nombre_negocio', 'c_ruc',
       'c_matricula_roc', 'c_direccion_domicilio', 'c_direccion_negocio', 'c_fecha_nacimiento',
-      'c_fecha_inicio_negocio', 'c_giro_negocio_id'].forEach(id => {
+      'c_fecha_inicio_negocio', 'c_giro_negocio_id',
+      'c_sexo', 'c_estado_civil', 'c_profesion', 'c_banco', 'c_regimen',
+      'c_antiguedad', 'c_empleados', 'c_domicilio'].forEach(id => {
       const el = qs(`#${id}`);
       if (el) el.value = '';
     });
@@ -783,6 +785,15 @@
       c_fecha_nacimiento: cliente.fecha_nacimiento ? String(cliente.fecha_nacimiento).slice(0, 10) : '',
       c_fecha_inicio_negocio: cliente.fecha_inicio_negocio ? String(cliente.fecha_inicio_negocio).slice(0, 10) : '',
       c_giro_negocio_id: cliente.giro_negocio_id,
+      // Campos de certificacion
+      c_sexo: cliente.sexo || '',
+      c_estado_civil: cliente.estado_civil,
+      c_profesion: cliente.profesion,
+      c_banco: cliente.banco,
+      c_regimen: cliente.regimen,
+      c_antiguedad: cliente.antiguedad,
+      c_empleados: cliente.empleados,
+      c_domicilio: cliente.domicilio,
     };
     Object.entries(mapping).forEach(([id, value]) => setClienteField(id, value));
     renderClienteTemplate(detail.plantilla_gastos || null);
@@ -803,6 +814,15 @@
       fecha_nacimiento: clienteFieldValue('c_fecha_nacimiento'),
       fecha_inicio_negocio: clienteFieldValue('c_fecha_inicio_negocio'),
       giro_negocio_id: clienteFieldValue('c_giro_negocio_id'),
+      // Campos de certificacion
+      sexo: clienteFieldValue('c_sexo'),
+      estado_civil: clienteFieldValue('c_estado_civil'),
+      profesion: clienteFieldValue('c_profesion'),
+      banco: clienteFieldValue('c_banco'),
+      regimen: clienteFieldValue('c_regimen'),
+      antiguedad: clienteFieldValue('c_antiguedad'),
+      empleados: clienteFieldValue('c_empleados'),
+      domicilio: clienteFieldValue('c_domicilio'),
     };
   }
 
@@ -890,8 +910,23 @@
       direccion_personal: 'c_direccion_domicilio',
       direccion_negocio: 'c_direccion_negocio',
       matricula: 'c_matricula_roc',
+      // Campos de certificacion extraidos por vision IA
+      sexo: 'c_sexo',
+      estado_civil: 'c_estado_civil',
+      profesion: 'c_profesion',
+      domicilio: 'c_domicilio',
     };
-    Object.entries(mapping).forEach(([key, id]) => setClienteField(id, patch[key]));
+    Object.entries(mapping).forEach(([key, id]) => {
+      let value = patch[key];
+      // Normalizar sexo a las opciones del select
+      if (key === 'sexo' && typeof value === 'string') {
+        const n = value.trim().toLowerCase();
+        if (n.startsWith('f')) value = 'Femenino';
+        else if (n.startsWith('m')) value = 'Masculino';
+        else if (n) value = 'Otro';
+      }
+      setClienteField(id, value);
+    });
   }
 
   async function extractClienteDocs() {

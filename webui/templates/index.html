@@ -83,6 +83,24 @@
             <div class="field"><label>Fecha inicio negocio</label><input id="c_fecha_inicio_negocio" type="date"></div>
             <div class="field" data-client-field="giro_negocio_id"><label>Giro de negocio</label><select id="c_giro_negocio_id"></select></div>
           </div>
+          <h3 class="form-section-title">Datos para certificacion</h3>
+          <div class="grid-3">
+            <div class="field"><label>Sexo</label>
+              <select id="c_sexo">
+                <option value="">—</option>
+                <option value="Femenino">Femenino</option>
+                <option value="Masculino">Masculino</option>
+                <option value="Otro">Otro</option>
+              </select>
+            </div>
+            <div class="field"><label>Estado civil</label><input id="c_estado_civil" type="text" placeholder="casada, soltero..."></div>
+            <div class="field"><label>Profesion</label><input id="c_profesion" type="text" placeholder="Licenciada en Economia"></div>
+            <div class="field"><label>Banco</label><input id="c_banco" type="text" placeholder="BAC, LAFISE..."></div>
+            <div class="field"><label>Regimen tributario</label><input id="c_regimen" type="text" placeholder="Cuota Fija, General..."></div>
+            <div class="field"><label>Antiguedad del negocio</label><input id="c_antiguedad" type="text" placeholder="6 años"></div>
+            <div class="field"><label>Empleados</label><input id="c_empleados" type="text" placeholder="6"></div>
+            <div class="field"><label>Domicilio (municipio/depto)</label><input id="c_domicilio" type="text" placeholder="Municipio de Managua, Departamento de Managua."></div>
+          </div>
           <div class="actions">
             <button id="btnSaveCliente" class="btn primary" type="button">Guardar cliente</button>
             <button id="btnUseClienteInModel" class="btn" type="button">Usar en modelo</button>

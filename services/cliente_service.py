@@ -36,7 +36,17 @@ class ClienteService:
         "direccion_negocio",
         "giro_negocio_id",
         "fecha_inicio_negocio",
+        # Campos de certificacion
+        "sexo",
+        "estado_civil",
+        "profesion",
+        "banco",
+        "regimen",
+        "antiguedad",
+        "empleados",
+        "domicilio",
     }
+    SEXO_VALIDOS = {"femenino", "masculino", "otro"}
 
     def __init__(self, session: Session):
         self.session = session
@@ -195,6 +205,14 @@ class ClienteService:
                 value = None
             if key in {"fecha_nacimiento", "fecha_inicio_negocio"} and isinstance(value, str) and value:
                 value = date.fromisoformat(value[:10])
+            if key == "sexo" and value:
+                normalized = str(value).strip().lower()
+                if normalized not in self.SEXO_VALIDOS:
+                    raise ServiceValidationError(
+                        f"Sexo invalido. Valores aceptados: {', '.join(sorted(self.SEXO_VALIDOS))}"
+                    )
+                # Normalizamos capitalizando para mostrar consistente
+                value = normalized.capitalize()
             out[key] = value
         if not partial:
             for key in self.REQUIRED:
