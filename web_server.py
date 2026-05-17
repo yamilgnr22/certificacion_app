@@ -35,7 +35,7 @@ from model_storage import (
     save_final,
 )
 from db.engine import get_engine, get_session
-from db.runtime import DatabaseNotInitialized, require_alembic_version
+from db.runtime import DatabaseNotInitialized, DatabaseOutOfDate, require_alembic_version
 from services import (
     ClienteService,
     GiroService,
@@ -113,7 +113,7 @@ def _open_db_session_for_api():
         if _db_requires_alembic():
             require_alembic_version(engine)
         g.db_session = get_session(engine)()
-    except DatabaseNotInitialized as exc:
+    except (DatabaseNotInitialized, DatabaseOutOfDate) as exc:
         return {"ok": False, "error": str(exc)}, 500
     except Exception as exc:
         return {"ok": False, "error": f"No se pudo abrir la base de datos: {type(exc).__name__}: {exc}"}, 500
