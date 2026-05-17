@@ -449,6 +449,16 @@
   let modelAccountingVouchers = [];
   let modelChatCommands = [];
   let selectedChatVoucherId = '';
+  let clienteGiros = [];
+  let clientesCache = [];
+  let clientesLoadedOnce = false;
+  let currentClienteDetail = null;
+  let currentClienteId = null;
+  let currentClienteOriginalCedula = '';
+  let selectedClienteId = '';
+  let selectedClienteName = '';
+  let selectedGiroId = '';
+  let clientesSearchTimer = null;
 
   function setModelMessage(text, type = 'info') {
     const wrap = qs('#modelMessages');
@@ -470,6 +480,38 @@
     div.className = `msg ${type}`;
     div.textContent = text;
     wrap.appendChild(div);
+  }
+
+  function setScopedMessage(selector, text, type = 'info') {
+    const wrap = qs(selector);
+    if (!wrap) return;
+    wrap.innerHTML = '';
+    if (!text) return;
+    const div = document.createElement('div');
+    div.className = `msg ${type}`;
+    div.textContent = text;
+    wrap.appendChild(div);
+  }
+
+  function setClientesMessage(text, type = 'info') {
+    setScopedMessage('#clientesMessages', text, type);
+  }
+
+  function setClienteFormMessage(text, type = 'info') {
+    setScopedMessage('#clienteFormMessages', text, type);
+  }
+
+  async function fetchJson(url, options = {}) {
+    const resp = await fetch(url, options);
+    let data = {};
+    try { data = await resp.json(); } catch {}
+    if (!resp.ok || data.ok === false) {
+      const err = new Error(data.error || `Error HTTP ${resp.status}`);
+      err.status = resp.status;
+      err.data = data;
+      throw err;
+    }
+    return data;
   }
 
   function clearDocExtraction() {
@@ -548,10 +590,493 @@
   function setFieldValue(id, value) {
     if (value === undefined || value === null || value === '') return;
     const el = qs(`#${id}`);
-    if (!el) return;
+    if (!el) {
+      console.warn(`Campo destino no encontrado: ${id}`);
+      return;
+    }
     el.value = String(value);
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  function fillSelect(select, items, { emptyLabel = '', valueKey = 'id', labelKey = 'nombre' } = {}) {
+    if (!select) return;
+    const current = select.value;
+    select.replaceChildren();
+    if (emptyLabel) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = emptyLabel;
+      select.appendChild(opt);
+    }
+    (items || []).forEach(item => {
+      const opt = document.createElement('option');
+      opt.value = String(item[valueKey] || '');
+      opt.textContent = String(item[labelKey] || item[valueKey] || '');
+      select.appendChild(opt);
+    });
+    if ([...select.options].some(opt => opt.value === current)) select.value = current;
+  }
+
+  function clienteFieldValue(id) {
+    const el = qs(`#${id}`);
+    return el ? el.value.trim() : '';
+  }
+
+  function setClienteField(id, value) {
+    const el = qs(`#${id}`);
+    if (!el || value === undefined || value === null || value === '') return;
+    el.value = String(value);
+  }
+
+  function markClienteInvalid(fields = []) {
+    qsa('#clienteFormPanel .field').forEach(field => {
+      field.classList.remove('invalid');
+      const err = field.querySelector('.field-error');
+      if (err) err.remove();
+    });
+    fields.forEach(({ key, message }) => {
+      const field = qs(`#clienteFormPanel [data-client-field="${key}"]`);
+      if (!field) return;
+      field.classList.add('invalid');
+      const err = document.createElement('div');
+      err.className = 'field-error';
+      err.textContent = message;
+      field.appendChild(err);
+    });
+  }
+
+  async function loadGiros() {
+    const data = await fetchJson('/api/giros');
+    clienteGiros = data.giros || [];
+    fillSelect(qs('#clientesGiroFilter'), clienteGiros, { emptyLabel: 'Todos' });
+    fillSelect(qs('#c_giro_negocio_id'), clienteGiros, { emptyLabel: 'Seleccione giro' });
+    return clienteGiros;
+  }
+
+  async function loadClientes() {
+    const params = new URLSearchParams();
+    const q = clienteFieldValue('clientesSearch');
+    const giro = clienteFieldValue('clientesGiroFilter');
+    if (q) params.set('q', q);
+    if (giro) params.set('giro', giro);
+    const url = `/api/clientes${params.toString() ? `?${params}` : ''}`;
+    const data = await fetchJson(url);
+    clientesCache = data.clientes || [];
+    clientesLoadedOnce = true;
+    renderClientes();
+  }
+
+  async function refreshClientes() {
+    try {
+      setClientesMessage('Cargando clientes...', 'info');
+      await loadGiros();
+      await loadClientes();
+      setClientesMessage('', 'info');
+    } catch (e) {
+      renderClientes([]);
+      setClientesMessage(String(e.message || e), 'error');
+    }
+  }
+
+  function renderClientes(records = clientesCache) {
+    const wrap = qs('#clientesList');
+    if (!wrap) return;
+    wrap.replaceChildren();
+    if (!records.length) {
+      wrap.className = 'client-list empty-state';
+      wrap.textContent = clientesLoadedOnce ? 'Sin clientes para mostrar.' : 'Sin clientes cargados.';
+      return;
+    }
+    wrap.className = 'client-list';
+    records.forEach(cliente => {
+      const item = document.createElement('div');
+      item.className = 'client-item';
+      const info = document.createElement('div');
+      const title = document.createElement('strong');
+      title.textContent = cliente.nombre_completo || 'Cliente sin nombre';
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = [
+        cliente.cedula,
+        cliente.nombre_negocio,
+        cliente.giro?.nombre || cliente.giro_negocio_id,
+        cliente.updated_at ? `Actualizado ${String(cliente.updated_at).slice(0, 10)}` : '',
+      ].filter(Boolean).join(' · ');
+      info.append(title, meta);
+      const actions = document.createElement('div');
+      actions.className = 'client-actions';
+      const open = document.createElement('button');
+      open.className = 'btn';
+      open.type = 'button';
+      open.textContent = 'Abrir';
+      open.addEventListener('click', () => loadClienteDetail(cliente.id, { openForm: true, readonly: true }));
+      const edit = document.createElement('button');
+      edit.className = 'btn';
+      edit.type = 'button';
+      edit.textContent = 'Editar';
+      edit.addEventListener('click', () => loadClienteDetail(cliente.id, { openForm: true }));
+      const use = document.createElement('button');
+      use.className = 'btn primary';
+      use.type = 'button';
+      use.textContent = 'Usar en modelo';
+      use.addEventListener('click', () => loadClienteDetail(cliente.id, { useInModel: true }));
+      actions.append(open, edit, use);
+      item.append(info, actions);
+      wrap.appendChild(item);
+    });
+  }
+
+  function clearClienteForm() {
+    currentClienteDetail = null;
+    currentClienteId = null;
+    currentClienteOriginalCedula = '';
+    ['c_nombre_completo', 'c_cedula', 'c_telefono', 'c_email', 'c_nombre_negocio', 'c_ruc',
+      'c_matricula_roc', 'c_direccion_domicilio', 'c_direccion_negocio', 'c_fecha_nacimiento',
+      'c_fecha_inicio_negocio', 'c_giro_negocio_id'].forEach(id => {
+      const el = qs(`#${id}`);
+      if (el) el.value = '';
+    });
+    ['c_doc_cedula_front', 'c_doc_cedula_back', 'c_doc_matricula'].forEach(id => {
+      const el = qs(`#${id}`);
+      if (el) el.value = '';
+    });
+    markClienteInvalid([]);
+    setClienteFormMessage('', 'info');
+    renderClienteTemplate(null);
+    renderClientePeriodos([]);
+  }
+
+  function openClienteForm({ mode = 'new', detail = null } = {}) {
+    clearClienteForm();
+    const panel = qs('#clienteFormPanel');
+    if (panel) panel.classList.remove('hidden');
+    qs('#clienteFormTitle').textContent = mode === 'new' ? 'Nuevo cliente' : 'Ficha del cliente';
+    qs('#btnDeleteCliente')?.classList.toggle('hidden', mode === 'new');
+    if (detail) fillClienteForm(detail);
+    panel?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function fillClienteForm(detail) {
+    currentClienteDetail = detail;
+    const cliente = detail.cliente || detail;
+    currentClienteId = cliente.id || null;
+    currentClienteOriginalCedula = cliente.cedula || '';
+    const mapping = {
+      c_nombre_completo: cliente.nombre_completo,
+      c_cedula: cliente.cedula,
+      c_telefono: cliente.telefono,
+      c_email: cliente.email,
+      c_nombre_negocio: cliente.nombre_negocio,
+      c_ruc: cliente.ruc,
+      c_matricula_roc: cliente.matricula_roc,
+      c_direccion_domicilio: cliente.direccion_domicilio,
+      c_direccion_negocio: cliente.direccion_negocio,
+      c_fecha_nacimiento: cliente.fecha_nacimiento ? String(cliente.fecha_nacimiento).slice(0, 10) : '',
+      c_fecha_inicio_negocio: cliente.fecha_inicio_negocio ? String(cliente.fecha_inicio_negocio).slice(0, 10) : '',
+      c_giro_negocio_id: cliente.giro_negocio_id,
+    };
+    Object.entries(mapping).forEach(([id, value]) => setClienteField(id, value));
+    renderClienteTemplate(detail.plantilla_gastos || null);
+    renderClientePeriodos(detail.periodos || []);
+  }
+
+  function collectClientePayload() {
+    return {
+      nombre_completo: clienteFieldValue('c_nombre_completo'),
+      cedula: clienteFieldValue('c_cedula'),
+      telefono: clienteFieldValue('c_telefono'),
+      email: clienteFieldValue('c_email'),
+      nombre_negocio: clienteFieldValue('c_nombre_negocio'),
+      ruc: clienteFieldValue('c_ruc'),
+      matricula_roc: clienteFieldValue('c_matricula_roc'),
+      direccion_domicilio: clienteFieldValue('c_direccion_domicilio'),
+      direccion_negocio: clienteFieldValue('c_direccion_negocio'),
+      fecha_nacimiento: clienteFieldValue('c_fecha_nacimiento'),
+      fecha_inicio_negocio: clienteFieldValue('c_fecha_inicio_negocio'),
+      giro_negocio_id: clienteFieldValue('c_giro_negocio_id'),
+    };
+  }
+
+  function validateClientePayload(payload) {
+    const required = [
+      ['nombre_completo', 'Nombre completo es requerido.'],
+      ['cedula', 'Cedula es requerida.'],
+      ['nombre_negocio', 'Nombre del negocio es requerido.'],
+      ['direccion_negocio', 'Direccion del negocio es requerida.'],
+      ['giro_negocio_id', 'Seleccione un giro.'],
+    ];
+    const errors = required.filter(([key]) => !payload[key]).map(([key, message]) => ({ key, message }));
+    markClienteInvalid(errors);
+    return errors;
+  }
+
+  async function saveCliente() {
+    const payload = collectClientePayload();
+    const errors = validateClientePayload(payload);
+    if (errors.length) {
+      setClienteFormMessage('Revise los campos requeridos.', 'error');
+      return;
+    }
+    if (currentClienteId && payload.cedula !== currentClienteOriginalCedula) {
+      const ok = window.confirm('Cambiar la cedula afecta los datos legales del cliente. ¿Continuar?');
+      if (!ok) return;
+    }
+    try {
+      const wasNew = !currentClienteId;
+      setClienteFormMessage('Guardando cliente...', 'info');
+      const url = currentClienteId ? `/api/clientes/${encodeURIComponent(currentClienteId)}` : '/api/clientes';
+      const method = currentClienteId ? 'PUT' : 'POST';
+      const data = await fetchJson(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const cliente = data.cliente;
+      currentClienteId = cliente.id;
+      currentClienteOriginalCedula = cliente.cedula;
+      await loadClientes();
+      await loadClienteDetail(cliente.id, { openForm: true });
+      setClienteFormMessage(wasNew ? 'Cliente creado.' : 'Cliente guardado.', 'success');
+    } catch (e) {
+      const msg = String(e.message || e);
+      if (/cedula/i.test(msg)) markClienteInvalid([{ key: 'cedula', message: msg }]);
+      if (/giro/i.test(msg)) markClienteInvalid([{ key: 'giro_negocio_id', message: msg }]);
+      setClienteFormMessage(msg, 'error');
+    }
+  }
+
+  async function loadClienteDetail(clienteId, { openForm = false, useInModel = false } = {}) {
+    try {
+      const data = await fetchJson(`/api/clientes/${encodeURIComponent(clienteId)}`);
+      currentClienteDetail = data;
+      if (openForm) openClienteForm({ mode: 'edit', detail: data });
+      if (useInModel) useClienteInModel(data);
+      return data;
+    } catch (e) {
+      setClientesMessage(String(e.message || e), 'error');
+      return null;
+    }
+  }
+
+  async function deleteCliente() {
+    if (!currentClienteId || !currentClienteDetail?.cliente) return;
+    const name = currentClienteDetail.cliente.nombre_completo || 'este cliente';
+    const ok = window.confirm(`Esto desactivara el cliente ${name}. Sus periodos historicos permanecen accesibles.`);
+    if (!ok) return;
+    try {
+      await fetchJson(`/api/clientes/${encodeURIComponent(currentClienteId)}`, { method: 'DELETE' });
+      setClientesMessage('Cliente desactivado.', 'success');
+      qs('#clienteFormPanel')?.classList.add('hidden');
+      clearClienteForm();
+      await loadClientes();
+    } catch (e) {
+      setClienteFormMessage(String(e.message || e), 'error');
+    }
+  }
+
+  function applyClientePatchToForm(patch) {
+    const mapping = {
+      nombre_completo: 'c_nombre_completo',
+      cedula: 'c_cedula',
+      direccion_personal: 'c_direccion_domicilio',
+      direccion_negocio: 'c_direccion_negocio',
+      matricula: 'c_matricula_roc',
+    };
+    Object.entries(mapping).forEach(([key, id]) => setClienteField(id, patch[key]));
+  }
+
+  async function extractClienteDocs() {
+    const front = qs('#c_doc_cedula_front')?.files?.[0];
+    const back = qs('#c_doc_cedula_back')?.files?.[0];
+    const matricula = qs('#c_doc_matricula')?.files?.[0];
+    if (!front && !back && !matricula) {
+      setClienteFormMessage('Adjunte al menos una imagen de cedula o matricula.', 'error');
+      return;
+    }
+    const form = new FormData();
+    if (front) form.append('cedula_front', front);
+    if (back) form.append('cedula_back', back);
+    if (matricula) form.append('matricula', matricula);
+    const btn = qs('#btnClienteExtractDocs');
+    if (btn) btn.disabled = true;
+    try {
+      setClienteFormMessage('Extrayendo datos desde documentos...', 'info');
+      const data = await fetchJson('/api/clientes/extract-from-docs', { method: 'POST', body: form });
+      applyClientePatchToForm(data.client_patch || {});
+      setClienteFormMessage('Datos extraidos y cargados al formulario. Revise antes de guardar.', 'success');
+    } catch (e) {
+      setClienteFormMessage(`${String(e.message || e)} Puede continuar en modo manual.`, 'error');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  function renderClientePeriodos(periodos) {
+    const wrap = qs('#clientePeriodosList');
+    if (!wrap) return;
+    wrap.replaceChildren();
+    if (!periodos || !periodos.length) {
+      wrap.className = 'saved-list empty-state';
+      wrap.textContent = 'Proximamente: historico de certificaciones.';
+      return;
+    }
+    wrap.className = 'saved-list';
+    periodos.forEach(periodo => {
+      const item = document.createElement('div');
+      item.className = 'saved-item';
+      item.innerHTML = `<strong>${periodo.mes_inicial || ''} a ${periodo.mes_final || ''}</strong><div class="meta">${periodo.estado || ''}</div>`;
+      wrap.appendChild(item);
+    });
+  }
+
+  function renderClienteTemplate(data) {
+    const wrap = qs('#clienteTemplateEditor');
+    const origin = qs('#clienteTemplateOrigin');
+    if (!wrap) return;
+    wrap.replaceChildren();
+    const plantilla = data?.plantilla || {};
+    if (origin) origin.textContent = data ? `Origen: ${data.origen || 'default'}` : 'Sin plantilla cargada.';
+    if (!Object.keys(plantilla).length) {
+      wrap.className = 'template-editor empty-state';
+      wrap.textContent = 'Abra o guarde un cliente para revisar la plantilla.';
+      return;
+    }
+    wrap.className = 'template-editor';
+    Object.entries(plantilla).forEach(([name, amount]) => addTemplateRow(name, amount));
+  }
+
+  function addTemplateRow(name = '', amount = 0) {
+    const wrap = qs('#clienteTemplateEditor');
+    if (!wrap) return;
+    if (wrap.classList.contains('empty-state')) {
+      wrap.className = 'template-editor';
+      wrap.replaceChildren();
+    }
+    const row = document.createElement('div');
+    row.className = 'template-row';
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.value = name;
+    nameInput.placeholder = 'Concepto';
+    const amountInput = document.createElement('input');
+    amountInput.type = 'number';
+    amountInput.step = '0.01';
+    amountInput.min = '0';
+    amountInput.value = Number(amount || 0);
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'btn danger';
+    remove.textContent = 'Eliminar';
+    remove.addEventListener('click', () => row.remove());
+    row.append(nameInput, amountInput, remove);
+    wrap.appendChild(row);
+  }
+
+  function collectTemplateRows() {
+    const rows = qsa('#clienteTemplateEditor .template-row');
+    const out = {};
+    for (const row of rows) {
+      const inputs = row.querySelectorAll('input');
+      const key = (inputs[0]?.value || '').trim();
+      const amount = Number(inputs[1]?.value || 0);
+      if (!key) continue;
+      if (!Number.isFinite(amount) || amount < 0) {
+        throw new Error(`Monto invalido para ${key}`);
+      }
+      out[key] = amount;
+    }
+    if (!Object.keys(out).length) throw new Error('La plantilla no puede estar vacia.');
+    return out;
+  }
+
+  async function saveClienteTemplate() {
+    if (!currentClienteId) {
+      setClienteFormMessage('Guarde el cliente antes de guardar una plantilla personalizada.', 'error');
+      return;
+    }
+    try {
+      const plantilla = collectTemplateRows();
+      const data = await fetchJson(`/api/clientes/${encodeURIComponent(currentClienteId)}/plantilla-gastos`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plantilla }),
+      });
+      renderClienteTemplate(data.plantilla_gastos);
+      await loadClienteDetail(currentClienteId, { openForm: false });
+      setClienteFormMessage('Plantilla personalizada guardada.', 'success');
+    } catch (e) {
+      setClienteFormMessage(String(e.message || e), 'error');
+    }
+  }
+
+  function resetClienteTemplateToGiro() {
+    const cliente = currentClienteDetail?.cliente;
+    const giroId = cliente?.giro_negocio_id || clienteFieldValue('c_giro_negocio_id');
+    const giro = clienteGiros.find(item => item.id === giroId);
+    if (!giro) {
+      setClienteFormMessage('Seleccione un giro para resetear la plantilla.', 'error');
+      return;
+    }
+    renderClienteTemplate({ origen: 'giro', plantilla: giro.plantilla_gastos || {} });
+    setClienteFormMessage('Plantilla restablecida desde el giro. Guarde plantilla para conservar el cambio.', 'info');
+  }
+
+  function applyClienteTemplateToModel(templateData) {
+    const template = templateData?.plantilla || {};
+    const mapping = {
+      'Sueldos y Salarios': 'm_g_sueldos',
+      'Servicios Publicos': 'm_g_servicios',
+      'Servicios Públicos': 'm_g_servicios',
+      'Alcaldia y DGI': 'm_g_alcaldia',
+      'Alcaldía y DGI': 'm_g_alcaldia',
+      'Combustible': 'm_g_combustible',
+      'Publicidad': 'm_g_publicidad',
+      'Mantenimientos': 'm_g_mantenimientos',
+      'Renta': 'm_g_renta',
+      'Seguros': 'm_g_seguros',
+      'Otros Gastos': 'm_g_otros',
+      'Otros gastos': 'm_g_otros',
+    };
+    const unmatched = [];
+    Object.entries(template).forEach(([key, value]) => {
+      const id = mapping[key];
+      if (id) setFieldValue(id, value);
+      else unmatched.push(key);
+    });
+    return unmatched;
+  }
+
+  function useClienteInModel(detail = currentClienteDetail) {
+    if (!detail?.cliente) return;
+    const cliente = detail.cliente;
+    selectedClienteId = cliente.id || '';
+    selectedClienteName = cliente.nombre_completo || '';
+    selectedGiroId = cliente.giro_negocio_id || '';
+    const modelMapping = {
+      m_nombre_completo: cliente.nombre_completo,
+      m_cedula: cliente.cedula,
+      m_contacto: cliente.telefono,
+      m_direccion_personal: cliente.direccion_domicilio,
+      m_direccion_negocio: cliente.direccion_negocio,
+      m_matricula: cliente.matricula_roc,
+      m_giro_negocio: cliente.giro?.nombre || cliente.giro_negocio_id,
+    };
+    Object.entries(modelMapping).forEach(([id, value]) => setFieldValue(id, value));
+    const unmatched = applyClienteTemplateToModel(detail.plantilla_gastos || {});
+    const badge = qs('#selectedClienteBadge');
+    if (badge) {
+      badge.textContent = `Usando cliente: ${selectedClienteName} (snapshot)`;
+      badge.classList.remove('hidden');
+    }
+    activateMode('modelMode');
+    lastModelPayload = null;
+    setGenerateEnabled(false);
+    if (unmatched.length) {
+      setModelMessage(`Cliente cargado. Revise categorias de plantilla no aplicadas al formulario: ${unmatched.join(', ')}.`, 'warning');
+    } else {
+      setModelMessage('Cliente cargado al modelo como snapshot.', 'info');
+    }
   }
 
   function applyDocExtraction() {
@@ -666,6 +1191,8 @@
   function buildModelPayload() {
     return {
       client: {
+        cliente_id: selectedClienteId || undefined,
+        giro_negocio_id: selectedGiroId || undefined,
         nombre_completo: inputValue('m_nombre_completo'),
         cedula: inputValue('m_cedula'),
         banco: inputValue('m_banco'),
@@ -2161,12 +2688,15 @@
     await requestModelChatProposal('deshacer último ajuste');
   }
 
+  function activateMode(target) {
+    if (!target) return;
+    qsa('.mode-tab').forEach(b => b.classList.toggle('active', b.getAttribute('data-mode-target') === target));
+    qsa('.mode-panel').forEach(panel => panel.classList.toggle('hidden', panel.id !== target));
+    if (target === 'clientesMode') refreshClientes();
+  }
+
   qsa('.mode-tab').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const target = btn.getAttribute('data-mode-target');
-      qsa('.mode-tab').forEach(b => b.classList.toggle('active', b === btn));
-      qsa('.mode-panel').forEach(panel => panel.classList.toggle('hidden', panel.id !== target));
-    });
+    btn.addEventListener('click', () => activateMode(btn.getAttribute('data-mode-target')));
   });
 
   qsa('#modelMode input, #modelMode select, #modelMode textarea').forEach((el) => {
@@ -2193,6 +2723,24 @@
   qs('#btnSaveFinal')?.addEventListener('click', saveCurrentFinal);
   qs('#btnRefreshSavedModels')?.addEventListener('click', refreshSavedModels);
   qs('#savedModelsFilter')?.addEventListener('input', renderSavedModels);
+  qs('#btnRefreshClientes')?.addEventListener('click', refreshClientes);
+  qs('#btnNewCliente')?.addEventListener('click', () => openClienteForm({ mode: 'new' }));
+  qs('#btnCloseClienteForm')?.addEventListener('click', () => qs('#clienteFormPanel')?.classList.add('hidden'));
+  qs('#btnSaveCliente')?.addEventListener('click', saveCliente);
+  qs('#btnDeleteCliente')?.addEventListener('click', deleteCliente);
+  qs('#btnClienteExtractDocs')?.addEventListener('click', extractClienteDocs);
+  qs('#btnUseClienteInModel')?.addEventListener('click', () => useClienteInModel(currentClienteDetail));
+  qs('#btnAddTemplateLine')?.addEventListener('click', () => addTemplateRow('', 0));
+  qs('#btnResetTemplate')?.addEventListener('click', resetClienteTemplateToGiro);
+  qs('#btnSaveTemplate')?.addEventListener('click', saveClienteTemplate);
+  qs('#clientesGiroFilter')?.addEventListener('change', loadClientes);
+  qs('#c_giro_negocio_id')?.addEventListener('change', () => {
+    if (!currentClienteId) resetClienteTemplateToGiro();
+  });
+  qs('#clientesSearch')?.addEventListener('input', () => {
+    clearTimeout(clientesSearchTimer);
+    clientesSearchTimer = setTimeout(loadClientes, 300);
+  });
   qs('#btnExtractClientDocs')?.addEventListener('click', onExtractClientDocs);
   qs('#modelAccountSelect')?.addEventListener('change', renderSelectedAccountMovement);
   qs('#modelVoucherTypeFilter')?.addEventListener('change', () => {

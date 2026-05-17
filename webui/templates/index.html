@@ -15,13 +15,109 @@
 
     <main class="container">
       <section class="mode-switcher" aria-label="Modo de trabajo">
+        <button class="mode-tab" type="button" data-mode-target="clientesMode">Clientes</button>
         <button class="mode-tab active" type="button" data-mode-target="modelMode">Crear certificación desde app</button>
         <button class="mode-tab" type="button" data-mode-target="excelMode">Generar desde Excel</button>
       </section>
 
+      <div id="clientesMode" class="mode-panel hidden">
+        <section class="card client-manager">
+          <div class="workbench-header">
+            <div>
+              <h2>Clientes</h2>
+              <p class="workbench-subtitle">Cree, revise y seleccione clientes para precargar el modelo financiero.</p>
+            </div>
+            <button id="btnNewCliente" class="btn primary" type="button">Nuevo cliente</button>
+          </div>
+          <div id="clientesMessages" class="messages"></div>
+          <div class="client-toolbar">
+            <div class="field">
+              <label>Buscar</label>
+              <input id="clientesSearch" type="text" placeholder="Nombre, cedula, negocio o RUC">
+            </div>
+            <div class="field">
+              <label>Giro</label>
+              <select id="clientesGiroFilter">
+                <option value="">Todos</option>
+              </select>
+            </div>
+            <button id="btnRefreshClientes" class="btn" type="button">Actualizar</button>
+          </div>
+          <div id="clientesList" class="client-list empty-state">Sin clientes cargados.</div>
+        </section>
+
+        <section id="clienteFormPanel" class="card client-form-panel hidden">
+          <div class="workbench-header">
+            <div>
+              <h2 id="clienteFormTitle">Nuevo cliente</h2>
+              <p class="workbench-subtitle">Revise los datos antes de guardar. La extraccion documental solo precarga el formulario.</p>
+            </div>
+            <button id="btnCloseClienteForm" class="btn" type="button">Cerrar</button>
+          </div>
+          <div id="clienteFormMessages" class="messages"></div>
+          <div class="doc-extract-panel">
+            <div class="doc-extract-header">
+              <div>
+                <h3>Extraer desde documentos</h3>
+                <p class="workbench-subtitle">Use cedula y matricula para precargar campos del cliente.</p>
+              </div>
+              <button id="btnClienteExtractDocs" class="btn primary" type="button">Extraer datos</button>
+            </div>
+            <div class="doc-extract-grid">
+              <div class="field"><label>Cedula - Frente</label><input id="c_doc_cedula_front" type="file" accept=".png,.jpg,.jpeg,.bmp,.tif,.tiff,.pdf"></div>
+              <div class="field"><label>Cedula - Reverso</label><input id="c_doc_cedula_back" type="file" accept=".png,.jpg,.jpeg,.bmp,.tif,.tiff,.pdf"></div>
+              <div class="field"><label>Matricula</label><input id="c_doc_matricula" type="file" accept=".png,.jpg,.jpeg,.bmp,.tif,.tiff,.pdf"></div>
+            </div>
+          </div>
+          <div class="grid-3">
+            <div class="field" data-client-field="nombre_completo"><label>Nombre completo</label><input id="c_nombre_completo" type="text"></div>
+            <div class="field" data-client-field="cedula"><label>Cedula</label><input id="c_cedula" type="text"></div>
+            <div class="field"><label>Telefono</label><input id="c_telefono" type="text"></div>
+            <div class="field"><label>Email</label><input id="c_email" type="text"></div>
+            <div class="field" data-client-field="nombre_negocio"><label>Nombre del negocio</label><input id="c_nombre_negocio" type="text"></div>
+            <div class="field"><label>RUC</label><input id="c_ruc" type="text"></div>
+            <div class="field"><label>Matricula/ROC</label><input id="c_matricula_roc" type="text"></div>
+            <div class="field"><label>Direccion domicilio</label><input id="c_direccion_domicilio" type="text"></div>
+            <div class="field" data-client-field="direccion_negocio"><label>Direccion negocio</label><input id="c_direccion_negocio" type="text"></div>
+            <div class="field"><label>Fecha nacimiento</label><input id="c_fecha_nacimiento" type="date"></div>
+            <div class="field"><label>Fecha inicio negocio</label><input id="c_fecha_inicio_negocio" type="date"></div>
+            <div class="field" data-client-field="giro_negocio_id"><label>Giro de negocio</label><select id="c_giro_negocio_id"></select></div>
+          </div>
+          <div class="actions">
+            <button id="btnSaveCliente" class="btn primary" type="button">Guardar cliente</button>
+            <button id="btnUseClienteInModel" class="btn" type="button">Usar en modelo</button>
+            <button id="btnDeleteCliente" class="btn danger hidden" type="button">Eliminar cliente</button>
+          </div>
+
+          <div class="client-detail-grid">
+            <div class="client-template-panel">
+              <div class="workbench-header compact">
+                <div>
+                  <h3>Plantilla de gastos</h3>
+                  <p id="clienteTemplateOrigin" class="workbench-subtitle">Sin plantilla cargada.</p>
+                </div>
+                <div class="actions small-actions">
+                  <button id="btnAddTemplateLine" class="btn" type="button">Agregar linea</button>
+                  <button id="btnResetTemplate" class="btn" type="button">Resetear a giro</button>
+                  <button id="btnSaveTemplate" class="btn primary" type="button">Guardar plantilla</button>
+                </div>
+              </div>
+              <div id="clienteTemplateEditor" class="template-editor empty-state">Abra o guarde un cliente para revisar la plantilla.</div>
+            </div>
+            <div class="client-periods-panel">
+              <h3>Periodos</h3>
+              <div id="clientePeriodosList" class="saved-list empty-state">Proximamente: historico de certificaciones.</div>
+            </div>
+          </div>
+        </section>
+      </div>
+
       <div id="modelMode" class="mode-panel">
         <section class="card">
-          <h2>Datos del cliente</h2>
+          <div class="workbench-header">
+            <h2>Datos del cliente</h2>
+            <span id="selectedClienteBadge" class="client-snapshot-badge hidden"></span>
+          </div>
           <div class="doc-extract-panel">
             <div class="doc-extract-header">
               <div>
