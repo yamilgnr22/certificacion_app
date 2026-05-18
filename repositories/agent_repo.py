@@ -6,7 +6,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from db.models import AgentMessage, LegacyCallCounter
+from db.models import AgentMessage, AgentProposal, LegacyCallCounter
 
 
 class AgentRepository:
@@ -46,3 +46,29 @@ class AgentRepository:
         counter.updated_at = datetime.now(timezone.utc)
         self.session.flush()
         return counter
+
+    def add_proposal(
+        self,
+        *,
+        periodo_id: str,
+        command_id: str,
+        payload_before_hash: str,
+        proposal_json: str,
+        projected_payload_json: str | None,
+        expires_at,
+    ) -> AgentProposal:
+        proposal = AgentProposal(
+            periodo_id=periodo_id,
+            command_id=command_id,
+            status="pending",
+            payload_before_hash=payload_before_hash,
+            proposal_json=proposal_json,
+            projected_payload_json=projected_payload_json,
+            expires_at=expires_at,
+        )
+        self.session.add(proposal)
+        self.session.flush()
+        return proposal
+
+    def get_proposal(self, proposal_id: str) -> AgentProposal | None:
+        return self.session.get(AgentProposal, proposal_id)

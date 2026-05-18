@@ -40,6 +40,7 @@ from services import (
     AgentCommandService,
     AgentConfigError,
     AgentNotFoundError,
+    AgentProposalConflictError,
     AgentServiceError,
     AgentValidationError,
     ClienteService,
@@ -247,6 +248,8 @@ def index():
 def _service_error_response(exc: Exception):
     if isinstance(exc, AgentNotFoundError):
         return {"ok": False, "error": str(exc), "assistant_message": str(exc)}, 404
+    if isinstance(exc, AgentProposalConflictError):
+        return {"ok": False, "error": str(exc), "assistant_message": str(exc)}, 409
     if isinstance(exc, (AgentConfigError, AgentValidationError)):
         return {"ok": False, "error": str(exc), "assistant_message": str(exc)}, 400
     if isinstance(exc, AgentServiceError):
@@ -526,6 +529,24 @@ def api_agent_command():
             ui_context=body.get("ui_context") if isinstance(body.get("ui_context"), dict) else {},
             cpa_user=_cpa_user(),
         )
+        return data, 200
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.post("/api/agent/proposals/<proposal_id>/apply")
+def api_agent_apply_proposal(proposal_id: str):
+    try:
+        data = AgentCommandService(_db_session()).apply_proposal(proposal_id, cpa_user=_cpa_user())
+        return data, 200
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.post("/api/agent/proposals/<proposal_id>/discard")
+def api_agent_discard_proposal(proposal_id: str):
+    try:
+        data = AgentCommandService(_db_session()).discard_proposal(proposal_id, cpa_user=_cpa_user())
         return data, 200
     except Exception as exc:
         return _service_error_response(exc)

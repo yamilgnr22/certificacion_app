@@ -5,6 +5,7 @@ from services.agent_service import (
     AgentCommandService,
     AgentConfigError,
     AgentNotFoundError,
+    AgentProposalConflictError,
     AgentServiceError,
     AgentValidationError,
 )
@@ -24,6 +25,7 @@ __all__ = [
     "AgentCommandService",
     "AgentConfigError",
     "AgentNotFoundError",
+    "AgentProposalConflictError",
     "AgentServiceError",
     "AgentValidationError",
     "ClienteService",
