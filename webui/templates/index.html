@@ -378,16 +378,17 @@
 
         <section class="card">
           <div class="actions center">
-            <button id="btnSaveDraft" class="btn" type="button">Guardar borrador</button>
-            <button id="btnOpenSavedModels" class="btn" type="button">Cargar</button>
+            <button id="btnSaveDraft" class="btn" type="button">Guardar borrador JSON</button>
+            <button id="btnOpenSavedModels" class="btn" type="button">Cargar JSON</button>
             <button id="btnModeloPreview" class="btn primary xl" type="button">Previsualizar todo</button>
             <button id="btnModeloGenerar" class="btn xl" type="button" disabled>Generar documento</button>
-            <button id="btnSaveFinal" class="btn" type="button">Guardar final</button>
+            <button id="btnSaveFinal" class="btn" type="button">Guardar final JSON</button>
           </div>
           <div id="modelMessages" class="messages"></div>
           <div id="savedModelsPanel" class="saved-models hidden">
             <div class="saved-models-header">
-              <h3>Modelos guardados</h3>
+              <h3>Respaldo legacy JSON</h3>
+              <p class="muted">Respaldo del flujo anterior. El flujo principal es Clientes -> Periodos -> Editor avanzado.</p>
               <button id="btnRefreshSavedModels" class="btn" type="button">Actualizar</button>
             </div>
             <div class="field">

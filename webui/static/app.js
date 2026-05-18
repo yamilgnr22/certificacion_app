@@ -971,22 +971,34 @@
     wrap.className = 'saved-list';
     periodos.forEach(periodo => {
       const item = document.createElement('div');
-      item.className = 'saved-item';
-      const recompute = periodo.recompute_required ? ' <span class="badge warn">Recalcular</span>' : '';
+      item.className = 'saved-item periodo-item';
+      const estado = periodo.estado || 'borrador';
+      const recompute = periodo.recompute_required
+        ? '<span class="periodo-status recompute">requiere recalcular</span>'
+        : '';
       const finalizedAt = periodo.finalized_at ? new Date(periodo.finalized_at).toLocaleDateString() : '';
       item.innerHTML = `
         <div>
-          <strong>${periodo.mes_inicial} a ${periodo.mes_final}</strong>${recompute}
-          <div class="meta">${periodo.estado} ${finalizedAt ? '· ' + finalizedAt : ''} · saldos: ${periodo.saldos_iniciales_origen || 'manual'}</div>
+          <strong>${periodo.mes_inicial} a ${periodo.mes_final}</strong>
+          <div class="periodo-badges">
+            <span class="periodo-status ${estado}">${estado}</span>
+            ${recompute}
+          </div>
+          <div class="meta">${finalizedAt ? 'Finalizado: ' + finalizedAt + ' - ' : ''}saldos: ${periodo.saldos_iniciales_origen || 'manual'}</div>
         </div>
         <div class="actions"></div>
       `;
       const actions = item.querySelector('.actions');
+      const openEditor = document.createElement('button');
+      openEditor.className = 'btn primary';
+      openEditor.textContent = 'Abrir en editor';
+      openEditor.addEventListener('click', () => openPeriodoInEditor(periodo.id));
+      actions.appendChild(openEditor);
       if (periodo.estado === 'borrador') {
         const finalize = document.createElement('button');
-        finalize.className = 'btn primary';
+        finalize.className = 'btn';
         finalize.textContent = 'Finalizar';
-        finalize.addEventListener('click', () => finalizePeriodo(periodo.id));
+        finalize.addEventListener('click', () => finalizePeriodo(periodo.id, periodo));
         actions.appendChild(finalize);
         const del = document.createElement('button');
         del.className = 'btn danger';
@@ -1011,13 +1023,13 @@
           const regen = document.createElement('button');
           regen.className = 'btn';
           regen.textContent = 'Regenerar';
-          regen.addEventListener('click', () => generatePeriodoDocument(periodo.id, true));
+          regen.addEventListener('click', () => generatePeriodoDocument(periodo.id, true, periodo));
           actions.appendChild(regen);
         } else {
           const gen = document.createElement('button');
           gen.className = 'btn primary';
           gen.textContent = 'Generar documento';
-          gen.addEventListener('click', () => generatePeriodoDocument(periodo.id, false));
+          gen.addEventListener('click', () => generatePeriodoDocument(periodo.id, false, periodo));
           actions.appendChild(gen);
         }
         const dup = document.createElement('button');
@@ -1030,7 +1042,22 @@
     });
   }
 
-  async function generatePeriodoDocument(periodoId, isRegen) {
+  async function openPeriodoInEditor(periodoId) {
+    activateMode('modelMode');
+    await loadEditablePeriodos();
+    const selector = qs('#editableSelector');
+    if (selector) selector.value = periodoId;
+    await selectEditablePeriodo(periodoId);
+    qs('#editorPeriodoHeader')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function confirmIfRecomputeRequired(periodo, actionLabel) {
+    if (!periodo?.recompute_required) return true;
+    return window.confirm(`Este periodo requiere recalcular. Revise los saldos antes de ${actionLabel}. Desea continuar?`);
+  }
+
+  async function generatePeriodoDocument(periodoId, isRegen, periodo = null) {
+    if (!confirmIfRecomputeRequired(periodo, isRegen ? 'regenerar el documento' : 'generar el documento')) return;
     if (isRegen && !window.confirm('Regenerar documento sobreescribira el archivo anterior. Continuar?')) return;
     setPeriodosMessage('Generando documento...', 'info');
     try {
@@ -1205,7 +1232,8 @@
     }
   }
 
-  async function finalizePeriodo(periodoId) {
+  async function finalizePeriodo(periodoId, periodo = null) {
+    if (!confirmIfRecomputeRequired(periodo, 'finalizarlo')) return;
     if (!window.confirm('Finalizar este periodo? Los saldos finales se calcularan y guardaran para el roll-forward del proximo.')) return;
     try {
       await fetchJson(`/api/periodos/${periodoId}/finalizar`, { method: 'POST' });
@@ -1581,17 +1609,28 @@
   let activePeriodoId = null;
   let activePeriodoDetail = null;
   let editorDirty = false;
+  let suppressEditorDirty = false;
 
   function setEditorMessage(text, type = 'info') {
     setScopedMessage('#editorMessages', text, type);
   }
 
   function markEditorDirty(dirty = true) {
+    if (suppressEditorDirty) return;
     editorDirty = !!(dirty && activePeriodoId && activePeriodoDetail?.periodo?.estado === 'borrador');
     const badge = qs('#epHeaderDirty');
     if (badge) badge.classList.toggle('hidden', !editorDirty);
     const saveBtn = qs('#btnSavePeriodoChanges');
     if (saveBtn) saveBtn.disabled = !editorDirty;
+  }
+
+  function runWithoutEditorDirty(fn) {
+    suppressEditorDirty = true;
+    try {
+      return fn();
+    } finally {
+      suppressEditorDirty = false;
+    }
   }
 
   function updateEditorHeader() {
@@ -1699,8 +1738,8 @@
     if (!periodoId) {
       activePeriodoId = null;
       activePeriodoDetail = null;
-      editorDirty = false;
       updateEditorHeader();
+      markEditorDirty(false);
       setModelModeReadonly(false);
       return;
     }
@@ -1717,9 +1756,10 @@
       editorDirty = false;
       // Aplicar el payload del periodo a los inputs del modelo
       if (data.periodo?.payload) {
-        applyModelPayload(data.periodo.payload, { draftId: null });
+        runWithoutEditorDirty(() => applyModelPayload(data.periodo.payload, { draftId: null }));
       }
       updateEditorHeader();
+      markEditorDirty(false);
       setEditorMessage(`Periodo cargado: ${data.cliente?.nombre_completo} ${data.periodo.mes_inicial}..${data.periodo.mes_final}`, 'success');
     } catch (e) {
       setEditorMessage(`Error cargando periodo: ${e.message || e}`, 'error');

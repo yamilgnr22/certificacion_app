@@ -741,6 +741,9 @@ main.container { padding: 20px 0 40px; }
   justify-content: space-between;
   gap: 12px;
 }
+.saved-models-header h3,
+.saved-models-header p { margin: 0; }
+.saved-models-header p { flex: 1; color: var(--muted); font-size: 13px; }
 .saved-models-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -935,6 +938,14 @@ main.container { padding: 20px 0 40px; }
 .saved-item .meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
 .saved-item .actions { display: flex; gap: 6px; }
 .badge.warn { background: var(--warn); color: #1f1410; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 6px; }
+.periodo-item { align-items: flex-start; }
+.periodo-item .actions { flex-wrap: wrap; justify-content: flex-end; }
+.periodo-badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 4px; }
+.periodo-status { display: inline-flex; align-items: center; border: 1px solid var(--border); border-radius: 999px; padding: 3px 8px; font-size: 11px; font-weight: 700; text-transform: lowercase; background: #171717; color: var(--muted); }
+.periodo-status.borrador { background: rgba(34,197,94,0.12); color: #86efac; border-color: rgba(34,197,94,0.25); }
+.periodo-status.finalizado { background: rgba(6,182,212,0.12); color: #67e8f9; border-color: rgba(6,182,212,0.28); }
+.periodo-status.certificado { background: rgba(245,158,11,0.14); color: #fcd34d; border-color: rgba(245,158,11,0.30); }
+.periodo-status.recompute { background: rgba(245,158,11,0.16); color: #fcd34d; border-color: rgba(245,158,11,0.35); }
 
 /* Editor avanzado: selector de periodo */
 .active-periodo-toolbar { margin-top: 12px; }
