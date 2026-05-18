@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from db.engine import get_engine, get_session, init_db, session_scope
+from db.engine import get_engine, get_session, init_db, session_factory, session_scope
 from db.models import (
     AuditLog,
     Base,
@@ -18,7 +18,8 @@ __all__ = [
     "GiroNegocio",
     "PeriodoCertificacion",
     "get_engine",
-    "get_session",
+    "get_session",  # deprecado, mantener por compat
     "init_db",
+    "session_factory",
     "session_scope",
 ]

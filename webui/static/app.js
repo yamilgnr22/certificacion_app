@@ -993,7 +993,14 @@
         del.textContent = 'Eliminar';
         del.addEventListener('click', () => deletePeriodo(periodo.id, periodo));
         actions.appendChild(del);
-      } else {
+      }
+      // Boton de auditoria siempre disponible
+      const audit = document.createElement('button');
+      audit.className = 'btn';
+      audit.textContent = 'Ver auditoria';
+      audit.addEventListener('click', () => showPeriodoAudit(periodo.id, periodo));
+      actions.appendChild(audit);
+      if (periodo.estado !== 'borrador') {
         // Estado finalizado o certificado
         if (periodo.documento_generado_at) {
           const download = document.createElement('button');
@@ -1038,6 +1045,56 @@
   function downloadPeriodoDocument(periodoId) {
     // Navegacion directa al endpoint binario; el navegador maneja la descarga.
     window.open(`/api/periodos/${periodoId}/documento`, '_blank');
+  }
+
+  async function showPeriodoAudit(periodoId, periodo) {
+    const overlay = document.createElement('div');
+    overlay.className = 'audit-overlay';
+    overlay.innerHTML = `
+      <div class="audit-modal">
+        <div class="audit-header">
+          <h3>Auditoria del periodo ${periodo.mes_inicial}..${periodo.mes_final}</h3>
+          <button class="btn" id="auditClose">Cerrar</button>
+        </div>
+        <div class="audit-body"><div class="loading">Cargando historial...</div></div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+    overlay.querySelector('#auditClose').addEventListener('click', close);
+    overlay.addEventListener('click', (ev) => { if (ev.target === overlay) close(); });
+    try {
+      const data = await fetchJson(`/api/audit?entity_type=periodo&entity_id=${encodeURIComponent(periodoId)}`);
+      const body = overlay.querySelector('.audit-body');
+      const records = data.records || [];
+      if (!records.length) {
+        body.innerHTML = '<p class="meta">Sin entradas de auditoria.</p>';
+        return;
+      }
+      const rows = records.map((r, i) => {
+        const ts = r.timestamp ? new Date(r.timestamp).toLocaleString() : '';
+        const meta = r.metadata || {};
+        const changed = meta.changed_fields || meta.changed_blocks || [];
+        const changedStr = Array.isArray(changed) && changed.length ? ` · campos: ${changed.join(', ')}` : '';
+        const invalidados = (meta.invalidated_descendants || []).length;
+        const invalidStr = invalidados ? ` · ${invalidados} hijos invalidados` : '';
+        return `<tr>
+          <td>${i + 1}</td>
+          <td>${ts}</td>
+          <td><strong>${r.action}</strong></td>
+          <td>${r.cpa_user || 'system'}</td>
+          <td>${r.summary || ''}${changedStr}${invalidStr}</td>
+        </tr>`;
+      }).join('');
+      body.innerHTML = `
+        <table class="audit-table">
+          <thead><tr><th>#</th><th>Fecha</th><th>Accion</th><th>Usuario</th><th>Detalle</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+    } catch (e) {
+      overlay.querySelector('.audit-body').innerHTML = `<p class="error">${String(e.message || e)}</p>`;
+    }
   }
 
   // ====================== Periodos: formulario y acciones ======================
@@ -1567,13 +1624,15 @@
     }
     // Deshabilitar inputs del modelMode si no es borrador
     setModelModeReadonly(!isBorrador);
+    // Chat asistente solo en borrador
+    setChatEnabled(isBorrador);
   }
 
   function setModelModeReadonly(readonly) {
     const panel = qs('#modelMode');
     if (!panel) return;
     qsa('#modelMode input, #modelMode select, #modelMode textarea, #modelMode button').forEach(el => {
-      // Excluir controles del editor mismo y del chat
+      // Excluir controles del editor mismo y del chat (chat se maneja aparte en setChatEnabled)
       if (el.id === 'editableSelector' || el.id === 'btnRefreshEditablePeriodos'
           || el.id === 'btnSavePeriodoChanges' || el.id === 'btnDuplicateActivePeriodo'
           || el.id === 'btnModelChatSend' || el.id === 'modelChatInput'
@@ -1585,6 +1644,31 @@
       }
       el.disabled = readonly;
     });
+  }
+
+  function setChatEnabled(enabled) {
+    const input = qs('#modelChatInput');
+    const send = qs('#btnModelChatSend');
+    const scope = qs('#modelChatScopeSelect');
+    const undo = qs('#btnUndoLastChatAdjustment');
+    const chips = qsa('.chat-chip');
+    if (input) input.disabled = !enabled;
+    if (send) send.disabled = !enabled;
+    if (scope) scope.disabled = !enabled;
+    if (undo) undo.disabled = !enabled;
+    chips.forEach(c => { c.disabled = !enabled; });
+    // Banner explicativo arriba del chat
+    let banner = qs('#chatDisabledBanner');
+    const card = qs('#modelChatCard');
+    if (!enabled && card && !banner) {
+      banner = document.createElement('div');
+      banner.id = 'chatDisabledBanner';
+      banner.className = 'readonly-banner';
+      banner.textContent = 'El asistente contable solo edita periodos en estado borrador. Duplique este periodo como borrador para usarlo.';
+      card.insertBefore(banner, card.firstChild?.nextSibling || null);
+    } else if (enabled && banner) {
+      banner.remove();
+    }
   }
 
   async function loadEditablePeriodos() {

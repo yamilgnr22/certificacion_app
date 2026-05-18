@@ -75,6 +75,9 @@ class PeriodoService:
         self.giros = GiroRepository(session)
         self.audit = AuditService(session)
         self.rollforward = RollforwardService(session)
+        # Lazy import para evitar circularidad
+        from services.plantilla_service import PlantillaService
+        self.plantillas = PlantillaService(session)
 
     # ----------------------------------------------------------------- read
     def list_for_cliente(self, cliente_id: str) -> list[dict]:
@@ -174,6 +177,15 @@ class PeriodoService:
                 saldos_origen = "manual"
 
         # Construir payload financiero
+        # Si no se trajo expenses_override explicito, usar la plantilla efectiva del cliente
+        if not data.get("expenses_override"):
+            plantilla_efectiva = self.plantillas.effective_for_cliente(cliente.id)
+            data = dict(data)  # copia para no mutar el input del caller
+            data["expenses_override"] = dict(plantilla_efectiva.get("plantilla") or {})
+            plantilla_origen = plantilla_efectiva.get("origen", "default")
+        else:
+            plantilla_origen = "override_explicito"
+
         payload = self._build_payload(
             meses=meses,
             data=data,
@@ -217,6 +229,7 @@ class PeriodoService:
                     "cliente_id": cliente.id,
                     "rollforward": bool(rollforward_info and rollforward_info.get("has_anterior")),
                     "warning": (rollforward_info or {}).get("warning"),
+                    "plantilla_origen": plantilla_origen,
                 },
             )
             self.session.commit()

@@ -34,7 +34,7 @@ from model_storage import (
     save_draft,
     save_final,
 )
-from db.engine import get_engine, get_session
+from db.engine import get_engine, session_factory
 from db.runtime import DatabaseNotInitialized, DatabaseOutOfDate, require_alembic_version
 from services import (
     ClienteService,
@@ -101,6 +101,7 @@ def _is_db_api_path(path: str) -> bool:
         path.startswith("/api/clientes")
         or path.startswith("/api/giros")
         or path.startswith("/api/periodos")
+        or path.startswith("/api/audit")
     )
 
 
@@ -112,7 +113,7 @@ def _open_db_session_for_api():
         engine = _get_db_engine()
         if _db_requires_alembic():
             require_alembic_version(engine)
-        g.db_session = get_session(engine)()
+        g.db_session = session_factory(engine)()
     except (DatabaseNotInitialized, DatabaseOutOfDate) as exc:
         return {"ok": False, "error": str(exc)}, 500
     except Exception as exc:
@@ -477,6 +478,20 @@ def api_download_periodo_document(periodo_id: str):
         from pathlib import Path
         filename = Path(path).name
         return send_file(path, as_attachment=True, download_name=filename)
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.get("/api/audit")
+def api_list_audit():
+    try:
+        from services import AuditService
+        entity_type = request.args.get("entity_type", "").strip()
+        entity_id = request.args.get("entity_id", "").strip()
+        if not entity_type or not entity_id:
+            return {"ok": False, "error": "entity_type y entity_id son requeridos"}, 400
+        records = AuditService(_db_session()).list_for(entity_type, entity_id)
+        return {"ok": True, "records": records}
     except Exception as exc:
         return _service_error_response(exc)
 

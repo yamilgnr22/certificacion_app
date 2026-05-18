@@ -29,8 +29,23 @@ def get_engine(url: str | None = None, *, echo: bool = False) -> Engine:
     return create_engine(url, echo=echo, future=True, connect_args=connect_args)
 
 
-def get_session(engine: Engine | None = None) -> sessionmaker[Session]:
+def session_factory(engine: Engine | None = None) -> sessionmaker[Session]:
+    """Devuelve un sessionmaker. Llamalo y despues llamalo de nuevo para obtener una Session.
+
+    Uso: `session = session_factory(engine)()` o `with session_scope(engine) as session: ...`.
+    """
     return sessionmaker(bind=engine or get_engine(), autoflush=False, expire_on_commit=False, future=True)
+
+
+# Alias retro-compatible con DeprecationWarning. Se elimina en una fase posterior.
+def get_session(engine: Engine | None = None) -> sessionmaker[Session]:
+    import warnings
+    warnings.warn(
+        "get_session() esta deprecado, use session_factory() en su lugar.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return session_factory(engine)
 
 
 def init_db(engine: Engine | None = None) -> None:

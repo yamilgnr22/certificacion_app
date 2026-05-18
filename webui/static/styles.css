@@ -947,5 +947,15 @@ main.container { padding: 20px 0 40px; }
 .active-periodo-actions { display: flex; gap: 8px; }
 .readonly-banner { margin-top: 12px; padding: 10px 14px; background: rgba(245,158,11,0.08); border-left: 3px solid var(--warn); border-radius: 4px; font-size: 13px; }
 
+/* Audit modal */
+.audit-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.audit-modal { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; width: min(90vw, 920px); max-height: 80vh; display: flex; flex-direction: column; }
+.audit-header { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--border); }
+.audit-body { padding: 14px 18px; overflow-y: auto; }
+.audit-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.audit-table th { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); color: var(--muted); font-weight: 600; }
+.audit-table td { padding: 8px; border-bottom: 1px solid rgba(255,255,255,0.04); vertical-align: top; }
+.audit-table tr:hover td { background: rgba(255,255,255,0.02); }
+
 /* Utility */
 .hidden { display: none !important; }
