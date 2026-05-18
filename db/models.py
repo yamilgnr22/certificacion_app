@@ -138,3 +138,41 @@ class AuditLog(Base):
     payload_after_hash: Mapped[str | None] = mapped_column(String(128))
     metadata_json: Mapped[str | None] = mapped_column(Text)
     prev_entry_hash: Mapped[str | None] = mapped_column(String(128))
+
+
+class AgentMessage(Base):
+    __tablename__ = "agent_messages"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    periodo_id: Mapped[str] = mapped_column(ForeignKey("periodos_certificacion.id"), nullable=False, index=True)
+    command_id: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    cpa_user: Mapped[str] = mapped_column(String(120), nullable=False, default="system")
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    intent: Mapped[str | None] = mapped_column(String(80))
+    response_type: Mapped[str | None] = mapped_column(String(40))
+    response_json: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class AgentProposal(Base):
+    __tablename__ = "agent_proposals"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    periodo_id: Mapped[str] = mapped_column(ForeignKey("periodos_certificacion.id"), nullable=False, index=True)
+    command_id: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending", index=True)
+    payload_before_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    proposal_json: Mapped[str] = mapped_column(Text, nullable=False)
+    projected_payload_json: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    discarded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class LegacyCallCounter(Base):
+    __tablename__ = "legacy_call_counters"
+
+    endpoint: Mapped[str] = mapped_column(String(120), primary_key=True)
+    call_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)

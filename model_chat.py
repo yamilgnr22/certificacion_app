@@ -15,6 +15,7 @@ import pandas as pd
 from financial_model import build_financial_model, result_to_json
 
 
+# DEPRECATED: removable after Fase 2D.
 CHAT_SOURCE = "chat_financiero"
 
 ALLOWED_LEVERS = {

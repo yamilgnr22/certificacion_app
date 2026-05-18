@@ -37,6 +37,11 @@ from model_storage import (
 from db.engine import get_engine, session_factory
 from db.runtime import DatabaseNotInitialized, DatabaseOutOfDate, require_alembic_version
 from services import (
+    AgentCommandService,
+    AgentConfigError,
+    AgentNotFoundError,
+    AgentServiceError,
+    AgentValidationError,
     ClienteService,
     GiroService,
     PeriodoConflictError,
@@ -47,6 +52,7 @@ from services import (
     ServiceConflictError,
     ServiceValidationError,
 )
+from repositories import AgentRepository
 
 
 load_dotenv()
@@ -102,6 +108,7 @@ def _is_db_api_path(path: str) -> bool:
         or path.startswith("/api/giros")
         or path.startswith("/api/periodos")
         or path.startswith("/api/audit")
+        or path.startswith("/api/agent")
     )
 
 
@@ -142,6 +149,25 @@ def _db_session():
 
 def _cpa_user() -> str:
     return request.headers.get("X-CPA-User", "system").strip() or "system"
+
+
+def _increment_legacy_chat_counter(endpoint: str) -> None:
+    """Best-effort: no bloquea el endpoint legacy si DB/migracion no esta lista."""
+    try:
+        engine = _get_db_engine()
+        if _db_requires_alembic():
+            require_alembic_version(engine)
+        session = session_factory(engine)()
+        try:
+            AgentRepository(session).increment_legacy_counter(endpoint)
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+    except Exception:
+        app.logger.debug("No se pudo incrementar contador legacy %s", endpoint, exc_info=True)
 
 
 def _json_body() -> dict:
@@ -219,6 +245,12 @@ def index():
 
 
 def _service_error_response(exc: Exception):
+    if isinstance(exc, AgentNotFoundError):
+        return {"ok": False, "error": str(exc), "assistant_message": str(exc)}, 404
+    if isinstance(exc, (AgentConfigError, AgentValidationError)):
+        return {"ok": False, "error": str(exc), "assistant_message": str(exc)}, 400
+    if isinstance(exc, AgentServiceError):
+        return {"ok": False, "error": str(exc), "assistant_message": str(exc)}, 400
     if isinstance(exc, (ServiceConflictError, PeriodoConflictError)):
         return {"ok": False, "error": str(exc)}, 409
     if isinstance(exc, (ServiceValidationError, PeriodoValidationError)):
@@ -478,6 +510,23 @@ def api_download_periodo_document(periodo_id: str):
         from pathlib import Path
         filename = Path(path).name
         return send_file(path, as_attachment=True, download_name=filename)
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.post("/api/agent/command")
+def api_agent_command():
+    """Nuevo asistente contable para periodos SQLite."""
+    try:
+        body = _json_body()
+        provider = app.config.get("AGENT_LLM_PROVIDER")
+        data = AgentCommandService(_db_session(), provider=provider).handle_command(
+            periodo_id=str(body.get("periodo_id") or ""),
+            message=str(body.get("message") or ""),
+            ui_context=body.get("ui_context") if isinstance(body.get("ui_context"), dict) else {},
+            cpa_user=_cpa_user(),
+        )
+        return data, 200
     except Exception as exc:
         return _service_error_response(exc)
 
@@ -845,6 +894,7 @@ def model_chat_preview():
 def model_chat_command():
     """Orquesta instrucciones del asistente contable para consultas, UI y propuestas."""
     try:
+        _increment_legacy_chat_counter("/api/model/chat/command")
         body = request.get_json(silent=True) or {}
         payload = body.get("payload") or {}
         message = body.get("message") or ""
