@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 
 from db.models import AccountCatalog, AgentMessage, AgentProposal, Base, PeriodoCertificacion
 from db.seed import seed_giros
+from financial_model import build_financial_model
 from llm import LLMProviderError
 
 
@@ -408,6 +409,10 @@ class AgentApiTest(unittest.TestCase):
         self.assertEqual(apply_resp.status_code, 200, apply_resp.get_json())
         self.assertEqual(detail["payload"]["movements"]["journal_entries"][-1]["credit_account"], "Reservas Legales")
         self.assertTrue(any(acc["name"] == "Reservas Legales" for acc in detail["payload"]["accounting"]["dynamic_accounts"]))
+        result = build_financial_model(detail["payload"])
+        self.assertIn("Reservas Legales", set(result.df_esf_mensual_full["Descripcion"]))
+        self.assertIn("Reservas Legales", result.accounting["accounts"])
+        self.assertTrue(result.validations["balance"]["ok"])
 
 
 if __name__ == "__main__":

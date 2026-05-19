@@ -155,6 +155,7 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
 
     events = _index_events(movement_payload.get("events") or payload.get("events") or [], months, exchange_rate)
     dynamic_accounts = _dynamic_account_aliases(payload)
+    dynamic_specs = _dynamic_account_specs(payload)
     journal_entries = _index_journal_entries(movement_payload.get("journal_entries") or [], months, exchange_rate, dynamic_accounts)
 
     revenue_factors: List[float] = []
@@ -170,6 +171,7 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
 
     monthly: List[Dict[str, float]] = []
     state = dict(balances)
+    dynamic_state = {name: 0.0 for name in dynamic_specs}
     result_accum = 0.0
     result_accum_adjustment = 0.0
     opening_capital = _opening_capital(balances)
@@ -181,6 +183,7 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
         month_journal_entries = journal_entries.get(key, [])
 
         beginning_state = dict(state)
+        beginning_dynamic_state = dict(dynamic_state)
         beginning_result_accum = result_accum + result_accum_adjustment
         capital_beginning = previous_capital
         cash_beginning = state["cash"]
@@ -327,7 +330,7 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
             - retained_earnings_distribution
         )
 
-        journal_effects = _apply_journal_entries_to_state(state, month_journal_entries)
+        journal_effects = _apply_journal_entries_to_state(state, month_journal_entries, dynamic_state, dynamic_specs)
         result_accum_adjustment += journal_effects.get("result_accum_delta", 0.0)
         journal_cash_increase = journal_effects.get("cash_journal_increase", 0.0)
         journal_cash_decrease = journal_effects.get("cash_journal_decrease", 0.0)
@@ -338,30 +341,44 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
         current_earnings_journal_increase = journal_effects.get("result_accum_journal_increase", 0.0)
         current_earnings_journal_decrease = journal_effects.get("result_accum_journal_decrease", 0.0)
 
-        current_assets = state["cash"] + state["accounts_receivable"] + state["inventory"]
+        dynamic_current_assets = _dynamic_total(dynamic_state, dynamic_specs, account_type="activo", section="corriente")
+        dynamic_non_current_assets = _dynamic_total(dynamic_state, dynamic_specs, account_type="activo", section="no_corriente")
+        dynamic_current_liabilities = _dynamic_total(dynamic_state, dynamic_specs, account_type="pasivo", section="corriente")
+        dynamic_non_current_liabilities = _dynamic_total(dynamic_state, dynamic_specs, account_type="pasivo", section="no_corriente")
+        dynamic_equity = _dynamic_total(dynamic_state, dynamic_specs, account_type="patrimonio", section="patrimonio")
+
+        current_assets = state["cash"] + state["accounts_receivable"] + state["inventory"] + dynamic_current_assets
         non_current_assets = (
             state["ppe_real_estate"]
             + state["ppe_equipment"]
             + state["ppe_vehicles"]
             + state["accum_depreciation"]
+            + dynamic_non_current_assets
         )
         total_assets = current_assets + non_current_assets
-        current_liabilities = state["credit_cards"] + state["suppliers"] + state["taxes_payable"] + state["accrued_expenses"]
+        current_liabilities = (
+            state["credit_cards"]
+            + state["suppliers"]
+            + state["taxes_payable"]
+            + state["accrued_expenses"]
+            + dynamic_current_liabilities
+        )
         non_current_liabilities = (
             state["loans_mortgage"]
             + state["loans_consumo"]
             + state["loans_personal"]
             + state["loans_pledge"]
             + state["loans_commercial"]
+            + dynamic_non_current_liabilities
         )
         total_liabilities = current_liabilities + non_current_liabilities
         retained = state["retained_earnings"]
         displayed_result_accum = result_accum + result_accum_adjustment
-        capital = total_assets - total_liabilities - retained - displayed_result_accum
+        capital = total_assets - total_liabilities - retained - displayed_result_accum - dynamic_equity
         capital_change = capital - capital_beginning
         capital_increase = capital_change if capital_change > 0 else 0.0
         capital_decrease = abs(capital_change) if capital_change < 0 else 0.0
-        total_equity = capital + retained + displayed_result_accum
+        total_equity = capital + retained + displayed_result_accum + dynamic_equity
 
         month_data = {
             "month": month,
@@ -402,6 +419,9 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
             "cash_journal_increase": journal_cash_increase,
             "cash_journal_decrease": journal_cash_decrease,
             "journal_entries": month_journal_entries,
+            "dynamic_account_balances": dict(dynamic_state),
+            "dynamic_account_beginning": beginning_dynamic_state,
+            "dynamic_account_specs": dict(dynamic_specs),
             "sale_ppe": sale_ppe,
             "credit_card_payment": credit_card_payment,
             "supplier_payment": supplier_payment,
@@ -977,12 +997,23 @@ def _build_esf_dataframe(monthly: List[Dict[str, Any]], months: List[pd.Timestam
         values = [_round(item.get(field, 0.0)) if field else "" for item in monthly]
         return [label, *values]
 
+    def dynamic_rows(account_type: str, section: str) -> List[List[Any]]:
+        names = _dynamic_names(monthly, account_type, section)
+        return [
+            [
+                name,
+                *[_round((item.get("dynamic_account_balances") or {}).get(name, 0.0)) for item in monthly],
+            ]
+            for name in names
+        ]
+
     rows = [
         ["Activos", *["" for _ in months]],
         ["Corrientes", *["" for _ in months]],
         row("Efectivo y Equivalentes de Efectivo", "cash"),
         row("Cuentas por Cobrar Clientes", "accounts_receivable"),
         row("Inventarios", "inventory"),
+        *dynamic_rows("activo", "corriente"),
         row("Total Corrientes", "current_assets"),
         ["No Corrientes", *["" for _ in months]],
         ["Propiedad Planta y Equipos", *["" for _ in months]],
@@ -990,6 +1021,7 @@ def _build_esf_dataframe(monthly: List[Dict[str, Any]], months: List[pd.Timestam
         row("Mobiliario y Equipos", "ppe_equipment"),
         row("Vehiculos", "ppe_vehicles"),
         row("(-) Depreciacion Acumulada", "accum_depreciation"),
+        *dynamic_rows("activo", "no_corriente"),
         row("Total No Corriente", "non_current_assets"),
         row("Total Activos", "total_assets"),
         ["Pasivos", *["" for _ in months]],
@@ -998,6 +1030,7 @@ def _build_esf_dataframe(monthly: List[Dict[str, Any]], months: List[pd.Timestam
         row("Proveedores", "suppliers"),
         row("Impuestos por Pagar", "taxes_payable"),
         row("Gastos Acumulados por pagar", "accrued_expenses"),
+        *dynamic_rows("pasivo", "corriente"),
         row("Total Corrientes", "current_liabilities"),
         ["No Corrientes", *["" for _ in months]],
         row("Creditos Hipotecarios", "loans_mortgage"),
@@ -1005,16 +1038,35 @@ def _build_esf_dataframe(monthly: List[Dict[str, Any]], months: List[pd.Timestam
         row("Creditos Personales", "loans_personal"),
         row("Creditos Prendarios", "loans_pledge"),
         row("Creditos Comerciales", "loans_commercial"),
+        *dynamic_rows("pasivo", "no_corriente"),
         row("Total No Corrientes", "non_current_liabilities"),
         row("Total Pasivos", "total_liabilities"),
         ["Patrimonio", *["" for _ in months]],
         row("Capital", "capital"),
         row("Resultados Acumulados", "retained_earnings"),
         row("Resultados del Ejercicio", "result_accum"),
+        *dynamic_rows("patrimonio", "patrimonio"),
         row("Total Patrimonio", "total_equity"),
         row("Total Pasivo + Patrimonio", "total_liabilities_equity"),
     ]
     return pd.DataFrame(rows, columns=columns)
+
+
+def _dynamic_names(monthly: List[Dict[str, Any]], account_type: str, section: str) -> List[str]:
+    names: List[str] = []
+    seen = set()
+    for item in monthly:
+        specs = item.get("dynamic_account_specs") or {}
+        balances = item.get("dynamic_account_balances") or {}
+        for name, spec in specs.items():
+            if name in seen:
+                continue
+            if spec.get("account_type") != account_type or spec.get("section") != section:
+                continue
+            if any(abs(_to_float((m.get("dynamic_account_balances") or {}).get(name), 0.0)) >= 0.5 for m in monthly):
+                seen.add(name)
+                names.append(name)
+    return names
 
 
 def _opening_capital(balances: Mapping[str, float]) -> float:
@@ -1161,7 +1213,12 @@ def _index_journal_entries(
     return out
 
 
-def _apply_journal_entries_to_state(state: Dict[str, float], entries: List[Mapping[str, Any]]) -> Dict[str, float]:
+def _apply_journal_entries_to_state(
+    state: Dict[str, float],
+    entries: List[Mapping[str, Any]],
+    dynamic_state: Dict[str, float] | None = None,
+    dynamic_specs: Mapping[str, Mapping[str, str]] | None = None,
+) -> Dict[str, float]:
     effects: Dict[str, float] = {"result_accum_delta": 0.0}
     for entry in entries:
         amount = _round(_to_float(entry.get("amount_nio") or entry.get("amount") or 0.0, 0.0))
@@ -1171,7 +1228,7 @@ def _apply_journal_entries_to_state(state: Dict[str, float], entries: List[Mappi
             (str(entry.get("debit_account") or ""), "debit"),
             (str(entry.get("credit_account") or ""), "credit"),
         ):
-            _apply_journal_side(state, effects, account, side, amount)
+            _apply_journal_side(state, effects, account, side, amount, dynamic_state, dynamic_specs)
     return {key: _round(value) for key, value in effects.items()}
 
 
@@ -1181,9 +1238,18 @@ def _apply_journal_side(
     account: str,
     side: str,
     amount: float,
+    dynamic_state: Dict[str, float] | None = None,
+    dynamic_specs: Mapping[str, Mapping[str, str]] | None = None,
 ) -> None:
     spec = LEDGER_ACCOUNTS.get(account)
     if not spec:
+        if dynamic_state is not None and dynamic_specs and account in dynamic_specs:
+            dynamic_spec = dynamic_specs[account]
+            normal_debit = str(dynamic_spec.get("account_type") or "") in {"activo", "costo", "gasto"}
+            delta = amount if (side == "debit") == normal_debit else -amount
+            dynamic_state[account] = _round(dynamic_state.get(account, 0.0) + delta)
+            movement_key = f"dynamic::{account}::increase" if delta > 0 else f"dynamic::{account}::decrease"
+            effects[movement_key] = effects.get(movement_key, 0.0) + abs(delta)
         return
     kind = spec["kind"]
     state_key = spec.get("state") or ""
@@ -1277,6 +1343,41 @@ def _dynamic_account_aliases(payload: Mapping[str, Any]) -> Dict[str, str]:
             aliases[str(value).strip().lower().replace("-", "_").replace(" ", "_")] = canonical
             aliases[_plain(value)] = canonical
     return aliases
+
+
+def _dynamic_account_specs(payload: Mapping[str, Any]) -> Dict[str, Dict[str, str]]:
+    accounting = dict((payload or {}).get("accounting") or {})
+    specs: Dict[str, Dict[str, str]] = {}
+    for account in accounting.get("dynamic_accounts") or []:
+        if not isinstance(account, Mapping):
+            continue
+        code = str(account.get("code") or "").strip()
+        name = str(account.get("name") or account.get("label") or "").strip()
+        canonical = name or code
+        if not canonical:
+            continue
+        specs[canonical] = {
+            "code": code or canonical,
+            "name": canonical,
+            "account_type": str(account.get("account_type") or "").strip().lower(),
+            "section": str(account.get("section") or "").strip().lower(),
+        }
+    return specs
+
+
+def _dynamic_total(
+    dynamic_state: Mapping[str, float],
+    dynamic_specs: Mapping[str, Mapping[str, str]],
+    *,
+    account_type: str,
+    section: str,
+) -> float:
+    total = 0.0
+    for account, balance in dynamic_state.items():
+        spec = dynamic_specs.get(account) or {}
+        if spec.get("account_type") == account_type and spec.get("section") == section:
+            total += _to_float(balance, 0.0)
+    return _round(total)
 
 
 def _normalize_account(value: Any) -> str:
