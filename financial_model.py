@@ -111,6 +111,10 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
     expenses_payload = dict(payload.get("expenses") or {})
     balances_payload = dict(payload.get("balances") or {})
     movement_payload = dict(payload.get("movements") or {})
+    assets_payload = dict(payload.get("assets") or {})
+    life_real_estate_years = max(_to_float(assets_payload.get("life_real_estate_years"), 40.0), 0.0833)
+    life_equipment_years = max(_to_float(assets_payload.get("life_equipment_years"), 8.0), 0.0833)
+    life_vehicles_years = max(_to_float(assets_payload.get("life_vehicles_years"), 5.0), 0.0833)
 
     months = _build_months(
         start_month=str(period.get("start_month") or period.get("mes_inicio") or ""),
@@ -205,9 +209,9 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
         state["ppe_vehicles"] += additions_vehicles - month_events.get("asset_vehicle_sale", 0.0)
 
         depreciation = _round(
-            max(state["ppe_real_estate"], 0.0) / (40 * 12)
-            + max(state["ppe_equipment"], 0.0) / (8 * 12)
-            + max(state["ppe_vehicles"], 0.0) / (5 * 12)
+            max(state["ppe_real_estate"], 0.0) / (life_real_estate_years * 12)
+            + max(state["ppe_equipment"], 0.0) / (life_equipment_years * 12)
+            + max(state["ppe_vehicles"], 0.0) / (life_vehicles_years * 12)
         )
 
         new_loans = {

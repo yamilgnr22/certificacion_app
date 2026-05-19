@@ -1653,6 +1653,11 @@
         events: parseModelEvents(),
         journal_entries: modelJournalEntries,
       },
+      assets: {
+        life_real_estate_years: numberValue('m_life_real_estate', 40),
+        life_equipment_years: numberValue('m_life_equipment', 8),
+        life_vehicles_years: numberValue('m_life_vehicles', 5),
+      },
       accounting: {
         vouchers: modelAccountingVouchers,
         dynamic_accounts: modelDynamicAccounts,
@@ -1909,6 +1914,7 @@
     const movements = payload.movements || {};
     const accounting = payload.accounting || {};
     const chat = payload.chat || {};
+    const assets = payload.assets || {};
     modelMonthlyOverrides = Array.isArray(income.monthly_overrides) ? income.monthly_overrides.map(item => ({ ...item })) : [];
     modelJournalEntries = Array.isArray(movements.journal_entries) ? movements.journal_entries.map(item => ({ ...item })) : [];
     modelAccountingVouchers = Array.isArray(accounting.vouchers) ? accounting.vouchers.map(item => ({ ...item })) : [];
@@ -1969,6 +1975,9 @@
       m_compras_base: movements.purchase_base_usd,
       m_var_compras: movements.purchase_variability_pct,
       m_interes_creditos: movements.loan_interest_monthly_pct,
+      m_life_real_estate: assets.life_real_estate_years ?? 40,
+      m_life_equipment: assets.life_equipment_years ?? 8,
+      m_life_vehicles: assets.life_vehicles_years ?? 5,
     };
     Object.entries(mapping).forEach(([id, value]) => setFieldValue(id, value));
     setModelEventsFromPayload(payload);
