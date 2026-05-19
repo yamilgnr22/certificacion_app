@@ -455,6 +455,7 @@
   let modelMonthlyOverrides = [];
   let modelJournalEntries = [];
   let modelAccountingVouchers = [];
+  let modelDynamicAccounts = [];
   let modelChatCommands = [];
   let selectedChatVoucherId = '';
   let clienteGiros = [];
@@ -1598,6 +1599,7 @@
       },
       accounting: {
         vouchers: modelAccountingVouchers,
+        dynamic_accounts: modelDynamicAccounts,
       },
       chat: {
         commands: modelChatCommands,
@@ -1826,6 +1828,7 @@
     modelMonthlyOverrides = Array.isArray(income.monthly_overrides) ? income.monthly_overrides.map(item => ({ ...item })) : [];
     modelJournalEntries = Array.isArray(movements.journal_entries) ? movements.journal_entries.map(item => ({ ...item })) : [];
     modelAccountingVouchers = Array.isArray(accounting.vouchers) ? accounting.vouchers.map(item => ({ ...item })) : [];
+    modelDynamicAccounts = Array.isArray(accounting.dynamic_accounts) ? accounting.dynamic_accounts.map(item => ({ ...item })) : [];
     modelChatCommands = Array.isArray(chat.commands) ? chat.commands.map(item => ({ ...item })) : [];
 
     const mapping = {
@@ -2198,16 +2201,24 @@
       ];
     } else if (proposalKind === 'assumption_change') {
       items = [
-        ['Supuesto', proposal.assumption_label || 'Supuesto'],
-        ['Nuevo valor', `${formatMoney(proposal.assumption_value)}%`],
-        ['Variabilidad', `+/- ${formatMoney(proposal.assumption_variability_pct)}%`],
+        ['Supuesto', proposal.assumption_label || proposal.technical_records?.[0]?.assumption || 'Supuesto'],
+        ['Nuevo valor', proposal.assumption_value !== undefined ? `${formatMoney(proposal.assumption_value)}%` : `${formatMoney(proposal.technical_records?.[0]?.value)}%`],
+        ['Variabilidad', proposal.assumption_variability_pct !== undefined ? `+/- ${formatMoney(proposal.assumption_variability_pct)}%` : `+/- ${formatMoney(proposal.technical_records?.[0]?.cost_variability_pct)}%`],
         ['Alcance', proposal.scope_label || ''],
-        ['Periodo', proposal.target_month || ''],
-        ['Meses afectados', formatMoney(proposal.affected_months_count || 0)],
+        ['Periodo', proposal.target_month || proposal.month || ''],
+        ['Meses afectados', formatMoney(proposal.affected_months_count || proposal.technical_records?.[0]?.months?.length || 0)],
+      ];
+    } else if (proposalKind === 'create_account') {
+      const account = proposal.account || proposal.technical_records?.[0] || {};
+      items = [
+        ['Cuenta', account.name || ''],
+        ['Tipo', account.account_type || ''],
+        ['Seccion', account.section || ''],
+        ['Requiere confirmacion', 'Si'],
       ];
     } else if (proposalKind === 'journal_entry' || proposalKind === 'voucher_reversal') {
       items = [
-        ['Mes', proposal.target_month || ''],
+        ['Mes', proposal.target_month || proposal.month || ''],
         ['Debe', proposal.debit_label || journalAccountLabel(proposal.debit_account)],
         ['Haber', proposal.credit_label || journalAccountLabel(proposal.credit_account)],
         ['Monto', formatMoney(proposal.amount)],
@@ -2256,7 +2267,7 @@
     });
     wrap.appendChild(grid);
 
-    if ((proposalKind === 'journal_entry' || proposalKind === 'compound_events' || proposalKind === 'voucher_reversal') && Array.isArray(proposal.journal_rows)) {
+    if ((proposalKind === 'journal_entry' || proposalKind === 'compound_events' || proposalKind === 'voucher_reversal' || proposalKind === 'create_account') && Array.isArray(proposal.journal_rows)) {
       const journalTable = document.createElement('table');
       journalTable.className = 'journal-proposal-table';
       journalTable.innerHTML = '<thead><tr><th>Cuenta</th><th>Debe</th><th>Haber</th></tr></thead>';
@@ -2294,15 +2305,17 @@
     }
 
     const technicalLines = [];
+    const technicalRecords = Array.isArray(proposal.technical_records) ? proposal.technical_records : [];
     if (events.length) technicalLines.push(events.map(ev => formatEventLine(ev, { includeMessage: true })).join('\n'));
     if (journalEntries.length) technicalLines.push(journalEntries.map(entry => formatJournalLine(entry, { includeMessage: true })).join('\n'));
+    if (technicalRecords.length) technicalLines.push(technicalRecords.map(record => JSON.stringify(record, null, 2)).join('\n\n'));
     if (removedEvents.length) technicalLines.push(`Eventos a remover:\n${removedEvents.map(ev => formatEventLine(ev, { includeMessage: true })).join('\n')}`);
     if (removedJournalEntries.length) technicalLines.push(`Partidas a remover:\n${removedJournalEntries.map(entry => formatJournalLine(entry, { includeMessage: true })).join('\n')}`);
     if (technicalLines.length) {
       const details = document.createElement('details');
       details.className = 'proposal-technical';
       const summary = document.createElement('summary');
-      summary.textContent = `Ver registros tecnicos (${events.length + removedEvents.length + journalEntries.length + removedJournalEntries.length})`;
+      summary.textContent = `Ver registros tecnicos (${events.length + removedEvents.length + journalEntries.length + removedJournalEntries.length + technicalRecords.length})`;
       const eventLine = document.createElement('div');
       eventLine.className = 'proposal-event';
       eventLine.textContent = technicalLines.join('\n\n');
@@ -2316,10 +2329,17 @@
     apply.id = 'btnModelChatApply';
     apply.className = 'btn primary';
     apply.type = 'button';
-    apply.textContent = proposal.confirm_label || (proposalKind === 'workflow'
-      ? 'Confirmar'
-      : (proposalKind === 'voucher_reversal' ? 'Aplicar reverso'
-        : (['journal_entry', 'compound_events'].includes(proposalKind) ? 'Aplicar registro' : 'Aplicar propuesta')));
+    apply.textContent = proposal.confirm_label || (
+      proposalKind === 'workflow'
+        ? 'Confirmar'
+        : proposalKind === 'voucher_reversal'
+          ? 'Aplicar reverso'
+          : proposalKind === 'create_account'
+            ? 'Crear cuenta'
+            : ['journal_entry', 'compound_events'].includes(proposalKind)
+              ? 'Aplicar registro'
+              : 'Aplicar propuesta'
+    );
     const discard = document.createElement('button');
     discard.id = 'btnModelChatDiscard';
     discard.className = 'btn';
@@ -2334,6 +2354,7 @@
 
   function proposalTitle(kind) {
     if (kind === 'journal_entry' || kind === 'compound_events' || kind === 'voucher_reversal') return 'Registro contable propuesto';
+    if (kind === 'create_account') return 'Cuenta contable propuesta';
     if (kind === 'assumption_change') return 'Cambio de supuesto propuesto';
     if (kind === 'workflow') return 'Accion propuesta';
     if (kind === 'period_change') return 'Cambio de periodo propuesto';
@@ -3062,6 +3083,8 @@
   function scrollToChatTarget(target) {
     const targets = {
       accounting: '#accountingWorkbench',
+      ledger: '#accountingWorkbench',
+      vouchers: '#accountingWorkbench',
       client_documents: '.doc-extract-panel',
       saved_models: '#savedModelsPanel',
       chat: '#modelChatCard',
@@ -3093,24 +3116,30 @@
     clearPendingChatProposal();
     try {
       appendChatMessage('Estoy revisando el modelo...', 'app');
-      const payload = buildModelPayload();
-      const resp = await fetch('/api/model/chat/command', {
+      const useAgent = !!activePeriodoId;
+      const uiContext = buildModelChatUiContext();
+      const endpoint = useAgent ? '/api/agent/command' : '/api/model/chat/command';
+      const body = useAgent
+        ? { periodo_id: activePeriodoId, message, ui_context: uiContext }
+        : { payload: buildModelPayload(), message, scope: buildModelChatScope(), ui_context: uiContext };
+      const resp = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ payload, message, scope: buildModelChatScope(), ui_context: buildModelChatUiContext() }),
+        body: JSON.stringify(body),
       });
       const data = await resp.json();
+      data.agent_mode = useAgent;
       const bubbles = qsa('#modelChatMessages .chat-bubble');
       const lastBubble = bubbles[bubbles.length - 1];
       if (lastBubble && lastBubble.textContent === 'Estoy revisando el modelo...') lastBubble.remove();
       const assistantText = data.assistant_message || data.error || 'No pude completar la instruccion.';
       if (data.ui_actions) applyChatUiActions(data.ui_actions);
-      if (data.response_type === 'answer' || data.response_type === 'ui_action') {
+      if (['answer', 'ui_action', 'navigation'].includes(data.response_type)) {
         appendChatMessage(assistantText, 'app');
         setModelMessage(assistantText, 'info');
         return;
       }
-      if (data.response_type === 'clarification') {
+      if (data.response_type === 'clarification' || data.response_type === 'question') {
         appendChatMessage(assistantText, 'app');
         setModelMessage(assistantText, 'warning');
         return;
@@ -3120,11 +3149,13 @@
         setModelMessage(assistantText, 'error');
         return;
       }
-      pendingChatPayload = data.adjusted_payload;
+      pendingChatPayload = data.adjusted_payload || null;
       pendingChatData = data;
       appendChatMessage(assistantText || data.proposal?.explanation || 'Propuesta lista para revisar.', 'app');
       renderChatProposal(data);
-      setModelMessage('Propuesta calculada. Revise el impacto y aplique el ajuste si esta conforme.', 'info');
+      setModelMessage(useAgent
+        ? 'Propuesta creada en SQLite. Revise el registro y confirme si desea aplicarla.'
+        : 'Propuesta calculada. Revise el impacto y aplique el ajuste si esta conforme.', 'info');
     } catch (e) {
       appendChatMessage(String(e.message || e), 'error');
       setModelMessage(String(e.message || e), 'error');
@@ -3153,6 +3184,32 @@
 
   async function onModelChatApply() {
     if (!pendingChatData) return;
+    if (pendingChatData.agent_mode) {
+      const proposalId = pendingChatData.proposal?.id;
+      if (!proposalId) {
+        appendChatMessage('La propuesta no tiene identificador para aplicar.', 'error');
+        return;
+      }
+      try {
+        const applied = await fetchJson(`/api/agent/proposals/${encodeURIComponent(proposalId)}/apply`, { method: 'POST' });
+        appendChatMessage(applied.assistant_message || 'Listo, aplique la propuesta al periodo.', 'app');
+        clearPendingChatProposal();
+        if (activePeriodoId) {
+          const data = await fetchJson(`/api/periodos/${encodeURIComponent(activePeriodoId)}`);
+          activePeriodoDetail = data;
+          if (data.periodo?.payload) {
+            runWithoutEditorDirty(() => applyModelPayload(data.periodo.payload, { draftId: null }));
+          }
+          updateEditorHeader();
+          markEditorDirty(false);
+          await onModelPreview();
+        }
+      } catch (e) {
+        appendChatMessage(String(e.message || e), 'error');
+        setModelMessage(String(e.message || e), 'error');
+      }
+      return;
+    }
     if (pendingChatData.response_type === 'workflow') {
       await executeChatWorkflow(pendingChatData.workflow || pendingChatData.proposal || {});
       clearPendingChatProposal();
@@ -3217,6 +3274,10 @@
   }
 
   function onModelChatDiscard() {
+    if (pendingChatData?.agent_mode && pendingChatData?.proposal?.id) {
+      fetchJson(`/api/agent/proposals/${encodeURIComponent(pendingChatData.proposal.id)}/discard`, { method: 'POST' })
+        .catch(() => {});
+    }
     clearPendingChatProposal();
     appendChatMessage('Propuesta descartada.', 'app');
   }

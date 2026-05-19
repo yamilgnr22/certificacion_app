@@ -157,6 +157,8 @@ class AgentCommandService:
         periodo = self.periodos.get(proposal.periodo_id)
         if not periodo:
             raise AgentNotFoundError("Periodo de la propuesta no encontrado.")
+        if periodo.estado != "borrador":
+            raise AgentProposalConflictError("Solo se pueden aplicar propuestas en periodos borrador.")
         current_payload = parse_json_object(periodo.payload_json)
         current_hash = stable_hash(current_payload)
         if current_hash != proposal.payload_before_hash:

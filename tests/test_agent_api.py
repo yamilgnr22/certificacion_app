@@ -202,6 +202,24 @@ class AgentApiTest(unittest.TestCase):
             stored = session.get(AgentProposal, proposal["id"])
         self.assertEqual(stored.status, "applied")
 
+    def test_proposal_does_not_apply_to_finalized_periodo(self):
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {"intent": "assumption_change", "args": {"assumption": "cost_pct", "value": 80}}
+        )
+        proposal_id = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "cambia costo"},
+        ).get_json()["proposal"]["id"]
+        finalize_resp = self.client.post(f"/api/periodos/{self.periodo['id']}/finalizar")
+        self.assertEqual(finalize_resp.status_code, 200, finalize_resp.get_json())
+
+        resp = self.client.post(f"/api/agent/proposals/{proposal_id}/apply")
+
+        self.assertEqual(resp.status_code, 409)
+        self.assertIn("borrador", resp.get_json()["error"])
+        with self.db_session() as session:
+            self.assertEqual(session.get(AgentProposal, proposal_id).status, "pending")
+
     def test_stale_proposal_does_not_apply(self):
         web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
             {"intent": "assumption_change", "args": {"assumption": "cost_pct", "value": 80}}
