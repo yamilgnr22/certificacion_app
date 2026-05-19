@@ -25,6 +25,10 @@ class AgentToolRegistry:
         "year_close_transfer": AgentTool("year_close_transfer", "1.0.0"),
         "assumption_change": AgentTool("assumption_change", "1.0.0"),
         "create_account": AgentTool("create_account", "1.0.0"),
+        "recalcular_preview": AgentTool("recalcular_preview", "1.0.0"),
+        "guardar_payload": AgentTool("guardar_payload", "1.0.0"),
+        "finalizar_periodo": AgentTool("finalizar_periodo", "1.0.0"),
+        "generar_documento": AgentTool("generar_documento", "1.0.0"),
     }
 
     def versions(self) -> dict[str, str]:
@@ -54,6 +58,8 @@ class AgentToolRegistry:
             return self._show_voucher(payload, args)
         if intent == "navigate":
             return self._navigate(args)
+        if intent == "recalcular_preview":
+            return self._recalcular_preview(payload, args)
         return {
             "response_type": "question",
             "assistant_message": "Puedo ayudarte, pero necesito que aclares si quieres consultar saldo, ver mayor, ver comprobante o navegar.",
@@ -132,6 +138,25 @@ class AgentToolRegistry:
             "response_type": "navigation",
             "assistant_message": "Listo, te llevo a la seccion solicitada.",
             "ui_actions": [{"type": "scroll_to", "target": target}],
+        }
+
+    def _recalcular_preview(self, payload: Mapping[str, Any], args: Mapping[str, Any]) -> dict[str, Any]:
+        result = build_financial_model(payload)
+        months = result.summary.get("all_months") or result.summary.get("months") or []
+        validations = result.validations or {}
+        errors = validations.get("errors") or []
+        warnings = validations.get("warnings") or []
+        lines = [f"Recalculo listo. {len(months)} mes(es) en el modelo."]
+        if errors:
+            lines.append(f"Errores: {len(errors)}.")
+        if warnings:
+            lines.append(f"Advertencias: {len(warnings)}.")
+        if not errors and not warnings:
+            lines.append("Sin errores ni advertencias.")
+        return {
+            "response_type": "answer",
+            "assistant_message": " ".join(lines),
+            "ui_actions": [{"type": "scroll_to", "target": "summary"}],
         }
 
 

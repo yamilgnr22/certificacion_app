@@ -116,6 +116,15 @@ class AgentCommandService:
                 intent=intent,
                 tool_result=tool_result,
             )
+        elif intent in SYSTEM_INTENTS:
+            response = self._handle_system_intent(
+                command_id=command_id,
+                intent=intent,
+                periodo=periodo,
+                payload=payload,
+                args=args,
+                cpa_user=cpa_user,
+            )
         else:
             response = self._question_response(
                 command_id=command_id,
@@ -166,6 +175,10 @@ class AgentCommandService:
             self.session.commit()
             raise AgentProposalConflictError("El modelo cambio desde que se genero la propuesta. Pedi una propuesta nueva.")
 
+        proposal_data = parse_json_object(proposal.proposal_json)
+        if proposal_data.get("kind") == "finalizar_periodo":
+            return self._apply_finalizar_periodo(proposal, periodo, proposal_data=proposal_data, cpa_user=cpa_user)
+
         projected_payload = parse_json_object(proposal.projected_payload_json)
         if not projected_payload:
             raise AgentValidationError("La propuesta no tiene payload proyectado aplicable.")
@@ -181,16 +194,15 @@ class AgentCommandService:
             proposal.applied_at = now
             self.session.flush()
 
-            proposal_payload = parse_json_object(proposal.proposal_json)
-            if proposal_payload.get("kind") == "create_account":
-                self._apply_account_creation(proposal_payload, command_id=proposal.command_id, cpa_user=cpa_user)
+            if proposal_data.get("kind") == "create_account":
+                self._apply_account_creation(proposal_data, command_id=proposal.command_id, cpa_user=cpa_user)
             after = _periodo_snapshot(periodo)
             AuditService(self.session).log(
                 cpa_user=cpa_user,
                 entity_type="periodo",
                 entity_id=periodo.id,
                 action="agent_apply_proposal",
-                summary=str(proposal_payload.get("title") or "Aplico propuesta del asistente contable"),
+                summary=str(proposal_data.get("title") or "Aplico propuesta del asistente contable"),
                 before=before,
                 after=after,
                 metadata={
@@ -198,7 +210,7 @@ class AgentCommandService:
                     "proposal_id": proposal.id,
                     "prompt_version": PROMPT_VERSION,
                     "tool_versions": self.tools.versions(),
-                    "proposal_kind": proposal_payload.get("kind"),
+                    "proposal_kind": proposal_data.get("kind"),
                 },
             )
             self.session.commit()
@@ -311,6 +323,8 @@ class AgentCommandService:
             return self._prepare_assumption_change(payload, args, ui_context, command_id, original_message)
         if intent == "create_account":
             return self._prepare_create_account(payload, args, command_id, original_message)
+        if intent == "finalizar_periodo":
+            return self._prepare_finalizar_periodo(payload, args, command_id, original_message)
         raise AgentValidationError("Esa accion todavia no esta habilitada en el asistente.")
 
     def _prepare_reverse_voucher(
@@ -507,6 +521,24 @@ class AgentCommandService:
             extra={"account": account_record},
         )
 
+    def _prepare_finalizar_periodo(
+        self,
+        payload: Mapping[str, Any],
+        args: Mapping[str, Any],
+        command_id: str,
+        original_message: str,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        projected = deepcopy(dict(payload))
+        return projected, _proposal_payload(
+            kind="finalizar_periodo",
+            title="Finalizar periodo",
+            assistant_message="Esto marcara el periodo como finalizado. No podras editar el modelo despues de confirmar.",
+            month=None,
+            rows=[],
+            technical_records=[],
+            original_message=original_message,
+        )
+
     def _apply_account_creation(self, proposal_payload: Mapping[str, Any], *, command_id: str, cpa_user: str) -> None:
         account = dict(proposal_payload.get("account") or {})
         code = str(account.get("code") or "").strip()
@@ -557,6 +589,102 @@ class AgentCommandService:
             "tool_versions": self.tools.versions(),
         }
 
+    def _apply_finalizar_periodo(
+        self,
+        proposal,
+        periodo,
+        *,
+        proposal_data: dict[str, Any],
+        cpa_user: str,
+    ) -> dict[str, Any]:
+        from services.periodo_service import PeriodoService
+        try:
+            proposal.status = "applied"
+            proposal.applied_at = datetime.now(timezone.utc)
+            self.session.flush()
+            AuditService(self.session).log(
+                cpa_user=cpa_user,
+                entity_type="periodo",
+                entity_id=periodo.id,
+                action="agent_apply_proposal",
+                summary=str(proposal_data.get("title") or "Finalizar periodo"),
+                metadata={
+                    "command_id": proposal.command_id,
+                    "proposal_id": proposal.id,
+                    "prompt_version": PROMPT_VERSION,
+                    "tool_versions": self.tools.versions(),
+                    "proposal_kind": "finalizar_periodo",
+                },
+            )
+            self.session.commit()
+            PeriodoService(self.session).finalize(periodo.id, cpa_user=cpa_user)
+            return {
+                "ok": True,
+                "proposal_id": proposal.id,
+                "status": "applied",
+                "assistant_message": "Listo, el periodo fue finalizado.",
+                "periodo_id": periodo.id,
+            }
+        except Exception:
+            self.session.rollback()
+            raise
+
+    def _handle_system_intent(
+        self,
+        *,
+        command_id: str,
+        intent: str,
+        periodo,
+        payload: Mapping[str, Any],
+        args: Mapping[str, Any],
+        cpa_user: str,
+    ) -> dict[str, Any]:
+        if intent == "guardar_payload":
+            return self._handle_guardar_payload(periodo=periodo, payload=payload, command_id=command_id)
+        if intent == "generar_documento":
+            return self._handle_generar_documento(periodo=periodo, command_id=command_id, cpa_user=cpa_user)
+        raise AgentValidationError(f"Accion de sistema no reconocida: {intent}.")
+
+    def _handle_guardar_payload(self, *, periodo, payload: Mapping[str, Any], command_id: str) -> dict[str, Any]:
+        if periodo.estado != "borrador":
+            raise AgentValidationError(f"Solo se puede guardar un periodo en estado borrador. Estado actual: '{periodo.estado}'.")
+        result = build_financial_model(payload)
+        periodo.validation_json = json.dumps(result.validations, ensure_ascii=False, sort_keys=True, default=str)
+        periodo.period_blocks_json = json.dumps(result.metadata.get("period_blocks") or [], ensure_ascii=False, sort_keys=True, default=str)
+        months = result.summary.get("all_months") or result.summary.get("months") or []
+        return {
+            "ok": True,
+            "command_id": command_id,
+            "intent": "guardar_payload",
+            "response_type": "answer",
+            "assistant_message": f"Borrador guardado y recalculado. {len(months)} mes(es) en el modelo.",
+            "ui_actions": [{"type": "scroll_to", "target": "summary"}],
+            "requires_confirmation": False,
+            "audit": self._audit_metadata(command_id),
+        }
+
+    def _handle_generar_documento(self, *, periodo, command_id: str, cpa_user: str) -> dict[str, Any]:
+        from services.periodo_service import PeriodoService
+        if periodo.estado not in ("finalizado", "certificado"):
+            raise AgentValidationError(
+                f"El periodo debe estar finalizado antes de generar el documento. Estado actual: '{periodo.estado}'."
+            )
+        svc = PeriodoService(self.session)
+        doc_result = svc.generate_document(periodo.id, cpa_user=cpa_user)
+        periodo_data = doc_result.get("periodo") or {}
+        raw_path = str(periodo_data.get("documento_path") or "")
+        filename = raw_path.replace("\\", "/").split("/")[-1] or "documento.docx"
+        return {
+            "ok": True,
+            "command_id": command_id,
+            "intent": "generar_documento",
+            "response_type": "answer",
+            "assistant_message": f"Documento generado: {filename}. Podés descargarlo desde la seccion de documentos.",
+            "ui_actions": [{"type": "scroll_to", "target": "documents"}],
+            "requires_confirmation": False,
+            "audit": self._audit_metadata(command_id),
+        }
+
 
 AGENT_COMMAND_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -574,6 +702,10 @@ AGENT_COMMAND_SCHEMA: dict[str, Any] = {
                 "year_close_transfer",
                 "assumption_change",
                 "create_account",
+                "recalcular_preview",
+                "guardar_payload",
+                "finalizar_periodo",
+                "generar_documento",
                 "question",
                 "unsupported",
             ],
@@ -585,7 +717,9 @@ AGENT_COMMAND_SCHEMA: dict[str, Any] = {
 }
 
 
-MUTATION_INTENTS = {"reverse_voucher", "journal_entry", "account_transfer", "year_close_transfer", "assumption_change", "create_account"}
+MUTATION_INTENTS = {"reverse_voucher", "journal_entry", "account_transfer", "year_close_transfer", "assumption_change", "create_account", "finalizar_periodo"}
+
+SYSTEM_INTENTS = {"guardar_payload", "generar_documento"}
 
 
 def _system_prompt() -> str:
@@ -599,8 +733,12 @@ def _system_prompt() -> str:
         "account_transfer(month, source_account, destination_account, amount), "
         "year_close_transfer(target_month, source_month, amount opcional), "
         "assumption_change(assumption=cost_pct, value, cost_variability_pct, scope), "
-        "create_account(name, account_type, section), question. "
-        "Si falta cuenta, mes o monto, usa question. Si el usuario pide crear una cuenta nueva, usa create_account."
+        "create_account(name, account_type, section), "
+        "recalcular_preview(), guardar_payload(), finalizar_periodo(), generar_documento(), "
+        "question. "
+        "Si falta cuenta, mes o monto, usa question. Si el usuario pide crear una cuenta nueva, usa create_account. "
+        "Si pide guardar o recalcular, usa guardar_payload o recalcular_preview. "
+        "Si pide finalizar el periodo, usa finalizar_periodo. Si pide generar el documento, usa generar_documento."
     )
 
 
