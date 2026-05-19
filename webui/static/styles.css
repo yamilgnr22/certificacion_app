@@ -424,6 +424,118 @@ html, body {
   border-top: 0;
 }
 
+/* ====================== Stepper ====================== */
+.stepper {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0;
+  margin: 0 0 20px;
+  list-style: none;
+}
+.stepper .step {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.stepper .step .step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--panel-elevated);
+  color: var(--muted-strong);
+  font-size: 11px;
+  font-weight: 600;
+}
+.stepper .step.active {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--text-strong);
+}
+.stepper .step.active .step-num {
+  background: var(--primary);
+  color: #fff;
+}
+.stepper .step.completed {
+  border-color: rgba(52, 211, 153, 0.3);
+  color: var(--success);
+}
+.stepper .step.completed .step-num {
+  background: var(--success);
+  color: #07261c;
+}
+.stepper .step.completed .step-num::before {
+  content: '✓';
+  font-size: 12px;
+}
+.stepper .step.completed .step-num > * { display: none; }
+.stepper .step.locked {
+  opacity: 0.5;
+}
+
+/* ====================== Action bar ====================== */
+.actions-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+.actions-bar .btn.danger { margin-left: auto; }
+
+/* ====================== Sub-card lock state ====================== */
+.subcard {
+  position: relative;
+  transition: opacity 0.2s ease;
+}
+.subcard-lock-overlay {
+  display: none;
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  background: linear-gradient(180deg, rgba(10, 10, 12, 0.4), rgba(10, 10, 12, 0.85));
+  border-radius: var(--radius-lg);
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  padding: 16px;
+  text-align: center;
+  pointer-events: none;
+}
+.subcard.locked > *:not(.subcard-lock-overlay) {
+  opacity: 0.35;
+  pointer-events: none;
+  user-select: none;
+}
+.subcard.locked .subcard-lock-overlay {
+  display: flex;
+}
+.subcard-status {
+  display: inline-block;
+  width: 14px;
+  color: var(--muted-strong);
+  font-size: 12px;
+  margin-right: 4px;
+}
+.subcard.unlocked .subcard-status {
+  color: var(--success);
+}
+
 .mode-switcher {
   display: inline-flex;
   gap: 2px;

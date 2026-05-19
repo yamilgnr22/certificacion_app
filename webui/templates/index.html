@@ -78,6 +78,12 @@
             <button id="btnCloseClienteForm" class="btn" type="button">Cerrar</button>
           </div>
           <div id="clienteFormMessages" class="messages"></div>
+          <ol id="clienteStepper" class="stepper" aria-label="Pasos para configurar al cliente">
+            <li class="step" data-step="cliente"><span class="step-num">1</span><span class="step-label">Datos del cliente</span></li>
+            <li class="step locked" data-step="plantilla"><span class="step-num">2</span><span class="step-label">Plantilla de gastos</span></li>
+            <li class="step locked" data-step="periodos"><span class="step-num">3</span><span class="step-label">Periodos</span></li>
+            <li class="step locked" data-step="editor"><span class="step-num">4</span><span class="step-label">Editor avanzado</span></li>
+          </ol>
           <div class="doc-extract-panel">
             <div class="doc-extract-header">
               <div>
@@ -134,17 +140,18 @@
             <div class="field"><label>Régimen tributario</label><input id="c_regimen" type="text" placeholder="Cuota Fija, General..."></div>
             <div class="field"><label>Banco</label><input id="c_banco" type="text" placeholder="BAC, LAFISE..."></div>
           </div>
-          <div class="actions">
+          <div class="actions actions-bar">
             <button id="btnSaveCliente" class="btn primary" type="button">Guardar cliente</button>
-            <button id="btnUseClienteInModel" class="btn" type="button">Usar en modelo</button>
-            <button id="btnDeleteCliente" class="btn danger hidden" type="button">Eliminar cliente</button>
+            <button id="btnUseClienteInModel" class="btn hidden" type="button">Usar en modelo</button>
+            <button id="btnDeleteCliente" class="btn danger hidden" type="button" title="Eliminar cliente">Eliminar</button>
           </div>
 
           <div class="client-detail-grid">
-            <div class="client-template-panel">
+            <div id="clienteTemplatePanel" class="client-template-panel subcard locked">
+              <div class="subcard-lock-overlay">Guarda el cliente primero</div>
               <div class="workbench-header compact">
                 <div>
-                  <h3>Plantilla de gastos</h3>
+                  <h3><span class="subcard-status" aria-hidden="true">○</span> Plantilla de gastos</h3>
                   <p id="clienteTemplateOrigin" class="workbench-subtitle">Sin plantilla cargada.</p>
                 </div>
                 <div class="actions small-actions">
@@ -155,9 +162,10 @@
               </div>
               <div id="clienteTemplateEditor" class="template-editor empty-state">Abra o guarde un cliente para revisar la plantilla.</div>
             </div>
-            <div class="client-periods-panel">
+            <div id="clientePeriodosPanel" class="client-periods-panel subcard locked">
+              <div class="subcard-lock-overlay">Guarda el cliente primero</div>
               <div class="workbench-header compact">
-                <h3>Periodos</h3>
+                <h3><span class="subcard-status" aria-hidden="true">○</span> Periodos</h3>
                 <button id="btnNewPeriodo" class="btn primary" type="button" disabled>Nuevo periodo</button>
               </div>
               <div id="periodosMessages" class="messages"></div>

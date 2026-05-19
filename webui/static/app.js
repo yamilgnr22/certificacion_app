@@ -756,6 +756,40 @@
     setClienteFormMessage('', 'info');
     renderClienteTemplate(null);
     renderClientePeriodos([]);
+    updateClienteFormUiState();
+  }
+
+  function updateClienteFormUiState() {
+    const hasClient = !!currentClienteId;
+    const periodos = currentClienteDetail?.periodos || [];
+    const hasPeriodos = periodos.length > 0;
+
+    const setStep = (el, state) => {
+      if (!el) return;
+      el.classList.remove('active', 'completed', 'locked');
+      el.classList.add(state);
+    };
+    setStep(qs('#clienteStepper .step[data-step="cliente"]'), hasClient ? 'completed' : 'active');
+    setStep(qs('#clienteStepper .step[data-step="plantilla"]'), !hasClient ? 'locked' : 'active');
+    setStep(qs('#clienteStepper .step[data-step="periodos"]'),
+      !hasClient ? 'locked' : (hasPeriodos ? 'completed' : 'active'));
+    setStep(qs('#clienteStepper .step[data-step="editor"]'), !hasPeriodos ? 'locked' : 'active');
+
+    const btnSave = qs('#btnSaveCliente');
+    if (btnSave) btnSave.textContent = hasClient ? 'Guardar cambios' : 'Guardar cliente';
+    qs('#btnUseClienteInModel')?.classList.toggle('hidden', !hasClient);
+    qs('#btnDeleteCliente')?.classList.toggle('hidden', !hasClient);
+
+    const templatePanel = qs('#clienteTemplatePanel');
+    const periodosPanel = qs('#clientePeriodosPanel');
+    if (templatePanel) {
+      templatePanel.classList.toggle('locked', !hasClient);
+      templatePanel.classList.toggle('unlocked', hasClient);
+    }
+    if (periodosPanel) {
+      periodosPanel.classList.toggle('locked', !hasClient);
+      periodosPanel.classList.toggle('unlocked', hasClient);
+    }
   }
 
   function openClienteForm({ mode = 'new', detail = null } = {}) {
@@ -763,7 +797,6 @@
     const panel = qs('#clienteFormPanel');
     if (panel) panel.classList.remove('hidden');
     qs('#clienteFormTitle').textContent = mode === 'new' ? 'Nuevo cliente' : 'Ficha del cliente';
-    qs('#btnDeleteCliente')?.classList.toggle('hidden', mode === 'new');
     if (detail) fillClienteForm(detail);
     panel?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
@@ -799,6 +832,7 @@
     Object.entries(mapping).forEach(([id, value]) => setClienteField(id, value));
     renderClienteTemplate(detail.plantilla_gastos || null);
     renderClientePeriodos(detail.periodos || []);
+    updateClienteFormUiState();
   }
 
   function collectClientePayload() {
