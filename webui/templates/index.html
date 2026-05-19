@@ -92,22 +92,11 @@
               <div class="field"><label>Matricula</label><input id="c_doc_matricula" type="file" accept=".png,.jpg,.jpeg,.bmp,.tif,.tiff,.pdf"></div>
             </div>
           </div>
+          <h3 class="form-section-title">Identificación personal</h3>
           <div class="grid-3">
             <div class="field" data-client-field="nombre_completo"><label>Nombre completo</label><input id="c_nombre_completo" type="text"></div>
             <div class="field" data-client-field="cedula"><label>Cedula</label><input id="c_cedula" type="text"></div>
-            <div class="field"><label>Telefono</label><input id="c_telefono" type="text"></div>
-            <div class="field"><label>Email</label><input id="c_email" type="text"></div>
-            <div class="field" data-client-field="nombre_negocio"><label>Nombre del negocio</label><input id="c_nombre_negocio" type="text"></div>
-            <div class="field"><label>RUC</label><input id="c_ruc" type="text"></div>
-            <div class="field"><label>Matricula/ROC</label><input id="c_matricula_roc" type="text"></div>
-            <div class="field"><label>Direccion domicilio</label><input id="c_direccion_domicilio" type="text"></div>
-            <div class="field" data-client-field="direccion_negocio"><label>Direccion negocio</label><input id="c_direccion_negocio" type="text"></div>
             <div class="field"><label>Fecha nacimiento</label><input id="c_fecha_nacimiento" type="date"></div>
-            <div class="field"><label>Fecha inicio negocio</label><input id="c_fecha_inicio_negocio" type="date"></div>
-            <div class="field" data-client-field="giro_negocio_id"><label>Giro de negocio</label><select id="c_giro_negocio_id"></select></div>
-          </div>
-          <h3 class="form-section-title">Datos para certificacion</h3>
-          <div class="grid-3">
             <div class="field"><label>Sexo</label>
               <select id="c_sexo">
                 <option value="">—</option>
@@ -118,11 +107,32 @@
             </div>
             <div class="field"><label>Estado civil</label><input id="c_estado_civil" type="text" placeholder="casada, soltero..."></div>
             <div class="field"><label>Profesion</label><input id="c_profesion" type="text" placeholder="Licenciada en Economia"></div>
-            <div class="field"><label>Banco</label><input id="c_banco" type="text" placeholder="BAC, LAFISE..."></div>
-            <div class="field"><label>Regimen tributario</label><input id="c_regimen" type="text" placeholder="Cuota Fija, General..."></div>
-            <div class="field"><label>Antiguedad del negocio</label><input id="c_antiguedad" type="text" placeholder="6 años"></div>
+          </div>
+
+          <h3 class="form-section-title">Contacto y domicilio</h3>
+          <div class="grid-3">
+            <div class="field"><label>Telefono</label><input id="c_telefono" type="text"></div>
+            <div class="field"><label>Email</label><input id="c_email" type="text"></div>
+            <div class="field"><label>Direccion domicilio</label><input id="c_direccion_domicilio" type="text"></div>
+            <div class="field"><label>Municipio / Departamento</label><input id="c_domicilio" type="text" placeholder="Municipio de Managua, Departamento de Managua."></div>
+          </div>
+
+          <h3 class="form-section-title">Datos del negocio</h3>
+          <div class="grid-3">
+            <div class="field" data-client-field="nombre_negocio"><label>Nombre del negocio</label><input id="c_nombre_negocio" type="text"></div>
+            <div class="field" data-client-field="giro_negocio_id"><label>Giro de negocio</label><select id="c_giro_negocio_id"></select></div>
+            <div class="field" data-client-field="direccion_negocio"><label>Direccion negocio</label><input id="c_direccion_negocio" type="text"></div>
+            <div class="field"><label>Fecha inicio negocio</label><input id="c_fecha_inicio_negocio" type="date"></div>
+            <div class="field"><label>Antigüedad del negocio</label><input id="c_antiguedad" type="text" placeholder="6 años"></div>
             <div class="field"><label>Empleados</label><input id="c_empleados" type="text" placeholder="6"></div>
-            <div class="field"><label>Domicilio (municipio/depto)</label><input id="c_domicilio" type="text" placeholder="Municipio de Managua, Departamento de Managua."></div>
+          </div>
+
+          <h3 class="form-section-title">Datos tributarios y bancarios</h3>
+          <div class="grid-3">
+            <div class="field"><label>RUC</label><input id="c_ruc" type="text"></div>
+            <div class="field"><label>Matricula / ROC</label><input id="c_matricula_roc" type="text"></div>
+            <div class="field"><label>Régimen tributario</label><input id="c_regimen" type="text" placeholder="Cuota Fija, General..."></div>
+            <div class="field"><label>Banco</label><input id="c_banco" type="text" placeholder="BAC, LAFISE..."></div>
           </div>
           <div class="actions">
             <button id="btnSaveCliente" class="btn primary" type="button">Guardar cliente</button>

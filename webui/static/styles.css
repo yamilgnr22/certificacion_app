@@ -408,6 +408,22 @@ html, body {
 }
 .hidden-input { display: none; }
 
+.form-section-title {
+  margin: 24px 0 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.form-section-title:first-of-type {
+  margin-top: 8px;
+  padding-top: 0;
+  border-top: 0;
+}
+
 .mode-switcher {
   display: inline-flex;
   gap: 2px;
