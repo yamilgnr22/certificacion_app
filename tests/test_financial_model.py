@@ -4,6 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from docx import Document
+
 from document_generator import generar_documento_completo
 from financial_model import build_financial_model, result_to_json
 from model_chat import heuristic_interpret_cash_instruction, solve_cash_target
@@ -82,6 +84,16 @@ def account_movement_value(result, account, movement, month):
         & (result.df_movimiento_cuentas["Movimiento"] == movement)
     ]
     return round(float(rows.iloc[0][col]))
+
+
+def _docx_text(path: Path) -> str:
+    doc = Document(str(path))
+    parts = [p.text for p in doc.paragraphs]
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                parts.append(cell.text)
+    return "\n".join(parts)
 
 
 class FinancialModelTest(unittest.TestCase):
@@ -201,6 +213,56 @@ class FinancialModelTest(unittest.TestCase):
             )
             self.assertTrue(out_path.exists())
             self.assertGreater(out_path.stat().st_size, 0)
+        finally:
+            out_path.unlink(missing_ok=True)
+
+    def test_dynamic_equity_account_flows_to_esf_ledger_and_docx(self):
+        payload = sample_payload()
+        payload["period"] = {
+            "start_month": "2026-01",
+            "end_month": "2026-04",
+            "exchange_rate": 36.6243,
+            "seed": "modelo-prueba",
+        }
+        payload["accounting"] = {
+            "dynamic_accounts": [
+                {
+                    "code": "reservas_legales",
+                    "name": "Reservas Legales",
+                    "account_type": "patrimonio",
+                    "section": "patrimonio",
+                }
+            ]
+        }
+        payload["movements"]["journal_entries"] = [
+            {
+                "month": "2026-01",
+                "debit_account": "capital",
+                "credit_account": "Reservas Legales",
+                "amount": 250000,
+                "currency": "nio",
+            }
+        ]
+        result = build_financial_model(payload)
+
+        self.assertIn("Reservas Legales", set(result.df_esf_mensual_full["Descripcion"]))
+        self.assertIn("Reservas Legales", result.accounting["accounts"])
+        self.assertTrue(result.validations["balance"]["ok"])
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
+            out_path = Path(tmp.name)
+        try:
+            generar_documento_completo(
+                result.df_esf_mensual,
+                result.df_er,
+                result.df_datos,
+                result.df_certificacion,
+                str(out_path),
+                incluir_validacion=False,
+                esf_tipo="mensual",
+            )
+            text = _docx_text(out_path)
+            self.assertIn("Reservas Legales", text)
         finally:
             out_path.unlink(missing_ok=True)
 
