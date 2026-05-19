@@ -80,8 +80,8 @@
           <div id="clienteFormMessages" class="messages"></div>
           <ol id="clienteStepper" class="stepper" aria-label="Pasos para configurar al cliente">
             <li class="step" data-step="cliente"><span class="step-num">1</span><span class="step-label">Datos del cliente</span></li>
-            <li class="step locked" data-step="plantilla"><span class="step-num">2</span><span class="step-label">Plantilla de gastos</span></li>
-            <li class="step locked" data-step="periodos"><span class="step-num">3</span><span class="step-label">Periodos</span></li>
+            <li class="step locked" data-step="periodos"><span class="step-num">2</span><span class="step-label">Periodos</span></li>
+            <li class="step locked" data-step="plantilla"><span class="step-num">3</span><span class="step-label">Plantilla de gastos</span></li>
             <li class="step locked" data-step="editor"><span class="step-num">4</span><span class="step-label">Editor avanzado</span></li>
           </ol>
           <div class="doc-extract-panel">
@@ -147,21 +147,6 @@
           </div>
 
           <div class="client-detail-grid">
-            <div id="clienteTemplatePanel" class="client-template-panel subcard locked">
-              <div class="subcard-lock-overlay">Guarda el cliente primero</div>
-              <div class="workbench-header compact">
-                <div>
-                  <h3><span class="subcard-status" aria-hidden="true">○</span> Plantilla de gastos</h3>
-                  <p id="clienteTemplateOrigin" class="workbench-subtitle">Sin plantilla cargada.</p>
-                </div>
-                <div class="actions small-actions">
-                  <button id="btnAddTemplateLine" class="btn" type="button">Agregar linea</button>
-                  <button id="btnResetTemplate" class="btn" type="button">Resetear a giro</button>
-                  <button id="btnSaveTemplate" class="btn primary" type="button">Guardar plantilla</button>
-                </div>
-              </div>
-              <div id="clienteTemplateEditor" class="template-editor empty-state">Abra o guarde un cliente para revisar la plantilla.</div>
-            </div>
             <div id="clientePeriodosPanel" class="client-periods-panel subcard locked">
               <div class="subcard-lock-overlay">Guarda el cliente primero</div>
               <div class="workbench-header compact">
@@ -170,6 +155,21 @@
               </div>
               <div id="periodosMessages" class="messages"></div>
               <div id="clientePeriodosList" class="saved-list empty-state">Abra o guarde un cliente para revisar sus periodos.</div>
+            </div>
+            <div id="clienteTemplatePanel" class="client-template-panel subcard locked">
+              <div class="subcard-lock-overlay">Guarda el cliente primero</div>
+              <div class="workbench-header compact">
+                <div>
+                  <h3><span class="subcard-status" aria-hidden="true">○</span> Plantilla de gastos</h3>
+                  <p id="clienteTemplateOrigin" class="workbench-subtitle">Sin plantilla cargada. Personalice las categorias y montos por defecto del cliente.</p>
+                </div>
+                <div class="actions small-actions">
+                  <button id="btnAddTemplateLine" class="btn" type="button">Agregar linea</button>
+                  <button id="btnResetTemplate" class="btn" type="button">Resetear a giro</button>
+                  <button id="btnSaveTemplate" class="btn primary" type="button">Guardar plantilla</button>
+                </div>
+              </div>
+              <div id="clienteTemplateEditor" class="template-editor empty-state">Abra o guarde un cliente para revisar la plantilla.</div>
             </div>
           </div>
         </section>

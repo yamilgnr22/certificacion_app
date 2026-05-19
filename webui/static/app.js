@@ -767,13 +767,22 @@
     const setStep = (el, state) => {
       if (!el) return;
       el.classList.remove('active', 'completed', 'locked');
-      el.classList.add(state);
+      if (state) el.classList.add(state);
     };
     setStep(qs('#clienteStepper .step[data-step="cliente"]'), hasClient ? 'completed' : 'active');
-    setStep(qs('#clienteStepper .step[data-step="plantilla"]'), !hasClient ? 'locked' : 'active');
-    setStep(qs('#clienteStepper .step[data-step="periodos"]'),
-      !hasClient ? 'locked' : (hasPeriodos ? 'completed' : 'active'));
-    setStep(qs('#clienteStepper .step[data-step="editor"]'), !hasPeriodos ? 'locked' : 'active');
+    if (!hasClient) {
+      setStep(qs('#clienteStepper .step[data-step="periodos"]'), 'locked');
+      setStep(qs('#clienteStepper .step[data-step="plantilla"]'), 'locked');
+      setStep(qs('#clienteStepper .step[data-step="editor"]'), 'locked');
+    } else if (!hasPeriodos) {
+      setStep(qs('#clienteStepper .step[data-step="periodos"]'), 'active');
+      setStep(qs('#clienteStepper .step[data-step="plantilla"]'), null);
+      setStep(qs('#clienteStepper .step[data-step="editor"]'), 'locked');
+    } else {
+      setStep(qs('#clienteStepper .step[data-step="periodos"]'), 'completed');
+      setStep(qs('#clienteStepper .step[data-step="plantilla"]'), null);
+      setStep(qs('#clienteStepper .step[data-step="editor"]'), 'active');
+    }
 
     const btnSave = qs('#btnSaveCliente');
     if (btnSave) btnSave.textContent = hasClient ? 'Guardar cambios' : 'Guardar cliente';
