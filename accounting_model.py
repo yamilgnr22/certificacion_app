@@ -68,10 +68,11 @@ def build_accounting(
     months: list[Any],
     opening_balances: Mapping[str, float],
 ) -> Dict[str, Any]:
-    system_vouchers = _build_system_vouchers(payload, monthly, months, opening_balances)
+    account_types = _account_types(payload)
+    system_vouchers = _build_system_vouchers(payload, monthly, months, opening_balances, account_types)
     saved_vouchers = _saved_vouchers(payload)
     vouchers = [*system_vouchers, *saved_vouchers]
-    ledger = _build_ledger(vouchers)
+    ledger = _build_ledger(vouchers, account_types)
     traces = _build_traces(ledger)
     return {
         "vouchers": vouchers,
@@ -135,12 +136,13 @@ def _build_system_vouchers(
     monthly: list[Mapping[str, Any]],
     months: list[Any],
     opening_balances: Mapping[str, float],
+    account_types: Mapping[str, str],
 ) -> list[Dict[str, Any]]:
     vouchers: list[Dict[str, Any]] = []
     counters: Dict[str, int] = defaultdict(int)
     if months:
         opening_month = _month_key(months[0])
-        opening = _opening_voucher(opening_month, opening_balances)
+        opening = _opening_voucher(opening_month, opening_balances, account_types)
         if opening:
             opening["voucher_id"] = _next_voucher_id(counters, opening_month)
             vouchers.append(opening)
@@ -154,7 +156,7 @@ def _build_system_vouchers(
     return vouchers
 
 
-def _opening_voucher(month: str, balances: Mapping[str, float]) -> Dict[str, Any]:
+def _opening_voucher(month: str, balances: Mapping[str, float], account_types: Mapping[str, str]) -> Dict[str, Any]:
     lines: list[Dict[str, Any]] = []
     for key, account in BALANCE_ACCOUNTS.items():
         amount = _round(balances.get(key))
@@ -162,7 +164,7 @@ def _opening_voucher(month: str, balances: Mapping[str, float]) -> Dict[str, Any
             continue
         if account == "Depreciacion Acumulada":
             lines.append(_line(account, credit=abs(amount), reference="Saldo inicial"))
-        elif ACCOUNT_TYPES.get(account) == "asset":
+        elif account_types.get(account) == "asset":
             lines.append(_line(account, debit=amount, reference="Saldo inicial"))
         else:
             lines.append(_line(account, credit=amount, reference="Saldo inicial"))
@@ -347,7 +349,7 @@ def _income_close_voucher(item: Mapping[str, Any], month: str) -> Dict[str, Any]
     return _voucher("", month, "year_close", "Cierre mensual de resultado", lines)
 
 
-def _build_ledger(vouchers: list[Mapping[str, Any]]) -> list[Dict[str, Any]]:
+def _build_ledger(vouchers: list[Mapping[str, Any]], account_types: Mapping[str, str]) -> list[Dict[str, Any]]:
     lines: list[Dict[str, Any]] = []
     running: Dict[str, float] = defaultdict(float)
     for voucher in vouchers:
@@ -357,7 +359,7 @@ def _build_ledger(vouchers: list[Mapping[str, Any]]) -> list[Dict[str, Any]]:
             account = str(line.get("account") or "")
             debit = _round(line.get("debit"))
             credit = _round(line.get("credit"))
-            delta = _normal_delta(account, debit, credit)
+            delta = _normal_delta(account, debit, credit, account_types)
             running[account] = _round(running[account] + delta)
             lines.append({
                 "voucher_id": voucher.get("voucher_id"),
@@ -457,11 +459,44 @@ def _next_voucher_id(counters: Dict[str, int], month: str) -> str:
     return f"CD-{year}-{counters[year]:04d}"
 
 
-def _normal_delta(account: str, debit: float, credit: float) -> float:
-    account_type = ACCOUNT_TYPES.get(account, "asset")
+def _normal_delta(account: str, debit: float, credit: float, account_types: Mapping[str, str] | None = None) -> float:
+    account_type = (account_types or ACCOUNT_TYPES).get(account, "asset")
     if account_type in {"asset", "expense"}:
         return _round(debit - credit)
     return _round(credit - debit)
+
+
+def _account_types(payload: Mapping[str, Any]) -> dict[str, str]:
+    account_types = dict(ACCOUNT_TYPES)
+    accounting = dict((payload or {}).get("accounting") or {})
+    for account in accounting.get("dynamic_accounts") or []:
+        if not isinstance(account, Mapping):
+            continue
+        code = str(account.get("code") or "").strip()
+        name = str(account.get("name") or account.get("label") or account.get("code") or "").strip()
+        if not name and not code:
+            continue
+        runtime_type = _runtime_account_type(account.get("account_type"))
+        if name:
+            account_types[name] = runtime_type
+        if code:
+            account_types[code] = runtime_type
+    return account_types
+
+
+def _runtime_account_type(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if raw in {"activo", "asset"}:
+        return "asset"
+    if raw in {"pasivo", "liability"}:
+        return "liability"
+    if raw in {"patrimonio", "equity"}:
+        return "equity"
+    if raw in {"ingreso", "revenue"}:
+        return "revenue"
+    if raw in {"costo", "gasto", "expense"}:
+        return "expense"
+    return "asset"
 
 
 def _account_label(account_key: Any) -> str:

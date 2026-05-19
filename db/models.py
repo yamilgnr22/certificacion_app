@@ -176,3 +176,17 @@ class LegacyCallCounter(Base):
     endpoint: Mapped[str] = mapped_column(String(120), primary_key=True)
     call_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class AccountCatalog(Base):
+    __tablename__ = "account_catalog"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    code: Mapped[str] = mapped_column(String(120), nullable=False, unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(220), nullable=False)
+    account_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    section: Mapped[str] = mapped_column(String(80), nullable=False)
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="system")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    active: Mapped[int] = mapped_column(Integer, default=1, nullable=False)

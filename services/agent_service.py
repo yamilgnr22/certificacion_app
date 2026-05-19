@@ -12,7 +12,7 @@ from accounting_model import reverse_voucher
 from financial_model import build_financial_model
 from llm import LLMProvider, LLMProviderError, get_llm_provider
 from model_chat import LEDGER_ACCOUNT_LABELS
-from repositories import AgentRepository, PeriodoRepository
+from repositories import AccountRepository, AgentRepository, PeriodoRepository
 from services.audit_service import AuditService, stable_hash
 from services.agent_tools import AgentToolRegistry
 from services.periodo_service import PeriodoService
@@ -53,6 +53,7 @@ class AgentCommandService:
         self.session = session
         self.periodos = PeriodoRepository(session)
         self.agent_repo = AgentRepository(session)
+        self.accounts = AccountRepository(session)
         self.tools = AgentToolRegistry()
         self.provider = provider
 
@@ -98,13 +99,6 @@ class AgentCommandService:
                 intent=intent or "question",
                 message=str(interpreted.get("assistant_message") or interpreted.get("question") or "Necesito un poco mas de detalle para ayudarte."),
             )
-        elif intent in self.tools.tools:
-            tool_result = self.tools.run(intent, payload, args)
-            response = self._tool_response(
-                command_id=command_id,
-                intent=intent,
-                tool_result=tool_result,
-            )
         elif intent in MUTATION_INTENTS:
             response = self._proposal_response(
                 command_id=command_id,
@@ -114,6 +108,13 @@ class AgentCommandService:
                 args=args,
                 ui_context=ui_context,
                 original_message=message,
+            )
+        elif intent in self.tools.tools:
+            tool_result = self.tools.run(intent, payload, args)
+            response = self._tool_response(
+                command_id=command_id,
+                intent=intent,
+                tool_result=tool_result,
             )
         else:
             response = self._question_response(
@@ -179,6 +180,8 @@ class AgentCommandService:
             self.session.flush()
 
             proposal_payload = parse_json_object(proposal.proposal_json)
+            if proposal_payload.get("kind") == "create_account":
+                self._apply_account_creation(proposal_payload, command_id=proposal.command_id, cpa_user=cpa_user)
             after = _periodo_snapshot(periodo)
             AuditService(self.session).log(
                 cpa_user=cpa_user,
@@ -304,6 +307,8 @@ class AgentCommandService:
             return self._prepare_journal_entry(intent, payload, args, command_id, original_message)
         if intent == "assumption_change":
             return self._prepare_assumption_change(payload, args, ui_context, command_id, original_message)
+        if intent == "create_account":
+            return self._prepare_create_account(payload, args, command_id, original_message)
         raise AgentValidationError("Esa accion todavia no esta habilitada en el asistente.")
 
     def _prepare_reverse_voucher(
@@ -364,7 +369,9 @@ class AgentCommandService:
             raise AgentValidationError("La cuenta al debe y al haber deben ser diferentes.")
         if amount is None or amount <= 0:
             raise AgentValidationError("Indique un monto positivo para la partida.")
-        if debit not in LEDGER_ACCOUNT_LABELS or credit not in LEDGER_ACCOUNT_LABELS:
+        debit_label = self._account_label(debit, payload)
+        credit_label = self._account_label(credit, payload)
+        if not debit_label or not credit_label:
             raise AgentValidationError("Solo se permiten cuentas del catalogo contable actual.")
 
         entry = {
@@ -383,21 +390,43 @@ class AgentCommandService:
         if source_month:
             entry["source_month"] = source_month
         projected = _append_journal_entry(payload, entry)
+        projected = self._ensure_dynamic_accounts_in_payload(projected, [debit, credit])
         build_financial_model(projected)
         rows = [
-            {"account": LEDGER_ACCOUNT_LABELS.get(debit, debit), "debit": amount, "credit": 0},
-            {"account": LEDGER_ACCOUNT_LABELS.get(credit, credit), "debit": 0, "credit": amount},
+            {"account": debit_label, "debit": amount, "credit": 0},
+            {"account": credit_label, "debit": 0, "credit": amount},
         ]
         return projected, _proposal_payload(
             kind="journal_entry",
             title=_journal_title(intent),
-            assistant_message=f"Registro contable propuesto: debita {LEDGER_ACCOUNT_LABELS.get(debit, debit)} y acredita {LEDGER_ACCOUNT_LABELS.get(credit, credit)} por {amount:,.0f}.",
+            assistant_message=f"Registro contable propuesto: debita {debit_label} y acredita {credit_label} por {amount:,.0f}.",
             month=target_month,
             rows=rows,
             technical_records=[entry],
             original_message=original_message,
             extra={"source_month": source_month or None},
         )
+
+    def _account_label(self, account: str, payload: Mapping[str, Any]) -> str:
+        if account in LEDGER_ACCOUNT_LABELS:
+            return LEDGER_ACCOUNT_LABELS[account]
+        dynamic = _dynamic_account_lookup(payload)
+        if account in dynamic:
+            return dynamic[account]["name"]
+        found = self.accounts.get_by_code(account) or self.accounts.get_by_name(account)
+        return found.name if found else ""
+
+    def _ensure_dynamic_accounts_in_payload(self, payload: Mapping[str, Any], accounts: list[str]) -> dict[str, Any]:
+        projected = deepcopy(dict(payload or {}))
+        for account in accounts:
+            if account in LEDGER_ACCOUNT_LABELS:
+                continue
+            if account in _dynamic_account_lookup(projected):
+                continue
+            found = self.accounts.get_by_code(account) or self.accounts.get_by_name(account)
+            if found:
+                projected = _append_dynamic_account(projected, _account_catalog_payload(found))
+        return projected
 
     def _prepare_assumption_change(
         self,
@@ -431,6 +460,79 @@ class AgentCommandService:
             rows=rows,
             technical_records=[{"assumption": assumption, "value": value, "cost_variability_pct": variability, "scope": scope, "months": months}],
             original_message=original_message,
+        )
+
+    def _prepare_create_account(
+        self,
+        payload: Mapping[str, Any],
+        args: Mapping[str, Any],
+        command_id: str,
+        original_message: str,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        name = str(args.get("name") or args.get("account_name") or "").strip()
+        account_type = _normalize_account_type(args.get("account_type") or args.get("type"))
+        section = _normalize_account_section(args.get("section"))
+        if not name:
+            raise AgentValidationError("Indique el nombre de la cuenta que desea crear.")
+        if not account_type or not section:
+            raise AgentValidationError("Indique tipo y seccion contable para la cuenta nueva.")
+        if not _valid_type_section(account_type, section):
+            raise AgentValidationError("La combinacion tipo-seccion no es valida para el catalogo contable.")
+
+        code = _account_code(args.get("code") or name)
+        if self.accounts.get_by_code(code) or self.accounts.get_by_name(name):
+            raise AgentValidationError(f"La cuenta {name} ya existe en el catalogo.")
+
+        account_record = {
+            "code": code,
+            "name": name,
+            "account_type": account_type,
+            "section": section,
+            "source": "chat_financiero",
+            "instruction_id": command_id,
+            "message": original_message,
+        }
+        projected = _append_dynamic_account(payload, account_record)
+        rows = [{"account": name, "debit": 0, "credit": 0}]
+        return projected, _proposal_payload(
+            kind="create_account",
+            title=f"Crear cuenta {name}",
+            assistant_message=f'Voy a crear "{name}" como {account_type} en {section}. Confirmame si es correcto.',
+            month=None,
+            rows=rows,
+            technical_records=[account_record],
+            original_message=original_message,
+            extra={"account": account_record},
+        )
+
+    def _apply_account_creation(self, proposal_payload: Mapping[str, Any], *, command_id: str, cpa_user: str) -> None:
+        account = dict(proposal_payload.get("account") or {})
+        code = str(account.get("code") or "").strip()
+        name = str(account.get("name") or "").strip()
+        if not code or not name:
+            raise AgentValidationError("La propuesta no contiene una cuenta valida para crear.")
+        if self.accounts.get_by_code(code) or self.accounts.get_by_name(name):
+            return
+        account = self.accounts.create(
+            id=code,
+            code=code,
+            name=name,
+            account_type=str(account.get("account_type") or ""),
+            section=str(account.get("section") or ""),
+            source=str(account.get("source") or "chat_financiero"),
+        )
+        AuditService(self.session).log(
+            cpa_user=cpa_user,
+            entity_type="account_catalog",
+            entity_id=account.id,
+            action="agent_create_account",
+            summary=f"Creo cuenta {account.name}",
+            metadata={
+                "command_id": command_id,
+                "prompt_version": PROMPT_VERSION,
+                "tool_versions": self.tools.versions(),
+                "account": _account_catalog_payload(account),
+            },
         )
 
     def _question_response(self, *, command_id: str, intent: str, message: str) -> dict[str, Any]:
@@ -469,6 +571,7 @@ AGENT_COMMAND_SCHEMA: dict[str, Any] = {
                 "account_transfer",
                 "year_close_transfer",
                 "assumption_change",
+                "create_account",
                 "question",
                 "unsupported",
             ],
@@ -480,7 +583,7 @@ AGENT_COMMAND_SCHEMA: dict[str, Any] = {
 }
 
 
-MUTATION_INTENTS = {"reverse_voucher", "journal_entry", "account_transfer", "year_close_transfer", "assumption_change"}
+MUTATION_INTENTS = {"reverse_voucher", "journal_entry", "account_transfer", "year_close_transfer", "assumption_change", "create_account"}
 
 
 def _system_prompt() -> str:
@@ -493,8 +596,9 @@ def _system_prompt() -> str:
         "journal_entry(month, debit_account, credit_account, amount), "
         "account_transfer(month, source_account, destination_account, amount), "
         "year_close_transfer(target_month, source_month, amount opcional), "
-        "assumption_change(assumption=cost_pct, value, cost_variability_pct, scope), question. "
-        "Si falta cuenta, mes o monto, usa question. No inventes cuentas fuera del catalogo mencionado."
+        "assumption_change(assumption=cost_pct, value, cost_variability_pct, scope), "
+        "create_account(name, account_type, section), question. "
+        "Si falta cuenta, mes o monto, usa question. Si el usuario pide crear una cuenta nueva, usa create_account."
     )
 
 
@@ -554,6 +658,50 @@ def _append_journal_entry(payload: Mapping[str, Any], entry: Mapping[str, Any]) 
     return projected
 
 
+def _append_dynamic_account(payload: Mapping[str, Any], account: Mapping[str, Any]) -> dict[str, Any]:
+    projected = deepcopy(dict(payload or {}))
+    accounting = dict(projected.get("accounting") or {})
+    accounts = list(accounting.get("dynamic_accounts") or [])
+    clean = {
+        "code": str(account.get("code") or "").strip(),
+        "name": str(account.get("name") or "").strip(),
+        "account_type": _normalize_account_type(account.get("account_type")),
+        "section": _normalize_account_section(account.get("section")),
+        "source": str(account.get("source") or "chat_financiero").strip(),
+    }
+    existing_codes = {str(item.get("code") or "").strip() for item in accounts if isinstance(item, Mapping)}
+    existing_names = {str(item.get("name") or "").strip().lower() for item in accounts if isinstance(item, Mapping)}
+    if clean["code"] and clean["name"].lower() not in existing_names and clean["code"] not in existing_codes:
+        accounts.append(clean)
+    accounting["dynamic_accounts"] = accounts
+    projected["accounting"] = accounting
+    return projected
+
+
+def _dynamic_account_lookup(payload: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    accounting = dict((payload or {}).get("accounting") or {})
+    lookup: dict[str, dict[str, Any]] = {}
+    for item in accounting.get("dynamic_accounts") or []:
+        if not isinstance(item, Mapping):
+            continue
+        account = dict(item)
+        for value in [account.get("code"), account.get("name")]:
+            key = str(value or "").strip()
+            if key:
+                lookup[key] = account
+    return lookup
+
+
+def _account_catalog_payload(account: Any) -> dict[str, Any]:
+    return {
+        "code": account.code,
+        "name": account.name,
+        "account_type": account.account_type,
+        "section": account.section,
+        "source": account.source,
+    }
+
+
 def _voucher_rows(voucher: Mapping[str, Any]) -> list[dict[str, Any]]:
     return [
         {"account": line.get("account"), "debit": line.get("debit") or 0, "credit": line.get("credit") or 0}
@@ -568,6 +716,70 @@ def _to_float(value: Any) -> float | None:
         return float(str(value).replace(",", ""))
     except Exception:
         return None
+
+
+def _account_code(value: Any) -> str:
+    import re
+    import unicodedata
+
+    raw = unicodedata.normalize("NFKD", str(value or ""))
+    plain = "".join(ch for ch in raw if not unicodedata.combining(ch)).lower()
+    code = re.sub(r"[^a-z0-9]+", "_", plain).strip("_")
+    return code[:100] or f"cuenta_{uuid.uuid4().hex[:8]}"
+
+
+def _normalize_account_type(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    aliases = {
+        "asset": "activo",
+        "activo": "activo",
+        "liability": "pasivo",
+        "pasivo": "pasivo",
+        "equity": "patrimonio",
+        "patrimonio": "patrimonio",
+        "revenue": "ingreso",
+        "ingreso": "ingreso",
+        "income": "ingreso",
+        "expense": "gasto",
+        "gasto": "gasto",
+        "cost": "costo",
+        "costo": "costo",
+    }
+    return aliases.get(raw, raw)
+
+
+def _normalize_account_section(value: Any) -> str:
+    raw = str(value or "").strip().lower().replace(" ", "_").replace("-", "_")
+    aliases = {
+        "current": "corriente",
+        "corriente": "corriente",
+        "non_current": "no_corriente",
+        "nocorriente": "no_corriente",
+        "no_corriente": "no_corriente",
+        "patrimonio": "patrimonio",
+        "equity": "patrimonio",
+        "ingresos": "ingresos",
+        "revenue": "ingresos",
+        "costo_ventas": "costo_ventas",
+        "costo_de_ventas": "costo_ventas",
+        "gastos_operativos": "gastos_operativos",
+        "gasto_operativo": "gastos_operativos",
+        "gastos_financieros": "gastos_financieros",
+        "gasto_financiero": "gastos_financieros",
+    }
+    return aliases.get(raw, raw)
+
+
+def _valid_type_section(account_type: str, section: str) -> bool:
+    allowed = {
+        "activo": {"corriente", "no_corriente"},
+        "pasivo": {"corriente", "no_corriente"},
+        "patrimonio": {"patrimonio"},
+        "ingreso": {"ingresos"},
+        "costo": {"costo_ventas"},
+        "gasto": {"gastos_operativos", "gastos_financieros"},
+    }
+    return section in allowed.get(account_type, set())
 
 
 def _last_payload_month(payload: Mapping[str, Any]) -> str:

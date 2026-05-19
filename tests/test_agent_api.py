@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 import web_server
 from datetime import datetime, timedelta, timezone
 
-from db.models import AgentMessage, AgentProposal, Base, PeriodoCertificacion
+from db.models import AccountCatalog, AgentMessage, AgentProposal, Base, PeriodoCertificacion
 from db.seed import seed_giros
 from llm import LLMProviderError
 
@@ -317,6 +317,97 @@ class AgentApiTest(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         with self.db_session() as session:
             self.assertEqual(session.get(AgentProposal, proposal_id).status, "discarded")
+
+    def test_create_account_requires_confirmation_and_applies_to_catalog(self):
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "create_account",
+                "args": {
+                    "name": "Reservas Legales",
+                    "account_type": "patrimonio",
+                    "section": "patrimonio",
+                },
+            }
+        )
+
+        proposal_resp = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "crea la cuenta reservas legales"},
+        )
+        proposal = proposal_resp.get_json()["proposal"]
+
+        self.assertEqual(proposal_resp.status_code, 200, proposal_resp.get_json())
+        self.assertEqual(proposal["kind"], "create_account")
+        self.assertIn("Confirmame", proposal["assistant_message"])
+        with self.db_session() as session:
+            self.assertIsNone(session.get(AccountCatalog, "reservas_legales"))
+
+        apply_resp = self.client.post(f"/api/agent/proposals/{proposal['id']}/apply")
+        detail = self.client.get(f"/api/periodos/{self.periodo['id']}").get_json()["periodo"]
+
+        self.assertEqual(apply_resp.status_code, 200, apply_resp.get_json())
+        with self.db_session() as session:
+            account = session.get(AccountCatalog, "reservas_legales")
+            self.assertIsNotNone(account)
+            self.assertEqual(account.account_type, "patrimonio")
+        dynamic_accounts = detail["payload"]["accounting"]["dynamic_accounts"]
+        self.assertEqual(dynamic_accounts[-1]["name"], "Reservas Legales")
+
+    def test_create_account_rejects_invalid_type_section(self):
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "create_account",
+                "args": {
+                    "name": "Reserva Mal Clasificada",
+                    "account_type": "activo",
+                    "section": "patrimonio",
+                },
+            }
+        )
+
+        resp = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "crea una cuenta rara"},
+        )
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("tipo-seccion", resp.get_json()["error"])
+
+    def test_dynamic_account_can_be_used_in_ledger_after_creation(self):
+        with self.db_session() as session:
+            session.add(
+                AccountCatalog(
+                    id="reservas_legales",
+                    code="reservas_legales",
+                    name="Reservas Legales",
+                    account_type="patrimonio",
+                    section="patrimonio",
+                    source="test",
+                )
+            )
+            session.commit()
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "journal_entry",
+                "args": {
+                    "month": "2026-01",
+                    "debit_account": "Capital",
+                    "credit_account": "Reservas Legales",
+                    "amount": 250000,
+                },
+            }
+        )
+
+        proposal_id = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "traslada capital a reserva legal"},
+        ).get_json()["proposal"]["id"]
+        apply_resp = self.client.post(f"/api/agent/proposals/{proposal_id}/apply")
+        detail = self.client.get(f"/api/periodos/{self.periodo['id']}").get_json()["periodo"]
+
+        self.assertEqual(apply_resp.status_code, 200, apply_resp.get_json())
+        self.assertEqual(detail["payload"]["movements"]["journal_entries"][-1]["credit_account"], "Reservas Legales")
+        self.assertTrue(any(acc["name"] == "Reservas Legales" for acc in detail["payload"]["accounting"]["dynamic_accounts"]))
 
 
 if __name__ == "__main__":

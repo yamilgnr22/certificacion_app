@@ -19,6 +19,12 @@ class AgentToolRegistry:
         "show_ledger": AgentTool("show_ledger", "1.0.0"),
         "show_voucher": AgentTool("show_voucher", "1.0.0"),
         "navigate": AgentTool("navigate", "1.0.0"),
+        "reverse_voucher": AgentTool("reverse_voucher", "1.0.0"),
+        "journal_entry": AgentTool("journal_entry", "1.0.0"),
+        "account_transfer": AgentTool("account_transfer", "1.0.0"),
+        "year_close_transfer": AgentTool("year_close_transfer", "1.0.0"),
+        "assumption_change": AgentTool("assumption_change", "1.0.0"),
+        "create_account": AgentTool("create_account", "1.0.0"),
     }
 
     def versions(self) -> dict[str, str]:

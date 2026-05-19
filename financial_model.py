@@ -154,7 +154,8 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
             expenses_usd[normalized] = _to_float(value, expenses_usd[normalized])
 
     events = _index_events(movement_payload.get("events") or payload.get("events") or [], months, exchange_rate)
-    journal_entries = _index_journal_entries(movement_payload.get("journal_entries") or [], months, exchange_rate)
+    dynamic_accounts = _dynamic_account_aliases(payload)
+    journal_entries = _index_journal_entries(movement_payload.get("journal_entries") or [], months, exchange_rate, dynamic_accounts)
 
     revenue_factors: List[float] = []
     cost_rates: List[float] = []
@@ -1123,7 +1124,12 @@ def _index_events(raw_events: Any, months: List[pd.Timestamp], exchange_rate: fl
     return out
 
 
-def _index_journal_entries(raw_entries: Any, months: List[pd.Timestamp], exchange_rate: float) -> Dict[str, List[Dict[str, Any]]]:
+def _index_journal_entries(
+    raw_entries: Any,
+    months: List[pd.Timestamp],
+    exchange_rate: float,
+    dynamic_accounts: Mapping[str, str] | None = None,
+) -> Dict[str, List[Dict[str, Any]]]:
     allowed_months = {_month_key(m) for m in months}
     out: Dict[str, List[Dict[str, Any]]] = {month: [] for month in allowed_months}
     if not isinstance(raw_entries, list):
@@ -1134,8 +1140,8 @@ def _index_journal_entries(raw_entries: Any, months: List[pd.Timestamp], exchang
         month_key = str(entry.get("month") or entry.get("mes") or "").strip()[:7]
         if month_key not in allowed_months:
             continue
-        debit_account = _normalize_ledger_account(entry.get("debit_account") or entry.get("debe") or "")
-        credit_account = _normalize_ledger_account(entry.get("credit_account") or entry.get("haber") or "")
+        debit_account = _normalize_ledger_account(entry.get("debit_account") or entry.get("debe") or "", dynamic_accounts)
+        credit_account = _normalize_ledger_account(entry.get("credit_account") or entry.get("haber") or "", dynamic_accounts)
         if not debit_account or not credit_account or debit_account == credit_account:
             continue
         amount_nio = entry.get("amount_nio")
@@ -1206,11 +1212,15 @@ def _apply_journal_side(
             effects[cash_key] = effects.get(cash_key, 0.0) + abs(delta)
 
 
-def _normalize_ledger_account(value: Any) -> str:
+def _normalize_ledger_account(value: Any, dynamic_accounts: Mapping[str, str] | None = None) -> str:
     canonical = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
     if canonical in LEDGER_ACCOUNTS:
         return canonical
+    if dynamic_accounts and canonical in dynamic_accounts:
+        return dynamic_accounts[canonical]
     key = _plain(value)
+    if dynamic_accounts and key in dynamic_accounts:
+        return dynamic_accounts[key]
     aliases = {
         "efectivo": "cash",
         "caja": "cash",
@@ -1248,6 +1258,25 @@ def _normalize_ledger_account(value: Any) -> str:
     if key in LEDGER_ACCOUNTS:
         return key
     return aliases.get(key, "")
+
+
+def _dynamic_account_aliases(payload: Mapping[str, Any]) -> Dict[str, str]:
+    accounting = dict((payload or {}).get("accounting") or {})
+    aliases: Dict[str, str] = {}
+    for account in accounting.get("dynamic_accounts") or []:
+        if not isinstance(account, Mapping):
+            continue
+        code = str(account.get("code") or "").strip()
+        name = str(account.get("name") or account.get("label") or "").strip()
+        canonical = name or code
+        if not canonical:
+            continue
+        for value in {canonical, code, name}:
+            if not value:
+                continue
+            aliases[str(value).strip().lower().replace("-", "_").replace(" ", "_")] = canonical
+            aliases[_plain(value)] = canonical
+    return aliases
 
 
 def _normalize_account(value: Any) -> str:
