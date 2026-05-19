@@ -1476,12 +1476,25 @@
   }
 
   function clearPendingChatProposal() {
+    if (pendingChatData?.proposalElement) {
+      markProposalCardStatus(pendingChatData.proposalElement, 'superseded', 'Propuesta reemplazada por una nueva instruccion.');
+    }
     pendingChatPayload = null;
     pendingChatData = null;
-    const proposal = qs('#modelChatProposal');
-    if (proposal) {
-      proposal.classList.add('hidden');
-      proposal.replaceChildren();
+  }
+
+  function markProposalCardStatus(bubble, kind, message) {
+    if (!bubble) return;
+    const actions = bubble.querySelector('.proposal-actions');
+    const status = document.createElement('div');
+    status.className = `proposal-status ${kind}`;
+    status.textContent = message;
+    if (actions) {
+      actions.replaceWith(status);
+    } else {
+      const existing = bubble.querySelector('.proposal-status');
+      if (existing) existing.replaceWith(status);
+      else bubble.appendChild(status);
     }
   }
 
@@ -2166,10 +2179,12 @@
   }
 
   function renderChatProposal(data) {
-    const wrap = qs('#modelChatProposal');
-    if (!wrap) return;
-    wrap.replaceChildren();
-    wrap.classList.remove('hidden');
+    const thread = qs('#modelChatMessages');
+    if (!thread) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'chat-bubble app chat-bubble-proposal';
+    thread.appendChild(wrap);
+    if (data) data.proposalElement = wrap;
     const proposal = data?.proposal || {};
     const event = proposal.event;
     const events = data?.new_events || proposal.events || (event ? [event] : []);
@@ -2182,6 +2197,14 @@
     const title = document.createElement('h3');
     title.textContent = proposalTitle(proposalKind);
     wrap.appendChild(title);
+
+    const messageText = String(data?.assistant_message || proposal.assistant_message || proposal.explanation || '').trim();
+    if (messageText) {
+      const messageEl = document.createElement('p');
+      messageEl.className = 'proposal-message';
+      messageEl.textContent = messageText;
+      wrap.appendChild(messageEl);
+    }
 
     const grid = document.createElement('div');
     grid.className = 'proposal-grid';
@@ -2297,7 +2320,41 @@
       wrap.appendChild(list);
     }
 
-    if (proposal.explanation) {
+    const impact = proposal.impact;
+    if (impact && Array.isArray(impact.items) && impact.items.length) {
+      const impactSection = document.createElement('div');
+      impactSection.className = 'proposal-impact';
+      const impactTitle = document.createElement('div');
+      impactTitle.className = 'proposal-impact-title';
+      impactTitle.textContent = impact.month ? `Impacto al cierre de ${impact.month}` : 'Impacto en el modelo';
+      impactSection.appendChild(impactTitle);
+      const impactGrid = document.createElement('div');
+      impactGrid.className = 'proposal-impact-grid';
+      impact.items.forEach(item => {
+        const cell = document.createElement('div');
+        cell.className = 'proposal-impact-item';
+        const label = document.createElement('span');
+        label.textContent = item.label;
+        const delta = document.createElement('strong');
+        const value = Number(item.delta || 0);
+        if (value === 0) {
+          delta.textContent = 'sin cambio';
+          delta.dataset.direction = 'neutral';
+        } else if (value > 0) {
+          delta.textContent = `+${formatMoney(value)}`;
+          delta.dataset.direction = 'up';
+        } else {
+          delta.textContent = `-${formatMoney(Math.abs(value))}`;
+          delta.dataset.direction = 'down';
+        }
+        cell.append(label, delta);
+        impactGrid.appendChild(cell);
+      });
+      impactSection.appendChild(impactGrid);
+      wrap.appendChild(impactSection);
+    }
+
+    if (proposal.explanation && !messageText) {
       const note = document.createElement('p');
       note.className = 'proposal-note';
       note.textContent = proposal.explanation;
@@ -2350,6 +2407,7 @@
 
     apply.addEventListener('click', onModelChatApply);
     discard.addEventListener('click', onModelChatDiscard);
+    wrap.scrollIntoView({ block: 'nearest' });
   }
 
   function proposalTitle(kind) {
@@ -3151,7 +3209,6 @@
       }
       pendingChatPayload = data.adjusted_payload || null;
       pendingChatData = data;
-      appendChatMessage(assistantText || data.proposal?.explanation || 'Propuesta lista para revisar.', 'app');
       renderChatProposal(data);
       setModelMessage(useAgent
         ? 'Propuesta creada en SQLite. Revise el registro y confirme si desea aplicarla.'
@@ -3184,6 +3241,7 @@
 
   async function onModelChatApply() {
     if (!pendingChatData) return;
+    const activeBubble = pendingChatData.proposalElement;
     if (pendingChatData.agent_mode) {
       const proposalId = pendingChatData.proposal?.id;
       if (!proposalId) {
@@ -3192,8 +3250,9 @@
       }
       try {
         const applied = await fetchJson(`/api/agent/proposals/${encodeURIComponent(proposalId)}/apply`, { method: 'POST' });
-        appendChatMessage(applied.assistant_message || 'Listo, aplique la propuesta al periodo.', 'app');
-        clearPendingChatProposal();
+        markProposalCardStatus(activeBubble, 'applied', `Aplicada — ${applied.assistant_message || 'Listo, aplique la propuesta al periodo.'}`);
+        pendingChatPayload = null;
+        pendingChatData = null;
         if (activePeriodoId) {
           const data = await fetchJson(`/api/periodos/${encodeURIComponent(activePeriodoId)}`);
           activePeriodoDetail = data;
@@ -3274,12 +3333,15 @@
   }
 
   function onModelChatDiscard() {
+    if (!pendingChatData) return;
+    const activeBubble = pendingChatData.proposalElement;
     if (pendingChatData?.agent_mode && pendingChatData?.proposal?.id) {
       fetchJson(`/api/agent/proposals/${encodeURIComponent(pendingChatData.proposal.id)}/discard`, { method: 'POST' })
         .catch(() => {});
     }
-    clearPendingChatProposal();
-    appendChatMessage('Propuesta descartada.', 'app');
+    markProposalCardStatus(activeBubble, 'discarded', 'Propuesta descartada.');
+    pendingChatPayload = null;
+    pendingChatData = null;
   }
 
   async function onUndoLastChatAdjustment() {

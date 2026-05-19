@@ -284,6 +284,36 @@ class AgentApiTest(unittest.TestCase):
         self.assertEqual(entries[-1]["credit_account"], "retained_earnings")
         self.assertEqual(entries[-1]["amount"], 500000)
 
+    def test_journal_entry_proposal_includes_impact(self):
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "journal_entry",
+                "args": {
+                    "month": "2026-01",
+                    "debit_account": "Capital",
+                    "credit_account": "Resultados Acumulados",
+                    "amount": 500000,
+                },
+            }
+        )
+        resp = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "partida doble"},
+        )
+        proposal = resp.get_json()["proposal"]
+
+        self.assertIn("impact", proposal)
+        impact = proposal["impact"]
+        self.assertIn("month", impact)
+        self.assertIsInstance(impact.get("items"), list)
+        keys = {item["key"] for item in impact["items"]}
+        self.assertEqual(keys, {"caja", "activos", "pasivos", "patrimonio", "resultado"})
+        for item in impact["items"]:
+            self.assertIn("before", item)
+            self.assertIn("after", item)
+            self.assertIn("delta", item)
+            self.assertAlmostEqual(item["after"] - item["before"], item["delta"], places=2)
+
     def test_invalid_journal_entry_is_rejected(self):
         web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
             {

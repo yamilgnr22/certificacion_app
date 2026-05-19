@@ -281,6 +281,7 @@ class AgentCommandService:
             command_id=command_id,
             original_message=original_message,
         )
+        proposal_payload["impact"] = self._compute_impact(payload, projected_payload, intent)
         payload_hash = stable_hash(payload)
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
         record = self.agent_repo.add_proposal(
@@ -580,6 +581,49 @@ class AgentCommandService:
             "requires_confirmation": False,
             "audit": self._audit_metadata(command_id),
         }
+
+    def _compute_impact(
+        self,
+        payload: Mapping[str, Any],
+        projected_payload: Mapping[str, Any],
+        intent: str,
+    ) -> dict[str, Any]:
+        if intent in {"finalizar_periodo", "create_account"}:
+            return {"month": None, "items": []}
+        try:
+            before_result = build_financial_model(payload)
+            after_result = build_financial_model(projected_payload)
+        except Exception:
+            return {"month": None, "items": []}
+        months = (
+            after_result.summary.get("all_months")
+            or after_result.summary.get("months")
+            or before_result.summary.get("all_months")
+            or before_result.summary.get("months")
+            or []
+        )
+        if not months:
+            return {"month": None, "items": []}
+        month = str(months[-1])
+        rows = [
+            ("caja", "Efectivo y equivalentes", "Efectivo y Equivalentes de Efectivo"),
+            ("activos", "Total activos", "Total Activos"),
+            ("pasivos", "Total pasivos", "Total Pasivos"),
+            ("patrimonio", "Total patrimonio", "Total Patrimonio"),
+            ("resultado", "Resultado del ejercicio", "Resultados del Ejercicio"),
+        ]
+        items: list[dict[str, Any]] = []
+        for key, label, esf_desc in rows:
+            before_val = _statement_value(before_result, esf_desc, month)
+            after_val = _statement_value(after_result, esf_desc, month)
+            items.append({
+                "key": key,
+                "label": label,
+                "before": round(before_val, 2),
+                "after": round(after_val, 2),
+                "delta": round(after_val - before_val, 2),
+            })
+        return {"month": month, "items": items}
 
     def _audit_metadata(self, command_id: str) -> dict[str, Any]:
         return {
