@@ -1648,6 +1648,32 @@
     }
   }
 
+  function updateSidebarContext(cli, per) {
+    const wrap = qs('#sidebarContext');
+    if (!wrap) return;
+    const clienteEl = qs('#sidebarContextCliente');
+    const periodoEl = qs('#sidebarContextPeriodo');
+    const estadoEl = qs('#sidebarContextEstado');
+    if (!cli && !per) {
+      wrap.classList.add('empty');
+      if (clienteEl) clienteEl.textContent = 'Sin selección';
+      if (periodoEl) periodoEl.textContent = '';
+      if (estadoEl) { estadoEl.textContent = ''; estadoEl.className = 'sidebar-context-estado'; }
+      return;
+    }
+    wrap.classList.remove('empty');
+    const nombre = cli?.nombre_completo || cli?.nombre_negocio || 'Cliente';
+    if (clienteEl) clienteEl.textContent = nombre;
+    if (periodoEl) periodoEl.textContent = per ? `${per.mes_inicial} → ${per.mes_final}` : '';
+    if (estadoEl && per?.estado) {
+      estadoEl.textContent = per.estado;
+      estadoEl.className = `sidebar-context-estado ${per.estado === 'borrador' ? 'ok' : 'warn'}`;
+    } else if (estadoEl) {
+      estadoEl.textContent = '';
+      estadoEl.className = 'sidebar-context-estado';
+    }
+  }
+
   function updateEditorHeader() {
     const wrap = qs('#editorPeriodoHeader');
     const banner = qs('#editorReadonlyBanner');
@@ -1655,6 +1681,7 @@
     if (!activePeriodoDetail) {
       wrap.classList.add('hidden');
       banner?.classList.add('hidden');
+      updateSidebarContext(null, null);
       return;
     }
     wrap.classList.remove('hidden');
@@ -1662,6 +1689,7 @@
     const cli = activePeriodoDetail.cliente || {};
     qs('#epHeaderCliente').textContent = cli.nombre_completo || cli.nombre_negocio || 'Cliente';
     qs('#epHeaderRango').textContent = `${per.mes_inicial} a ${per.mes_final}`;
+    updateSidebarContext(cli, per);
     const estadoBadge = qs('#epHeaderEstado');
     estadoBadge.textContent = per.estado || '';
     estadoBadge.classList.toggle('ok', per.estado === 'borrador');

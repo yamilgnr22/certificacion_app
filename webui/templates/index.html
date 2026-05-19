@@ -16,6 +16,12 @@
           <h1>Certificación CPA</h1>
           <p class="sidebar-tagline">Asistente contable</p>
         </div>
+        <div id="sidebarContext" class="sidebar-context empty">
+          <div class="sidebar-context-label">Periodo activo</div>
+          <div id="sidebarContextCliente" class="sidebar-context-cliente">Sin selección</div>
+          <div id="sidebarContextPeriodo" class="sidebar-context-periodo"></div>
+          <div id="sidebarContextEstado" class="sidebar-context-estado"></div>
+        </div>
         <nav class="sidebar-nav" aria-label="Modo de trabajo">
           <button class="mode-tab" type="button" data-mode-target="clientesMode">
             <span class="mode-tab-icon" aria-hidden="true">◐</span>
@@ -568,7 +574,7 @@
             <button class="chat-chip" type="button" data-chat-message="Genera el documento">Generar documento</button>
           </div>
           <div class="chat-compose">
-            <textarea id="modelChatInput" rows="2" spellcheck="false" placeholder="Ej: traslada resultados del ejercicio 2025 a resultados acumulados en enero 2026"></textarea>
+            <textarea id="modelChatInput" rows="3" spellcheck="false" placeholder="Ej: traslada resultados del ejercicio 2025 a resultados acumulados en enero 2026"></textarea>
             <button id="btnModelChatSend" class="btn primary" type="button">Enviar</button>
           </div>
           <div class="chat-history-panel">
