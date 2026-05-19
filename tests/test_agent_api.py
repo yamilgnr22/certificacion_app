@@ -304,7 +304,7 @@ class AgentApiTest(unittest.TestCase):
 
         self.assertIn("impact", proposal)
         impact = proposal["impact"]
-        self.assertIn("month", impact)
+        self.assertEqual(impact["month"], "2026-01")
         self.assertIsInstance(impact.get("items"), list)
         keys = {item["key"] for item in impact["items"]}
         self.assertEqual(keys, {"caja", "activos", "pasivos", "patrimonio", "resultado"})

@@ -281,7 +281,10 @@ class AgentCommandService:
             command_id=command_id,
             original_message=original_message,
         )
-        proposal_payload["impact"] = self._compute_impact(payload, projected_payload, intent)
+        proposal_payload["impact"] = self._compute_impact(
+            payload, projected_payload, intent,
+            target_month=_extract_target_month(proposal_payload, args),
+        )
         payload_hash = stable_hash(payload)
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
         record = self.agent_repo.add_proposal(
@@ -587,6 +590,7 @@ class AgentCommandService:
         payload: Mapping[str, Any],
         projected_payload: Mapping[str, Any],
         intent: str,
+        target_month: str | None = None,
     ) -> dict[str, Any]:
         if intent in {"finalizar_periodo", "create_account"}:
             return {"month": None, "items": []}
@@ -604,7 +608,14 @@ class AgentCommandService:
         )
         if not months:
             return {"month": None, "items": []}
-        month = str(months[-1])
+        months_str = [str(m) for m in months]
+        month = ""
+        if target_month:
+            candidate = str(target_month).strip()[:7]
+            if candidate in months_str:
+                month = candidate
+        if not month:
+            month = months_str[-1]
         rows = [
             ("caja", "Efectivo y equivalentes", "Efectivo y Equivalentes de Efectivo"),
             ("activos", "Total activos", "Total Activos"),
@@ -1095,3 +1106,21 @@ def _as_aware(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value
+
+
+def _extract_target_month(proposal_payload: Mapping[str, Any], args: Mapping[str, Any]) -> str | None:
+    import re
+    pattern = re.compile(r"^\d{4}-\d{2}$")
+    month_field = str(proposal_payload.get("month") or "").strip()[:7]
+    if pattern.match(month_field):
+        return month_field
+    for key in ("target_month", "month", "source_month"):
+        val = str((args or {}).get(key) or "").strip()[:7]
+        if pattern.match(val):
+            return val
+    records = proposal_payload.get("technical_records") or []
+    if records and isinstance(records[0], Mapping):
+        record_month = str(records[0].get("month") or "").strip()[:7]
+        if pattern.match(record_month):
+            return record_month
+    return None

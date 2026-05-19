@@ -2239,14 +2239,18 @@
         ['Seccion', account.section || ''],
         ['Requiere confirmacion', 'Si'],
       ];
-    } else if (proposalKind === 'journal_entry' || proposalKind === 'voucher_reversal') {
+    } else if (proposalKind === 'voucher_reversal') {
+      items = [
+        ['Mes', proposal.target_month || proposal.month || ''],
+        ['Alcance', proposal.scope_label || 'bloque seleccionado'],
+      ];
+    } else if (proposalKind === 'journal_entry') {
       items = [
         ['Mes', proposal.target_month || proposal.month || ''],
         ['Debe', proposal.debit_label || journalAccountLabel(proposal.debit_account)],
         ['Haber', proposal.credit_label || journalAccountLabel(proposal.credit_account)],
         ['Monto', formatMoney(proposal.amount)],
         ['Alcance', proposal.scope_label || 'bloque seleccionado'],
-        ['Impacto patrimonio', formatSignedMoney(proposal.impact?.equity || 0)],
       ];
     } else if (proposalKind === 'compound_events') {
       items = [
