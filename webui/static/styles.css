@@ -41,25 +41,182 @@ html, body {
 }
 
 .container { max-width: 1600px; margin: 0 auto; padding: 0 24px; }
-.app-header {
+.subtitle { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
+
+/* ============== App shell: 3-column layout ============== */
+.app-shell {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr) 420px;
+  min-height: 100vh;
   background: var(--bg);
-  border-bottom: 1px solid var(--border);
-  padding: 20px 0;
+}
+.app-sidebar {
+  border-right: 1px solid var(--border);
+  background: #08080a;
+  padding: 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
   position: sticky;
   top: 0;
-  z-index: 50;
-  backdrop-filter: blur(8px);
+  height: 100vh;
+  overflow-y: auto;
 }
-.app-header h1 {
+.sidebar-brand h1 {
   margin: 0;
-  font-size: 20px;
+  font-size: 16px;
   font-weight: 600;
   letter-spacing: -0.02em;
   color: var(--text-strong);
 }
-.subtitle { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
+.sidebar-tagline {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  letter-spacing: -0.005em;
+}
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sidebar-nav .mode-tab {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 13px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.sidebar-nav .mode-tab:hover {
+  background: var(--panel);
+  color: var(--text);
+}
+.sidebar-nav .mode-tab.active {
+  background: var(--panel-elevated);
+  color: var(--text-strong);
+  border-color: var(--border);
+  box-shadow: var(--shadow-sm);
+}
+.mode-tab-icon {
+  display: inline-flex;
+  width: 18px;
+  justify-content: center;
+  font-size: 14px;
+  color: var(--muted-strong);
+}
+.sidebar-nav .mode-tab.active .mode-tab-icon { color: var(--primary); }
+.sidebar-footer {
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  color: var(--muted-strong);
+  font-size: 11px;
+}
+.app-main {
+  min-width: 0;
+  padding: 28px 32px 60px;
+  overflow-x: hidden;
+}
+.app-main .mode-panel { margin: 0; }
+.app-assistant {
+  border-left: 1px solid var(--border);
+  background: #08080a;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+}
+.app-assistant .model-chat-card {
+  margin: 0;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.assistant-header h2 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--text-strong);
+  text-transform: uppercase;
+}
+.assistant-subtitle {
+  margin: 0 0 14px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+.app-assistant .chat-scope-toolbar {
+  margin-bottom: 12px;
+}
+.app-assistant .chat-thread {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding-right: 4px;
+}
+.app-assistant .chat-quick-actions {
+  margin: 12px 0 8px;
+}
+.app-assistant .chat-compose {
+  margin-top: auto;
+}
+.app-assistant .chat-history-panel {
+  margin-top: 12px;
+  padding-top: 12px;
+}
 
-main.container { padding: 24px 0 80px; }
+/* Responsive: stack to single column on small screens */
+@media (max-width: 1280px) {
+  .app-shell { grid-template-columns: 200px minmax(0, 1fr) 360px; }
+  .app-main { padding: 24px; }
+}
+@media (max-width: 1024px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto 1fr;
+  }
+  .app-sidebar {
+    position: static;
+    height: auto;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    gap: 12px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .sidebar-brand { flex-shrink: 0; }
+  .sidebar-nav { flex-direction: row; gap: 6px; }
+  .sidebar-footer { display: none; }
+  .app-assistant {
+    position: static;
+    height: auto;
+    max-height: 60vh;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+}
 .card {
   background: var(--panel);
   border: 1px solid var(--border);

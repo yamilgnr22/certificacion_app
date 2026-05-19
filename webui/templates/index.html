@@ -10,18 +10,32 @@
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
-    <header class="app-header">
-      <div class="container">
-        <h1>Certificación CPA</h1>
-      </div>
-    </header>
+    <div class="app-shell">
+      <aside class="app-sidebar" aria-label="Navegacion principal">
+        <div class="sidebar-brand">
+          <h1>Certificación CPA</h1>
+          <p class="sidebar-tagline">Asistente contable</p>
+        </div>
+        <nav class="sidebar-nav" aria-label="Modo de trabajo">
+          <button class="mode-tab" type="button" data-mode-target="clientesMode">
+            <span class="mode-tab-icon" aria-hidden="true">◐</span>
+            <span>Clientes</span>
+          </button>
+          <button class="mode-tab active" type="button" data-mode-target="modelMode">
+            <span class="mode-tab-icon" aria-hidden="true">◧</span>
+            <span>Editor avanzado</span>
+          </button>
+          <button class="mode-tab" type="button" data-mode-target="excelMode">
+            <span class="mode-tab-icon" aria-hidden="true">◨</span>
+            <span>Generar desde Excel</span>
+          </button>
+        </nav>
+        <div class="sidebar-footer">
+          <small>© Certificación App</small>
+        </div>
+      </aside>
 
-    <main class="container">
-      <section class="mode-switcher" aria-label="Modo de trabajo">
-        <button class="mode-tab" type="button" data-mode-target="clientesMode">Clientes</button>
-        <button class="mode-tab active" type="button" data-mode-target="modelMode">Editor avanzado</button>
-        <button class="mode-tab" type="button" data-mode-target="excelMode">Generar desde Excel</button>
-      </section>
+      <main class="app-main">
 
       <div id="clientesMode" class="mode-panel hidden">
         <section class="card client-manager">
@@ -224,41 +238,6 @@
             <select id="modelBlockSelectSummary" class="model-block-select"></select>
           </div>
           <div id="modelSummary" class="model-summary"></div>
-        </section>
-
-        <section id="modelChatCard" class="card model-chat-card">
-          <div class="workbench-header">
-            <div>
-              <h2>Asistente contable</h2>
-              <p class="workbench-subtitle">Escriba lo que necesita: consultar saldos, filtrar el libro diario, reversar comprobantes, guardar o generar documentos.</p>
-            </div>
-          </div>
-          <div class="account-toolbar chat-scope-toolbar">
-            <label for="modelChatScopeSelect">Alcance</label>
-            <select id="modelChatScopeSelect">
-              <option value="block">Bloque seleccionado</option>
-              <option value="global">Modelo completo</option>
-            </select>
-          </div>
-          <div id="modelChatMessages" class="chat-thread" aria-live="polite"></div>
-          <div class="chat-quick-actions" aria-label="Acciones rapidas del asistente">
-            <button class="chat-chip" type="button" data-chat-message="Explicame de donde sale el saldo de la cuenta seleccionada">Explicar saldo</button>
-            <button class="chat-chip" type="button" data-chat-message="Muestrame el mayor de la cuenta seleccionada">Ver mayor</button>
-            <button class="chat-chip" type="button" data-chat-message="Reversa el comprobante ">Reversar comprobante</button>
-            <button class="chat-chip" type="button" data-chat-message="Guarda este borrador">Guardar borrador</button>
-            <button class="chat-chip" type="button" data-chat-message="Genera el documento">Generar documento</button>
-          </div>
-          <div class="chat-compose">
-            <textarea id="modelChatInput" rows="2" spellcheck="false" placeholder="Ej: traslada resultados del ejercicio 2025 a resultados acumulados en enero 2026"></textarea>
-            <button id="btnModelChatSend" class="btn primary" type="button">Enviar</button>
-          </div>
-          <div class="chat-history-panel">
-            <div class="chat-history-header">
-              <h3>Historial de ajustes</h3>
-              <button id="btnUndoLastChatAdjustment" class="btn" type="button">Deshacer último ajuste</button>
-            </div>
-            <div id="modelChatHistory" class="chat-history empty-state">Sin ajustes aplicados por chat.</div>
-          </div>
         </section>
 
         <section class="card model-workbench" id="erWorkbench">
@@ -565,11 +544,43 @@
         </div>
       </section>
       </div>
-    </main>
+      </main>
 
-    <footer class="footer container">
-      <small>© Certificación App</small>
-    </footer>
+      <aside class="app-assistant" aria-label="Asistente contable">
+        <section id="modelChatCard" class="model-chat-card">
+          <div class="assistant-header">
+            <h2>Asistente contable</h2>
+            <p class="assistant-subtitle">Consultar saldos, filtrar el libro diario, reversar comprobantes, guardar o generar documentos.</p>
+          </div>
+          <div class="account-toolbar chat-scope-toolbar">
+            <label for="modelChatScopeSelect">Alcance</label>
+            <select id="modelChatScopeSelect">
+              <option value="block">Bloque seleccionado</option>
+              <option value="global">Modelo completo</option>
+            </select>
+          </div>
+          <div id="modelChatMessages" class="chat-thread" aria-live="polite"></div>
+          <div class="chat-quick-actions" aria-label="Acciones rapidas del asistente">
+            <button class="chat-chip" type="button" data-chat-message="Explicame de donde sale el saldo de la cuenta seleccionada">Explicar saldo</button>
+            <button class="chat-chip" type="button" data-chat-message="Muestrame el mayor de la cuenta seleccionada">Ver mayor</button>
+            <button class="chat-chip" type="button" data-chat-message="Reversa el comprobante ">Reversar comprobante</button>
+            <button class="chat-chip" type="button" data-chat-message="Guarda este borrador">Guardar borrador</button>
+            <button class="chat-chip" type="button" data-chat-message="Genera el documento">Generar documento</button>
+          </div>
+          <div class="chat-compose">
+            <textarea id="modelChatInput" rows="2" spellcheck="false" placeholder="Ej: traslada resultados del ejercicio 2025 a resultados acumulados en enero 2026"></textarea>
+            <button id="btnModelChatSend" class="btn primary" type="button">Enviar</button>
+          </div>
+          <div class="chat-history-panel">
+            <div class="chat-history-header">
+              <h3>Historial de ajustes</h3>
+              <button id="btnUndoLastChatAdjustment" class="btn" type="button">Deshacer ultimo ajuste</button>
+            </div>
+            <div id="modelChatHistory" class="chat-history empty-state">Sin ajustes aplicados por chat.</div>
+          </div>
+        </section>
+      </aside>
+    </div>
 
     <script src="/static/app.js"></script>
   </body>
