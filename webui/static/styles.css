@@ -774,6 +774,22 @@ html, body {
 .chat-bubble.app {
   justify-self: start;
 }
+.chat-tool-data {
+  max-width: 100%;
+  width: 100%;
+  white-space: normal;
+}
+.agent-data-card {
+  overflow-x: auto;
+}
+.agent-data-title {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
 .chat-bubble.error {
   color: #fecaca;
   border-color: rgba(239, 68, 68, 0.45);

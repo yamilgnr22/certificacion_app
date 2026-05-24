@@ -1518,6 +1518,91 @@
     div.scrollIntoView({ block: 'nearest' });
   }
 
+  function renderAgentToolData(data) {
+    const wrap = qs('#modelChatMessages');
+    if (!wrap || !data || typeof data !== 'object') return;
+    const kind = data.kind || '';
+    if (!['balance_explanation', 'ledger', 'voucher'].includes(kind)) return;
+    const bubble = document.createElement('div');
+    bubble.className = 'chat-bubble app chat-tool-data';
+    if (kind === 'balance_explanation') {
+      const entries = (data.entries || []).slice(0, 8);
+      bubble.appendChild(compactTable(
+        ['Comprobante', 'Descripcion', 'Debe', 'Haber', 'Saldo'],
+        entries.map(row => [
+          row.voucher_id || '',
+          row.description || '',
+          formatMoney(row.debit || 0),
+          formatMoney(row.credit || 0),
+          formatMoney(row.running_balance || 0),
+        ]),
+        'Movimientos que explican el saldo'
+      ));
+    } else if (kind === 'ledger') {
+      const rows = (data.rows || []).slice(0, 12);
+      bubble.appendChild(compactTable(
+        ['Fecha', 'Comprobante', 'Descripcion', 'Debe', 'Haber', 'Saldo'],
+        rows.map(row => [
+          row.date || row.month || '',
+          row.voucher_id || '',
+          row.description || '',
+          formatMoney(row.debit || 0),
+          formatMoney(row.credit || 0),
+          formatMoney(row.running_balance || 0),
+        ]),
+        `Mayor de ${data.account_label || data.account || ''}`
+      ));
+    } else if (kind === 'voucher' && data.voucher) {
+      const voucher = data.voucher;
+      bubble.appendChild(compactTable(
+        ['Cuenta', 'Debe', 'Haber', 'Referencia'],
+        (voucher.lines || []).map(line => [
+          line.account || '',
+          formatMoney(line.debit || 0),
+          formatMoney(line.credit || 0),
+          line.reference || '',
+        ]),
+        `${voucher.voucher_id || ''} · ${voucher.description || ''}`
+      ));
+    }
+    wrap.appendChild(bubble);
+    bubble.scrollIntoView({ block: 'nearest' });
+  }
+
+  function compactTable(headers, rows, titleText) {
+    const box = document.createElement('div');
+    box.className = 'agent-data-card';
+    if (titleText) {
+      const title = document.createElement('div');
+      title.className = 'agent-data-title';
+      title.textContent = titleText;
+      box.appendChild(title);
+    }
+    const table = document.createElement('table');
+    table.className = 'journal-proposal-table';
+    const thead = document.createElement('thead');
+    const trh = document.createElement('tr');
+    headers.forEach(header => {
+      const th = document.createElement('th');
+      th.textContent = header;
+      trh.appendChild(th);
+    });
+    thead.appendChild(trh);
+    const tbody = document.createElement('tbody');
+    (rows.length ? rows : [['Sin movimientos']]).forEach(row => {
+      const tr = document.createElement('tr');
+      row.forEach(value => {
+        const td = document.createElement('td');
+        td.textContent = value;
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.append(thead, tbody);
+    box.appendChild(table);
+    return box;
+  }
+
   function clearPendingChatProposal() {
     if (pendingChatData?.proposalElement) {
       markProposalCardStatus(pendingChatData.proposalElement, 'superseded', 'Propuesta reemplazada por una nueva instruccion.');
@@ -3262,7 +3347,7 @@
       const uiContext = buildModelChatUiContext();
       const endpoint = useAgent ? '/api/agent/command' : '/api/model/chat/command';
       const body = useAgent
-        ? { periodo_id: activePeriodoId, message, ui_context: uiContext }
+        ? { periodo_id: activePeriodoId, message, ui_context: uiContext, current_payload: buildModelPayload(), is_dirty: !!editorDirty }
         : { payload: buildModelPayload(), message, scope: buildModelChatScope(), ui_context: uiContext };
       const resp = await fetch(endpoint, {
         method: 'POST',
@@ -3278,6 +3363,7 @@
       if (data.ui_actions) applyChatUiActions(data.ui_actions);
       if (['answer', 'ui_action', 'navigation'].includes(data.response_type)) {
         appendChatMessage(assistantText, 'app');
+        renderAgentToolData(data.data);
         setModelMessage(assistantText, 'info');
         return;
       }

@@ -527,6 +527,8 @@ def api_agent_command():
             periodo_id=str(body.get("periodo_id") or ""),
             message=str(body.get("message") or ""),
             ui_context=body.get("ui_context") if isinstance(body.get("ui_context"), dict) else {},
+            current_payload=body.get("current_payload") if isinstance(body.get("current_payload"), dict) else None,
+            is_dirty=bool(body.get("is_dirty")),
             cpa_user=_cpa_user(),
         )
         return data, 200

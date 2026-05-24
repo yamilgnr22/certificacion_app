@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import unittest
 
@@ -9,6 +10,8 @@ from sqlalchemy.orm import sessionmaker
 import web_server
 from datetime import datetime, timedelta, timezone
 
+import services.agent_service as agent_service_module
+from services.agent_tools import AgentTool
 from db.models import AccountCatalog, AgentMessage, AgentProposal, Base, PeriodoCertificacion
 from db.seed import seed_giros
 from financial_model import build_financial_model
@@ -165,6 +168,84 @@ class AgentApiTest(unittest.TestCase):
         self.assertEqual(resp.status_code, 200, data)
         self.assertEqual(data["response_type"], "navigation")
         self.assertEqual(data["ui_actions"][0]["target"], "ledger")
+
+    def test_show_ledger_returns_structured_rows(self):
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {"intent": "show_ledger", "args": {"account": "Efectivo", "start_month": "2026-01", "end_month": "2026-02"}}
+        )
+
+        resp = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "muestrame el mayor de efectivo"},
+        )
+        data = resp.get_json()
+
+        self.assertEqual(resp.status_code, 200, data)
+        self.assertEqual(data["response_type"], "answer")
+        self.assertEqual(data["data"]["kind"], "ledger")
+        self.assertEqual(data["data"]["account"], "cash")
+        self.assertTrue(data["data"]["rows"])
+        self.assertIn("tool_versions_used", data)
+        self.assertEqual(data["tool_versions_used"], {"show_ledger": "1.1.0"})
+
+    def test_dirty_payload_is_used_without_persisting(self):
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {"intent": "explain_balance", "args": {"account": "Efectivo", "month": "2026-01"}}
+        )
+        detail = self.client.get(f"/api/periodos/{self.periodo['id']}").get_json()["periodo"]
+        dirty_payload = detail["payload"]
+        dirty_payload["balances"]["cash"] = 999999
+
+        resp = self.client.post(
+            "/api/agent/command",
+            json={
+                "periodo_id": self.periodo["id"],
+                "message": "explicame caja",
+                "current_payload": dirty_payload,
+                "is_dirty": True,
+            },
+        )
+        data = resp.get_json()
+        persisted = self.client.get(f"/api/periodos/{self.periodo['id']}").get_json()["periodo"]["payload"]
+
+        self.assertEqual(resp.status_code, 200, data)
+        self.assertTrue(data["used_dirty_payload"])
+        self.assertIn("cambios sin guardar", data["assistant_message"])
+        self.assertTrue(any(entry["debit"] == 999999 for entry in data["data"]["entries"]))
+        self.assertEqual(persisted["balances"]["cash"], 410193)
+        with self.db_session() as session:
+            message = session.scalars(select(AgentMessage)).first()
+            stored_response = json.loads(message.response_json)
+        self.assertTrue(stored_response["used_dirty_payload"])
+        self.assertIn("duration_ms", stored_response)
+
+    def test_tool_registry_rejects_tool_without_version(self):
+        with self.assertRaises(ValueError):
+            AgentTool("bad_tool", "", False, {}, {})
+
+    def test_turn_timeout_is_recorded(self):
+        old_timeout = agent_service_module.MAX_TURN_DURATION_S
+        agent_service_module.MAX_TURN_DURATION_S = -1
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {"intent": "explain_balance", "args": {"account": "Efectivo", "month": "2026-01"}}
+        )
+        try:
+            resp = self.client.post(
+                "/api/agent/command",
+                json={"periodo_id": self.periodo["id"], "message": "explicame caja"},
+            )
+        finally:
+            agent_service_module.MAX_TURN_DURATION_S = old_timeout
+        data = resp.get_json()
+
+        self.assertEqual(resp.status_code, 200, data)
+        self.assertFalse(data["ok"])
+        self.assertEqual(data["intent"], "timeout")
+        self.assertEqual(data["response_type"], "error")
+        with self.db_session() as session:
+            message = session.scalars(select(AgentMessage)).first()
+            stored_response = json.loads(message.response_json)
+        self.assertEqual(stored_response["intent"], "timeout")
 
     def test_provider_failure_is_error_case(self):
         class BrokenProvider:

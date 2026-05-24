@@ -7,11 +7,10 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Mapping, Optional
 from uuid import uuid4
 
+from accounting_accounts import LEDGER_ACCOUNT_ALIASES, LEDGER_ACCOUNT_LABELS
 from financial_model import build_financial_model, result_to_json
 from model_chat import (
     CHAT_SOURCE,
-    LEDGER_ACCOUNT_ALIASES,
-    LEDGER_ACCOUNT_LABELS,
     ModelChatError,
     preview_chat_adjustment,
 )

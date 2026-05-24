@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import uuid
 import json
+import time
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
 from sqlalchemy.orm import Session
 
+from accounting_accounts import LEDGER_ACCOUNT_LABELS
 from accounting_model import reverse_voucher
 from financial_model import build_financial_model
 from llm import LLMProvider, LLMProviderError, get_llm_provider
-from model_chat import LEDGER_ACCOUNT_LABELS
 from repositories import AccountRepository, AgentRepository, PeriodoRepository
 from services.audit_service import AuditService, stable_hash
 from services.agent_tools import AgentToolRegistry
@@ -20,6 +21,8 @@ from services.serializers import parse_json_object
 
 
 PROMPT_VERSION = "agent-command-v1.0.0"
+MAX_TOOL_CALLS_PER_TURN = 1
+MAX_TURN_DURATION_S = 30.0
 
 
 class AgentServiceError(ValueError):
@@ -63,8 +66,11 @@ class AgentCommandService:
         periodo_id: str,
         message: str,
         ui_context: Mapping[str, Any] | None = None,
+        current_payload: Mapping[str, Any] | None = None,
+        is_dirty: bool = False,
         cpa_user: str = "system",
     ) -> dict[str, Any]:
+        started_at = time.monotonic()
         periodo_id = str(periodo_id or "").strip()
         message = str(message or "").strip()
         ui_context = dict(ui_context or {})
@@ -77,7 +83,10 @@ class AgentCommandService:
         if not periodo:
             raise AgentNotFoundError("Periodo no encontrado.")
 
-        payload = parse_json_object(periodo.payload_json)
+        persisted_payload = parse_json_object(periodo.payload_json)
+        dirty_payload = dict(current_payload or {}) if isinstance(current_payload, Mapping) else {}
+        used_dirty_payload = bool(is_dirty and dirty_payload)
+        payload = dirty_payload if used_dirty_payload else persisted_payload
         command_id = f"cmd_{uuid.uuid4().hex[:12]}"
         try:
             provider = self.provider or self._provider_from_config()
@@ -90,6 +99,26 @@ class AgentCommandService:
             raise AgentConfigError(str(exc)) from exc
         except Exception as exc:
             raise AgentServiceError(f"No pude interpretar la instruccion: {type(exc).__name__}: {exc}") from exc
+
+        if _elapsed_seconds(started_at) > MAX_TURN_DURATION_S:
+            response = self._decorate_response(
+                self._timeout_response(command_id=command_id),
+                command_id=command_id,
+                intent="timeout",
+                used_dirty_payload=used_dirty_payload,
+                started_at=started_at,
+            )
+            self.agent_repo.add_message(
+                periodo_id=periodo.id,
+                command_id=command_id,
+                cpa_user=cpa_user,
+                message=message,
+                intent=response.get("intent"),
+                response_type=response.get("response_type"),
+                response=response,
+            )
+            self.session.commit()
+            return response
 
         intent = str(interpreted.get("intent") or "").strip()
         args = interpreted.get("args") if isinstance(interpreted.get("args"), dict) else {}
@@ -134,6 +163,16 @@ class AgentCommandService:
                     "mostrar mayores, abrir comprobantes y navegar. Para aplicar cambios usaremos propuestas auditables en la siguiente fase."
                 ),
             )
+
+        response = self._decorate_response(
+            response,
+            command_id=command_id,
+            intent=intent,
+            used_dirty_payload=used_dirty_payload,
+            started_at=started_at,
+        )
+        if used_dirty_payload and response.get("response_type") in {"answer", "navigation", "proposal"}:
+            response["assistant_message"] = "Segun los cambios sin guardar en pantalla: " + str(response.get("assistant_message") or "")
 
         self.agent_repo.add_message(
             periodo_id=periodo.id,
@@ -258,9 +297,41 @@ class AgentCommandService:
             "response_type": response_type,
             "assistant_message": str(tool_result.get("assistant_message") or ""),
             "ui_actions": list(tool_result.get("ui_actions") or []),
+            "data": dict(tool_result.get("data") or {}),
             "requires_confirmation": False,
             "audit": self._audit_metadata(command_id),
         }
+
+    def _decorate_response(
+        self,
+        response: Mapping[str, Any],
+        *,
+        command_id: str,
+        intent: str,
+        used_dirty_payload: bool,
+        started_at: float,
+    ) -> dict[str, Any]:
+        out = dict(response)
+        tool_versions_used = self.tools.versions_used([intent])
+        duration_ms = round(_elapsed_seconds(started_at) * 1000, 2)
+        out["prompt_version"] = PROMPT_VERSION
+        out["tool_versions_used"] = tool_versions_used
+        out["used_dirty_payload"] = bool(used_dirty_payload)
+        out["tool_call_count"] = 1 if tool_versions_used else 0
+        out["max_tool_calls_per_turn"] = MAX_TOOL_CALLS_PER_TURN
+        out["duration_ms"] = duration_ms
+        audit = dict(out.get("audit") or {})
+        audit.update({
+            "command_id": command_id,
+            "source": "agent_contable",
+            "prompt_version": PROMPT_VERSION,
+            "tool_versions_used": tool_versions_used,
+            "used_dirty_payload": bool(used_dirty_payload),
+            "tool_call_count": out["tool_call_count"],
+            "duration_ms": duration_ms,
+        })
+        out["audit"] = audit
+        return out
 
     def _proposal_response(
         self,
@@ -580,6 +651,18 @@ class AgentCommandService:
             "intent": intent,
             "response_type": "question",
             "assistant_message": message,
+            "ui_actions": [],
+            "requires_confirmation": False,
+            "audit": self._audit_metadata(command_id),
+        }
+
+    def _timeout_response(self, *, command_id: str) -> dict[str, Any]:
+        return {
+            "ok": False,
+            "command_id": command_id,
+            "intent": "timeout",
+            "response_type": "error",
+            "assistant_message": "La instruccion tomo demasiado tiempo. Intente de nuevo con una consulta mas especifica.",
             "ui_actions": [],
             "requires_confirmation": False,
             "audit": self._audit_metadata(command_id),
@@ -1100,6 +1183,10 @@ def _periodo_snapshot(periodo) -> dict[str, Any]:
         "mes_final": periodo.mes_final,
         "payload_hash": stable_hash(parse_json_object(periodo.payload_json)),
     }
+
+
+def _elapsed_seconds(started_at: float) -> float:
+    return max(0.0, time.monotonic() - started_at)
 
 
 def _as_aware(value: datetime) -> datetime:

@@ -13,6 +13,7 @@ from uuid import uuid4
 import pandas as pd
 
 from financial_model import build_financial_model, result_to_json
+from accounting_accounts import LEDGER_ACCOUNT_ALIASES, LEDGER_ACCOUNT_LABELS
 
 
 # DEPRECATED: removable after Fase 2D.
@@ -34,64 +35,6 @@ ALLOWED_LEVERS = {
     "loan_mortgage_new",
     "supplier_new",
 }
-
-LEDGER_ACCOUNT_ALIASES = {
-    "efectivo": "cash",
-    "caja": "cash",
-    "banco": "cash",
-    "bancos": "cash",
-    "efectivo y equivalentes de efectivo": "cash",
-    "cuentas por cobrar": "accounts_receivable",
-    "cuentas por cobrar clientes": "accounts_receivable",
-    "inventario": "inventory",
-    "inventarios": "inventory",
-    "bienes inmuebles": "ppe_real_estate",
-    "vivienda": "ppe_real_estate",
-    "mobiliario y equipos": "ppe_equipment",
-    "equipos": "ppe_equipment",
-    "vehiculos": "ppe_vehicles",
-    "depreciacion acumulada": "accum_depreciation",
-    "tarjetas": "credit_cards",
-    "tarjetas de credito": "credit_cards",
-    "proveedores": "suppliers",
-    "impuestos por pagar": "taxes_payable",
-    "gastos acumulados": "accrued_expenses",
-    "gastos acumulados por pagar": "accrued_expenses",
-    "creditos hipotecarios": "loans_mortgage",
-    "creditos consumo": "loans_consumo",
-    "creditos personales": "loans_personal",
-    "creditos prendarios": "loans_pledge",
-    "creditos comerciales": "loans_commercial",
-    "capital": "capital",
-    "resultados acumulados": "retained_earnings",
-    "resultado acumulado": "retained_earnings",
-    "resultados del ejercicio": "current_earnings",
-    "resultado del ejercicio": "current_earnings",
-    "utilidad del ejercicio": "current_earnings",
-}
-
-LEDGER_ACCOUNT_LABELS = {
-    "cash": "Efectivo y Equivalentes de Efectivo",
-    "accounts_receivable": "Cuentas por Cobrar Clientes",
-    "inventory": "Inventarios",
-    "ppe_real_estate": "Bienes Inmuebles",
-    "ppe_equipment": "Mobiliario y Equipos",
-    "ppe_vehicles": "Vehiculos",
-    "accum_depreciation": "Depreciacion Acumulada",
-    "credit_cards": "Tarjetas de Credito",
-    "suppliers": "Proveedores",
-    "taxes_payable": "Impuestos por Pagar",
-    "accrued_expenses": "Gastos Acumulados por pagar",
-    "loans_mortgage": "Creditos Hipotecarios",
-    "loans_consumo": "Creditos Consumo",
-    "loans_personal": "Creditos Personales",
-    "loans_pledge": "Creditos Prendarios",
-    "loans_commercial": "Creditos Comerciales",
-    "capital": "Capital",
-    "retained_earnings": "Resultados Acumulados",
-    "current_earnings": "Resultados del Ejercicio",
-}
-
 
 class ModelChatError(ValueError):
     def __init__(self, message: str, *, status_code: int = 400):
