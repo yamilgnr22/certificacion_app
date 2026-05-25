@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 
 import services.agent_service as agent_service_module
 from services.agent_tools import AgentTool
-from db.models import AccountCatalog, AgentMessage, AgentProposal, Base, PeriodoCertificacion
+from db.models import AccountCatalog, AgentMessage, AgentProposal, AuditLog, Base, PeriodoCertificacion
 from db.seed import seed_giros
 from financial_model import build_financial_model
 from llm import LLMProviderError
@@ -98,6 +98,44 @@ class AgentApiTest(unittest.TestCase):
 
     def db_session(self):
         return self.factory()
+
+    def _payload(self):
+        with self.db_session() as session:
+            periodo = session.get(PeriodoCertificacion, self.periodo["id"])
+            return json.loads(periodo.payload_json)
+
+    def _save_payload(self, payload):
+        with self.db_session() as session:
+            periodo = session.get(PeriodoCertificacion, self.periodo["id"])
+            periodo.payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+            session.commit()
+
+    def _add_saved_voucher(self, voucher_id="MAN-2026-0001", *, voucher_type="manual", reference_voucher_id="", amount=1000):
+        payload = self._payload()
+        accounting = dict(payload.get("accounting") or {})
+        vouchers = list(accounting.get("vouchers") or [])
+        voucher = {
+            "voucher_id": voucher_id,
+            "month": "2026-01",
+            "date": "2026-01-15",
+            "type": voucher_type,
+            "source": "manual",
+            "description": f"Comprobante {voucher_id}",
+            "status": "applied",
+            "reference_voucher_id": reference_voucher_id,
+            "debit_total": amount,
+            "credit_total": amount,
+            "balanced": True,
+            "lines": [
+                {"account": "Proveedores", "debit": amount, "credit": 0, "currency": "nio", "reference": "F-1"},
+                {"account": "Efectivo y Equivalentes de Efectivo", "debit": 0, "credit": amount, "currency": "nio", "reference": "CK-1"},
+            ],
+        }
+        vouchers.append(voucher)
+        accounting["vouchers"] = vouchers
+        payload["accounting"] = accounting
+        self._save_payload(payload)
+        return voucher
 
     def test_missing_openai_key_returns_clear_error(self):
         old_key = os.environ.pop("OPENAI_API_KEY", None)
@@ -619,21 +657,183 @@ class AgentApiTest(unittest.TestCase):
             self.assertEqual(session.query(AgentProposal).count(), 0)
 
     def test_reverse_voucher_proposal_adds_saved_reversal(self):
+        self._add_saved_voucher("MAN-2026-0001", amount=1500)
         web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
-            {"intent": "reverse_voucher", "args": {"voucher_id": "CD-2026-0001"}}
+            {"intent": "reverse_voucher", "args": {"voucher_id": "MAN-2026-0001"}}
         )
-        proposal_id = self.client.post(
+        proposal = self.client.post(
             "/api/agent/command",
-            json={"periodo_id": self.periodo["id"], "message": "reversa CD-2026-0001"},
-        ).get_json()["proposal"]["id"]
+            json={"periodo_id": self.periodo["id"], "message": "reversa MAN-2026-0001"},
+        ).get_json()["proposal"]
 
-        resp = self.client.post(f"/api/agent/proposals/{proposal_id}/apply")
+        self.assertEqual(proposal["kind"], "voucher_reversal")
+        self.assertEqual(proposal["original_voucher_id"], "MAN-2026-0001")
+        self.assertTrue(proposal["reversal_voucher_id"].startswith("REV-MAN-2026-0001-"))
+        self.assertEqual(proposal["journal_rows"][0]["credit"], 1500)
+        self.assertEqual(proposal["journal_rows"][1]["debit"], 1500)
+
+        resp = self.client.post(f"/api/agent/proposals/{proposal['id']}/apply")
         detail = self.client.get(f"/api/periodos/{self.periodo['id']}").get_json()["periodo"]
 
         self.assertEqual(resp.status_code, 200, resp.get_json())
         vouchers = detail["payload"]["accounting"]["vouchers"]
-        self.assertEqual(vouchers[-1]["reference_voucher_id"], "CD-2026-0001")
+        self.assertEqual(vouchers[-1]["voucher_id"], proposal["reversal_voucher_id"])
+        self.assertEqual(vouchers[-1]["reference_voucher_id"], "MAN-2026-0001")
         self.assertEqual(vouchers[-1]["type"], "reversal")
+        self.assertEqual(vouchers[-1]["source"], "chat_financiero")
+        self.assertEqual(vouchers[-1]["description"], "Reverso de MAN-2026-0001")
+        with self.db_session() as session:
+            audit = session.scalars(select(AuditLog).where(AuditLog.action == "agent_apply_proposal")).first()
+            metadata = json.loads(audit.metadata_json)
+        self.assertEqual(metadata["proposal_kind"], "voucher_reversal")
+        self.assertEqual(metadata["original_voucher_id"], "MAN-2026-0001")
+        self.assertEqual(metadata["reversal_voucher_id"], proposal["reversal_voucher_id"])
+        self.assertEqual(metadata["proposal_id"], proposal["id"])
+
+    def test_reverse_voucher_rejects_synthetic_and_missing_vouchers(self):
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {"intent": "reverse_voucher", "args": {"voucher_id": "CD-2026-0001"}}
+        )
+        synthetic = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "reversa CD-2026-0001"},
+        )
+        self.assertEqual(synthetic.status_code, 400)
+        self.assertIn("generado automaticamente", synthetic.get_json()["error"])
+
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {"intent": "reverse_voucher", "args": {"voucher_id": "NO-EXISTE"}}
+        )
+        missing = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "reversa NO-EXISTE"},
+        )
+        self.assertEqual(missing.status_code, 400)
+        self.assertIn("No encontre", missing.get_json()["error"])
+
+    def test_reverse_voucher_rejects_double_reversal_and_reversal_voucher(self):
+        self._add_saved_voucher("MAN-2026-0002")
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {"intent": "reverse_voucher", "args": {"voucher_id": "MAN-2026-0002"}}
+        )
+        proposal = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "reversa MAN-2026-0002"},
+        ).get_json()["proposal"]
+        self.client.post(f"/api/agent/proposals/{proposal['id']}/apply")
+
+        repeated = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "reversa MAN-2026-0002"},
+        )
+        self.assertEqual(repeated.status_code, 400)
+        self.assertIn("ya fue reversado", repeated.get_json()["error"])
+
+        self._add_saved_voucher("REV-MANUAL-0001", voucher_type="reversal", reference_voucher_id="MANUAL-0001")
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {"intent": "reverse_voucher", "args": {"voucher_id": "REV-MANUAL-0001"}}
+        )
+        reversal = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "reversa REV-MANUAL-0001"},
+        )
+        self.assertEqual(reversal.status_code, 400)
+        self.assertIn("comprobante de reverso", reversal.get_json()["error"])
+
+    def test_reverse_voucher_dirty_payload_does_not_create_proposal(self):
+        payload = self._payload()
+        payload["income"]["cost_pct"] = 71
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {"intent": "reverse_voucher", "args": {"voucher_id": "MAN-2026-0001"}}
+        )
+
+        resp = self.client.post(
+            "/api/agent/command",
+            json={
+                "periodo_id": self.periodo["id"],
+                "message": "reversa un comprobante",
+                "current_payload": payload,
+                "is_dirty": True,
+            },
+        )
+
+        data = resp.get_json()
+        self.assertEqual(resp.status_code, 200, data)
+        self.assertEqual(data["response_type"], "question")
+        with self.db_session() as session:
+            self.assertEqual(session.query(AgentProposal).count(), 0)
+
+    def test_reverse_voucher_expired_and_stale_proposals_are_marked(self):
+        self._add_saved_voucher("MAN-2026-0004")
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {"intent": "reverse_voucher", "args": {"voucher_id": "MAN-2026-0004"}}
+        )
+        expired_id = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "reversa MAN-2026-0004"},
+        ).get_json()["proposal"]["id"]
+        with self.db_session() as session:
+            stored = session.get(AgentProposal, expired_id)
+            stored.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+            session.commit()
+        expired = self.client.post(f"/api/agent/proposals/{expired_id}/apply")
+        self.assertEqual(expired.status_code, 409)
+        with self.db_session() as session:
+            self.assertEqual(session.get(AgentProposal, expired_id).status, "expired")
+
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {"intent": "reverse_voucher", "args": {"voucher_id": "MAN-2026-0004"}}
+        )
+        stale_id = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "reversa MAN-2026-0004 otra vez"},
+        ).get_json()["proposal"]["id"]
+        payload = self._payload()
+        payload["income"]["cost_pct"] = 72
+        self._save_payload(payload)
+        stale = self.client.post(f"/api/agent/proposals/{stale_id}/apply")
+        self.assertEqual(stale.status_code, 409)
+        with self.db_session() as session:
+            self.assertEqual(session.get(AgentProposal, stale_id).status, "stale")
+
+    def test_reverse_voucher_finalized_period_is_rejected_at_proposal(self):
+        self._add_saved_voucher("MAN-2026-0005")
+        self.client.post(f"/api/periodos/{self.periodo['id']}/finalizar")
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {"intent": "reverse_voucher", "args": {"voucher_id": "MAN-2026-0005"}}
+        )
+
+        resp = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "reversa MAN-2026-0005"},
+        )
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("periodos borrador", resp.get_json()["error"])
+
+    def test_show_voucher_displays_bidirectional_reversal_references(self):
+        self._add_saved_voucher("MAN-2026-0003")
+        self._add_saved_voucher("REV-MAN-2026-0003-ABC123", voucher_type="reversal", reference_voucher_id="MAN-2026-0003")
+
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {"intent": "show_voucher", "args": {"voucher_id": "MAN-2026-0003"}}
+        )
+        original = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "muestrame MAN-2026-0003"},
+        ).get_json()
+        self.assertIn("Reversado por REV-MAN-2026-0003-ABC123", original["assistant_message"])
+        self.assertEqual(original["data"]["voucher"]["reversed_by"], "REV-MAN-2026-0003-ABC123")
+
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {"intent": "show_voucher", "args": {"voucher_id": "REV-MAN-2026-0003-ABC123"}}
+        )
+        reversal = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "muestrame reverso"},
+        ).get_json()
+        self.assertIn("Reversa a MAN-2026-0003", reversal["assistant_message"])
+        self.assertEqual(reversal["data"]["voucher"]["reference_voucher_id"], "MAN-2026-0003")
 
     def test_discard_proposal_marks_discarded(self):
         web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(

@@ -244,6 +244,16 @@ class AgentCommandService:
 
             if proposal_data.get("kind") == "create_account":
                 self._apply_account_creation(proposal_data, command_id=proposal.command_id, cpa_user=cpa_user)
+            metadata = {
+                "command_id": proposal.command_id,
+                "proposal_id": proposal.id,
+                "prompt_version": PROMPT_VERSION,
+                "tool_versions": self.tools.versions(),
+                "proposal_kind": proposal_data.get("kind"),
+            }
+            if proposal_data.get("kind") == "voucher_reversal":
+                metadata["original_voucher_id"] = proposal_data.get("original_voucher_id")
+                metadata["reversal_voucher_id"] = proposal_data.get("reversal_voucher_id")
             after = _periodo_snapshot(periodo)
             AuditService(self.session).log(
                 cpa_user=cpa_user,
@@ -253,13 +263,7 @@ class AgentCommandService:
                 summary=str(proposal_data.get("title") or "Aplico propuesta del asistente contable"),
                 before=before,
                 after=after,
-                metadata={
-                    "command_id": proposal.command_id,
-                    "proposal_id": proposal.id,
-                    "prompt_version": PROMPT_VERSION,
-                    "tool_versions": self.tools.versions(),
-                    "proposal_kind": proposal_data.get("kind"),
-                },
+                metadata=metadata,
             )
             self.session.commit()
             return {
@@ -353,6 +357,8 @@ class AgentCommandService:
         ui_context: Mapping[str, Any],
         original_message: str,
     ) -> dict[str, Any]:
+        if intent == "reverse_voucher" and getattr(periodo, "estado", "") != "borrador":
+            raise AgentValidationError("Solo puedo preparar reversos en periodos borrador.")
         projected_payload, proposal_payload = self._build_projected_payload(
             intent=intent,
             payload=payload,
@@ -426,12 +432,25 @@ class AgentCommandService:
         voucher_id = str(args.get("voucher_id") or "").strip().upper()
         if not voucher_id:
             raise AgentValidationError("Indique el comprobante que desea reversar.")
-        result = build_financial_model(payload)
-        voucher = next((dict(v) for v in result.accounting.get("vouchers", []) if str(v.get("voucher_id") or "").upper() == voucher_id), None)
+        persisted_vouchers = _saved_vouchers(payload)
+        voucher = next((dict(v) for v in persisted_vouchers if str(v.get("voucher_id") or "").upper() == voucher_id), None)
         if not voucher:
+            result = build_financial_model(payload)
+            synthetic = next((dict(v) for v in result.accounting.get("vouchers", []) if str(v.get("voucher_id") or "").upper() == voucher_id), None)
+            if synthetic:
+                raise AgentValidationError("Ese comprobante es generado automaticamente; en esta fase solo puedo reversar comprobantes guardados.")
             raise AgentValidationError(f"No encontre el comprobante {voucher_id}.")
-        reversal = reverse_voucher(voucher, voucher_id=f"REV-{voucher_id}")
+        if str(voucher.get("type") or "").lower() == "reversal":
+            raise AgentValidationError("No se puede reversar un comprobante de reverso.")
+        existing_reversal = _find_reversal_for(persisted_vouchers, voucher_id)
+        if existing_reversal:
+            raise AgentValidationError(f"El comprobante {voucher_id} ya fue reversado por {existing_reversal}.")
+        reversal_id = _unique_reversal_id(voucher_id, persisted_vouchers)
+        reversal = reverse_voucher(voucher, voucher_id=reversal_id)
+        reversal["type"] = "reversal"
         reversal["source"] = "chat_financiero"
+        reversal["reference_voucher_id"] = voucher_id
+        reversal["description"] = f"Reverso de {voucher_id}"
         reversal["instruction_id"] = command_id
         projected = _append_saved_voucher(payload, reversal)
         return projected, _proposal_payload(
@@ -442,6 +461,7 @@ class AgentCommandService:
             rows=_voucher_rows(reversal),
             technical_records=[reversal],
             original_message=original_message,
+            extra={"original_voucher_id": voucher_id, "reversal_voucher_id": reversal_id},
         )
 
     def _prepare_journal_entry(
@@ -1018,6 +1038,31 @@ def _append_saved_voucher(payload: Mapping[str, Any], voucher: Mapping[str, Any]
     return projected
 
 
+def _saved_vouchers(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+    accounting = dict((payload or {}).get("accounting") or {})
+    return [dict(voucher) for voucher in accounting.get("vouchers") or [] if isinstance(voucher, Mapping)]
+
+
+def _find_reversal_for(vouchers: list[Mapping[str, Any]], original_voucher_id: str) -> str:
+    original = str(original_voucher_id or "").upper()
+    for voucher in vouchers:
+        if str(voucher.get("type") or "").lower() != "reversal":
+            continue
+        if str(voucher.get("reference_voucher_id") or "").upper() == original:
+            return str(voucher.get("voucher_id") or "")
+    return ""
+
+
+def _unique_reversal_id(original_voucher_id: str, vouchers: list[Mapping[str, Any]]) -> str:
+    existing = {str(voucher.get("voucher_id") or "").upper() for voucher in vouchers}
+    original = str(original_voucher_id or "").upper()
+    for _ in range(20):
+        candidate = f"REV-{original}-{uuid.uuid4().hex[:6].upper()}"
+        if candidate.upper() not in existing:
+            return candidate
+    return f"REV-{original}-{uuid.uuid4().hex[:12].upper()}"
+
+
 def _append_journal_entry(payload: Mapping[str, Any], entry: Mapping[str, Any]) -> dict[str, Any]:
     projected = deepcopy(dict(payload or {}))
     movements = dict(projected.get("movements") or {})
@@ -1074,7 +1119,12 @@ def _account_catalog_payload(account: Any) -> dict[str, Any]:
 
 def _voucher_rows(voucher: Mapping[str, Any]) -> list[dict[str, Any]]:
     return [
-        {"account": line.get("account"), "debit": line.get("debit") or 0, "credit": line.get("credit") or 0}
+        {
+            "account": line.get("account"),
+            "debit": line.get("debit") or 0,
+            "credit": line.get("credit") or 0,
+            "reference": line.get("reference") or line.get("ref") or "",
+        }
         for line in voucher.get("lines") or []
     ]
 

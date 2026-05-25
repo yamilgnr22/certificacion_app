@@ -218,9 +218,19 @@ class AgentToolRegistry:
             }
         lines = [_voucher_line(line) for line in (voucher.get("lines") or [])]
         line_text = [f"{line['account']}: Debe {_money(line['debit'])}, Haber {_money(line['credit'])}" for line in lines]
+        persisted_vouchers = _saved_vouchers(payload)
+        reference_voucher_id = str(voucher.get("reference_voucher_id") or "")
+        reversed_by = ""
+        if str(voucher.get("type") or "").lower() != "reversal":
+            reversed_by = _find_reversal_for(persisted_vouchers, voucher_id)
+        reference_text = ""
+        if reference_voucher_id:
+            reference_text = f"\nReversa a {reference_voucher_id}."
+        elif reversed_by:
+            reference_text = f"\nReversado por {reversed_by}."
         return {
             "response_type": "answer",
-            "assistant_message": f"{voucher_id} ({voucher.get('month')}): {voucher.get('description')}\n" + "\n".join(line_text),
+            "assistant_message": f"{voucher_id} ({voucher.get('month')}): {voucher.get('description')}\n" + "\n".join(line_text) + reference_text,
             "ui_actions": [{"type": "select_voucher", "voucher_id": voucher_id}, {"type": "scroll_to", "target": "accounting"}],
             "data": {
                 "kind": "voucher",
@@ -232,6 +242,8 @@ class AgentToolRegistry:
                     "type": voucher.get("type"),
                     "source": voucher.get("source"),
                     "description": voucher.get("description"),
+                    "reference_voucher_id": reference_voucher_id,
+                    "reversed_by": reversed_by,
                     "debit_total": voucher.get("debit_total") or 0,
                     "credit_total": voucher.get("credit_total") or 0,
                     "balanced": bool(voucher.get("balanced")),
@@ -281,6 +293,21 @@ def _find_trace(trace_map: Mapping[str, Any], *, account: str, account_name: str
 def _same_account(value: Any, account: str, account_name: str) -> bool:
     raw = str(value or "").strip()
     return raw == account or raw == account_name or normalize_account(raw) == account
+
+
+def _saved_vouchers(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+    accounting = dict((payload or {}).get("accounting") or {})
+    return [dict(voucher) for voucher in accounting.get("vouchers") or [] if isinstance(voucher, Mapping)]
+
+
+def _find_reversal_for(vouchers: list[Mapping[str, Any]], original_voucher_id: str) -> str:
+    original = str(original_voucher_id or "").upper()
+    for voucher in vouchers:
+        if str(voucher.get("type") or "").lower() != "reversal":
+            continue
+        if str(voucher.get("reference_voucher_id") or "").upper() == original:
+            return str(voucher.get("voucher_id") or "")
+    return ""
 
 
 def _ledger_row(row: Mapping[str, Any]) -> dict[str, Any]:

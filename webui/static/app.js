@@ -2404,6 +2404,8 @@
       ];
     } else if (proposalKind === 'voucher_reversal') {
       items = [
+        ['Original', proposal.original_voucher_id || proposal.reference_voucher_id || ''],
+        ['Reverso', proposal.reversal_voucher_id || ''],
         ['Mes', proposal.target_month || proposal.month || ''],
         ['Alcance', proposal.scope_label || 'bloque seleccionado'],
       ];
