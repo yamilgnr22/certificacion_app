@@ -17,6 +17,7 @@ from repositories import AccountRepository, AgentRepository, PeriodoRepository
 from services.audit_service import AuditService, stable_hash
 from services.agent_tools import AgentToolRegistry
 from services.periodo_service import PeriodoService
+from services.rollforward_service import RollforwardService
 from services.serializers import parse_json_object
 
 
@@ -87,7 +88,7 @@ class AgentCommandService:
         dirty_payload = dict(current_payload or {}) if isinstance(current_payload, Mapping) else {}
         used_dirty_payload = bool(is_dirty and dirty_payload)
         payload = dirty_payload if used_dirty_payload else persisted_payload
-        command_id = f"cmd_{uuid.uuid4().hex[:12]}"
+        command_id = str(ui_context.get("command_id") or "").strip() or f"cmd_{uuid.uuid4().hex[:12]}"
         try:
             provider = self.provider or self._provider_from_config()
             interpreted = provider.complete_json(
@@ -129,15 +130,22 @@ class AgentCommandService:
                 message=str(interpreted.get("assistant_message") or interpreted.get("question") or "Necesito un poco mas de detalle para ayudarte."),
             )
         elif intent in MUTATION_INTENTS:
-            response = self._proposal_response(
-                command_id=command_id,
-                intent=intent,
-                periodo=periodo,
-                payload=payload,
-                args=args,
-                ui_context=ui_context,
-                original_message=message,
-            )
+            if used_dirty_payload:
+                response = self._question_response(
+                    command_id=command_id,
+                    intent=intent,
+                    message="Guarda los cambios antes de preparar una propuesta contable.",
+                )
+            else:
+                response = self._proposal_response(
+                    command_id=command_id,
+                    intent=intent,
+                    periodo=periodo,
+                    payload=payload,
+                    args=args,
+                    ui_context=ui_context,
+                    original_message=message,
+                )
         elif intent in self.tools.tools:
             tool_result = self.tools.run(intent, payload, args)
             response = self._tool_response(
@@ -229,6 +237,7 @@ class AgentCommandService:
             periodo.validation_json = json.dumps(result.validations, ensure_ascii=False, sort_keys=True, default=str)
             periodo.period_blocks_json = json.dumps(result.metadata.get("period_blocks") or [], ensure_ascii=False, sort_keys=True, default=str)
             _sync_period_fields(periodo, projected_payload)
+            RollforwardService(self.session).cache_saldos_finales(periodo)
             proposal.status = "applied"
             proposal.applied_at = now
             self.session.flush()
@@ -356,8 +365,13 @@ class AgentCommandService:
             payload, projected_payload, intent,
             target_month=_extract_target_month(proposal_payload, args),
         )
+        if proposal_payload.get("kind") == "assumption_change_proposal":
+            proposal_payload["assumption_impact"] = self._compute_assumption_impact(payload, projected_payload)
+        elif proposal_payload.get("kind") == "journal_entry_proposal":
+            proposal_payload["journal_impact"] = _impact_deltas(proposal_payload.get("impact") or {})
         payload_hash = stable_hash(payload)
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+        self.agent_repo.supersede_pending_for_command(command_id)
         record = self.agent_repo.add_proposal(
             periodo_id=periodo.id,
             command_id=command_id,
@@ -439,6 +453,8 @@ class AgentCommandService:
         original_message: str,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         target_month = str(args.get("month") or args.get("target_month") or _last_payload_month(payload))[:7]
+        description = str(args.get("description") or args.get("message") or original_message or "").strip()
+        raw_lines = args.get("lines")
         amount = _to_float(args.get("amount"))
         debit = self.tools.normalize_account(args.get("debit_account") or args.get("source_account"))
         credit = self.tools.normalize_account(args.get("credit_account") or args.get("destination_account"))
@@ -452,24 +468,22 @@ class AgentCommandService:
         if intent == "account_transfer" and (not debit or not credit):
             debit = self.tools.normalize_account(args.get("source_account"))
             credit = self.tools.normalize_account(args.get("destination_account"))
-        if not target_month:
-            raise AgentValidationError("Indique el mes de la partida.")
-        if not debit or not credit:
-            raise AgentValidationError("Indique cuenta al debe y cuenta al haber.")
-        if debit == credit:
-            raise AgentValidationError("La cuenta al debe y al haber deben ser diferentes.")
-        if amount is None or amount <= 0:
-            raise AgentValidationError("Indique un monto positivo para la partida.")
-        debit_label = self._account_label(debit, payload)
-        credit_label = self._account_label(credit, payload)
-        if not debit_label or not credit_label:
-            raise AgentValidationError("Solo se permiten cuentas del catalogo contable actual.")
-
+        if raw_lines is None:
+            raw_lines = [
+                {"account": debit, "debit": amount or 0, "credit": 0},
+                {"account": credit, "debit": 0, "credit": amount or 0},
+            ]
+        lines = self._normalize_journal_lines(raw_lines, payload)
+        self._validate_journal_entry(
+            payload=payload,
+            month=target_month,
+            description=description,
+            lines=lines,
+        )
         entry = {
             "month": target_month,
-            "debit_account": debit,
-            "credit_account": credit,
-            "amount": round(float(amount), 2),
+            "description": description[:200],
+            "lines": lines,
             "currency": "nio",
             "entry_type": intent,
             "source": "chat_financiero",
@@ -478,25 +492,91 @@ class AgentCommandService:
             "message": original_message,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
+        pair = _journal_pair(lines)
+        if pair:
+            entry.update(pair)
         if source_month:
             entry["source_month"] = source_month
         projected = _append_journal_entry(payload, entry)
-        projected = self._ensure_dynamic_accounts_in_payload(projected, [debit, credit])
+        projected = self._ensure_dynamic_accounts_in_payload(projected, [str(line.get("account") or "") for line in lines])
         build_financial_model(projected)
         rows = [
-            {"account": debit_label, "debit": amount, "credit": 0},
-            {"account": credit_label, "debit": 0, "credit": amount},
+            {"account": line["account_label"], "debit": line["debit"], "credit": line["credit"], "reference": line.get("reference") or ""}
+            for line in lines
         ]
+        totals = _journal_totals(lines)
         return projected, _proposal_payload(
-            kind="journal_entry",
+            kind="journal_entry_proposal",
             title=_journal_title(intent),
-            assistant_message=f"Registro contable propuesto: debita {debit_label} y acredita {credit_label} por {amount:,.0f}.",
+            assistant_message=f"Registro contable propuesto: {description[:200]}.",
             month=target_month,
             rows=rows,
             technical_records=[entry],
             original_message=original_message,
-            extra={"source_month": source_month or None},
+            extra={"source_month": source_month or None, "description": description[:200], "totals": totals},
         )
+
+    def _normalize_journal_lines(self, raw_lines: Any, payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+        if not isinstance(raw_lines, list):
+            raise AgentValidationError("La partida debe incluir una lista de lineas contables.")
+        lines: list[dict[str, Any]] = []
+        invalid_accounts: list[str] = []
+        for raw in raw_lines:
+            if not isinstance(raw, Mapping):
+                continue
+            raw_account = raw.get("account") or raw.get("cuenta") or raw.get("debit_account") or raw.get("credit_account")
+            account = self.tools.normalize_account(raw_account)
+            label = self._account_label(account, payload)
+            if not label:
+                invalid_accounts.append(str(raw_account or "").strip() or "(sin cuenta)")
+                continue
+            debit = round(float(_to_float(raw.get("debit") or raw.get("debe")) or 0), 2)
+            credit = round(float(_to_float(raw.get("credit") or raw.get("haber")) or 0), 2)
+            lines.append({
+                "account": account,
+                "account_label": label,
+                "debit": debit,
+                "credit": credit,
+                "reference": str(raw.get("reference") or raw.get("referencia") or "").strip(),
+            })
+        if invalid_accounts:
+            suggestions = ", ".join(_valid_account_suggestions(payload)[:12])
+            raise AgentValidationError(
+                f"No reconozco la cuenta {invalid_accounts[0]}. Use una cuenta existente. Cuentas validas: {suggestions}."
+            )
+        return lines
+
+    def _validate_journal_entry(
+        self,
+        *,
+        payload: Mapping[str, Any],
+        month: str,
+        description: str,
+        lines: list[Mapping[str, Any]],
+    ) -> None:
+        valid_months = set(_payload_months(payload))
+        if not month or month not in valid_months:
+            raise AgentValidationError(f"El mes {month or '(vacio)'} no esta dentro del periodo modelado.")
+        if not description or len(description) > 200:
+            raise AgentValidationError("La descripcion de la partida es requerida y debe tener 200 caracteres o menos.")
+        if len(lines) < 2:
+            raise AgentValidationError("La partida debe tener al menos dos lineas.")
+        if len({str(line.get("account") or "") for line in lines}) < 2:
+            raise AgentValidationError("La cuenta al debe y al haber deben ser diferentes.")
+        seen: set[tuple[str, str]] = set()
+        for line in lines:
+            debit = float(line.get("debit") or 0)
+            credit = float(line.get("credit") or 0)
+            if (debit > 0 and credit > 0) or (debit <= 0 and credit <= 0):
+                raise AgentValidationError("Cada linea debe tener exactamente un valor al debe o al haber.")
+            side = "debit" if debit > 0 else "credit"
+            key = (str(line.get("account") or ""), side)
+            if key in seen:
+                raise AgentValidationError("La partida tiene una linea duplicada para la misma cuenta y signo.")
+            seen.add(key)
+        totals = _journal_totals(lines)
+        if not totals["balanced"]:
+            raise AgentValidationError("La partida esta descuadrada: el debe y el haber deben ser iguales.")
 
     def _account_label(self, account: str, payload: Mapping[str, Any]) -> str:
         if account in LEDGER_ACCOUNT_LABELS:
@@ -527,30 +607,24 @@ class AgentCommandService:
         command_id: str,
         original_message: str,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        assumption = str(args.get("assumption") or "cost_pct").strip()
-        if assumption != "cost_pct":
-            raise AgentValidationError("Por ahora solo puedo preparar cambios de costo de venta.")
-        value = _to_float(args.get("value") or args.get("cost_pct"))
-        variability = _to_float(args.get("cost_variability_pct") or args.get("variability_pct") or args.get("cash_variability_pct"))
-        if value is None or value <= 0 or value >= 100:
-            raise AgentValidationError("Indique un porcentaje de costo de venta valido.")
-        scope = str(args.get("scope") or ui_context.get("scope_mode") or ui_context.get("scope") or "global").lower()
-        result = build_financial_model(payload)
-        months = result.summary.get("all_months") or result.summary.get("months") or []
-        if scope in {"block", "bloque", "selected_block"}:
-            block = ui_context.get("selected_block") if isinstance(ui_context.get("selected_block"), Mapping) else {}
-            months = _months_between(str(block.get("start_month") or months[0]), str(block.get("end_month") or months[-1]))
-        projected = _apply_cost_assumption(payload, months=months, cost_pct=value, cost_variability_pct=variability, global_scope=scope not in {"block", "bloque", "selected_block"})
+        field = _normalize_assumption_field(args.get("field") or args.get("assumption") or "cost_pct")
+        value = args.get("new_value")
+        if value is None:
+            value = args.get("value")
+        if value is None:
+            value = args.get(field)
+        projected, before_value, after_value = _apply_assumption_change(payload, field=field, value=value)
         build_financial_model(projected)
-        rows = [{"account": "Costo de venta", "debit": value, "credit": variability or 0}]
+        rows: list[dict[str, Any]] = []
         return projected, _proposal_payload(
-            kind="assumption_change",
-            title="Cambiar supuesto de costo de venta",
-            assistant_message=f"Propuesta: costo de venta {value:g}%{f' +/- {variability:g}%' if variability is not None else ''} para {'el bloque seleccionado' if scope in {'block', 'bloque', 'selected_block'} else 'todo el modelo'}.",
-            month=",".join(months[:2] + (["..."] if len(months) > 2 else [])),
+            kind="assumption_change_proposal",
+            title="Cambiar supuesto del modelo",
+            assistant_message=f"Propuesta: cambiar {field} de {before_value} a {after_value} para todo el periodo.",
+            month=None,
             rows=rows,
-            technical_records=[{"assumption": assumption, "value": value, "cost_variability_pct": variability, "scope": scope, "months": months}],
+            technical_records=[{"field": field, "before": before_value, "after": after_value, "scope": "period"}],
             original_message=original_message,
+            extra={"field": field, "before": before_value, "after": after_value, "scope": "period"},
         )
 
     def _prepare_create_account(
@@ -719,6 +793,24 @@ class AgentCommandService:
             })
         return {"month": month, "items": items}
 
+    def _compute_assumption_impact(self, payload: Mapping[str, Any], projected_payload: Mapping[str, Any]) -> dict[str, float]:
+        try:
+            before = build_financial_model(payload)
+            after = build_financial_model(projected_payload)
+        except Exception:
+            return {}
+        before_summary = before.summary or {}
+        after_summary = after.summary or {}
+        months = after_summary.get("all_months") or after_summary.get("months") or before_summary.get("all_months") or before_summary.get("months") or []
+        last_month = str(months[-1]) if months else ""
+        return {
+            "revenue_total_delta": round(float(after_summary.get("income_total") or 0) - float(before_summary.get("income_total") or 0), 2),
+            "cost_total_delta": round(_er_value(after, "(-) Costo de ventas") - _er_value(before, "(-) Costo de ventas"), 2),
+            "net_income_delta": round(float(after_summary.get("net_income_total") or 0) - float(before_summary.get("net_income_total") or 0), 2),
+            "cash_final_delta": round(_statement_value(after, "Efectivo y Equivalentes de Efectivo", last_month) - _statement_value(before, "Efectivo y Equivalentes de Efectivo", last_month), 2),
+            "equity_final_delta": round(_statement_value(after, "Total Patrimonio", last_month) - _statement_value(before, "Total Patrimonio", last_month), 2),
+        }
+
     def _audit_metadata(self, command_id: str) -> dict[str, Any]:
         return {
             "command_id": command_id,
@@ -867,10 +959,10 @@ def _system_prompt() -> str:
         "Respondé exclusivamente JSON valido con intent y args. "
         "Intents permitidos: explain_balance(account, month), show_ledger(account), "
         "show_voucher(voucher_id), navigate(target), reverse_voucher(voucher_id), "
-        "journal_entry(month, debit_account, credit_account, amount), "
+        "journal_entry(month, description, lines=[{account,debit,credit,reference}]), "
         "account_transfer(month, source_account, destination_account, amount), "
         "year_close_transfer(target_month, source_month, amount opcional), "
-        "assumption_change(assumption=cost_pct, value, cost_variability_pct, scope), "
+        "assumption_change(field, new_value, scope=period), "
         "create_account(name, account_type, section), "
         "recalcular_preview(), guardar_payload(), finalizar_periodo(), generar_documento(), "
         "question. "
@@ -987,6 +1079,38 @@ def _voucher_rows(voucher: Mapping[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _journal_totals(lines: list[Mapping[str, Any]]) -> dict[str, Any]:
+    debit = round(sum(float(line.get("debit") or 0) for line in lines), 2)
+    credit = round(sum(float(line.get("credit") or 0) for line in lines), 2)
+    return {"debit": debit, "credit": credit, "balanced": abs(debit - credit) <= 0.01}
+
+
+def _journal_pair(lines: list[Mapping[str, Any]]) -> dict[str, Any] | None:
+    debit_lines = [line for line in lines if float(line.get("debit") or 0) > 0]
+    credit_lines = [line for line in lines if float(line.get("credit") or 0) > 0]
+    if len(debit_lines) != 1 or len(credit_lines) != 1:
+        return None
+    debit_amount = round(float(debit_lines[0].get("debit") or 0), 2)
+    credit_amount = round(float(credit_lines[0].get("credit") or 0), 2)
+    if abs(debit_amount - credit_amount) > 0.01:
+        return None
+    return {
+        "debit_account": debit_lines[0].get("account"),
+        "credit_account": credit_lines[0].get("account"),
+        "amount": debit_amount,
+    }
+
+
+def _valid_account_suggestions(payload: Mapping[str, Any]) -> list[str]:
+    labels = list(LEDGER_ACCOUNT_LABELS.values())
+    dynamic = _dynamic_account_lookup(payload)
+    for account in dynamic.values():
+        name = str(account.get("name") or "").strip()
+        if name and name not in labels:
+            labels.append(name)
+    return sorted(labels)
+
+
 def _to_float(value: Any) -> float | None:
     try:
         if value in {None, ""}:
@@ -1065,6 +1189,19 @@ def _last_payload_month(payload: Mapping[str, Any]) -> str:
     return str(period.get("end_month") or "")[:7]
 
 
+def _payload_months(payload: Mapping[str, Any]) -> list[str]:
+    period = dict(payload.get("period") or {})
+    start = str(period.get("start_month") or "")[:7]
+    end = str(period.get("end_month") or "")[:7]
+    if start and end:
+        return _months_between(start, end)
+    try:
+        result = build_financial_model(payload)
+        return [str(m) for m in (result.summary.get("all_months") or result.summary.get("months") or [])]
+    except Exception:
+        return []
+
+
 def _previous_year_end(month: str) -> str:
     year = int(str(month or "0000-01")[:4] or 0)
     return f"{year - 1}-12"
@@ -1081,6 +1218,37 @@ def _statement_value(result, description: str, month: str) -> float:
         return float(rows.iloc[0][month] or 0)
     except Exception:
         return 0.0
+
+
+def _er_value(result, description: str) -> float:
+    df = result.df_er_full
+    if df is None or df.empty:
+        return 0.0
+    rows = df[df["Descripcion"] == description]
+    if rows.empty:
+        return 0.0
+    accum_cols = [col for col in df.columns if str(col).startswith("Acumulado")]
+    col = accum_cols[0] if accum_cols else df.columns[-2]
+    try:
+        return float(rows.iloc[0][col] or 0)
+    except Exception:
+        return 0.0
+
+
+def _impact_deltas(impact: Mapping[str, Any]) -> dict[str, float]:
+    out = {"cash_delta": 0.0, "assets_delta": 0.0, "liabilities_delta": 0.0, "equity_delta": 0.0, "income_delta": 0.0}
+    mapping = {
+        "caja": "cash_delta",
+        "activos": "assets_delta",
+        "pasivos": "liabilities_delta",
+        "patrimonio": "equity_delta",
+        "resultado": "income_delta",
+    }
+    for item in impact.get("items") or []:
+        key = mapping.get(str(item.get("key") or ""))
+        if key:
+            out[key] = round(float(item.get("delta") or 0), 2)
+    return out
 
 
 def _journal_title(intent: str) -> str:
@@ -1123,6 +1291,84 @@ def _apply_cost_assumption(
         income["monthly_overrides"] = _income_overrides_list(overrides)
     projected["income"] = income
     return projected
+
+
+ASSUMPTION_FIELD_MAP = {
+    "cost_pct": ("income", "cost_pct", "pct"),
+    "porcentaje_costo": ("income", "cost_pct", "pct"),
+    "ingresos_base_usd": ("income", "base_income_usd", "positive"),
+    "base_income_usd": ("income", "base_income_usd", "positive"),
+    "income_base_usd": ("income", "base_income_usd", "positive"),
+    "variabilidad_ingresos_pct": ("income", "income_variability_pct", "pct"),
+    "income_variability_pct": ("income", "income_variability_pct", "pct"),
+    "variabilidad_costos_pct": ("income", "cost_variability_pct", "pct"),
+    "cost_variability_pct": ("income", "cost_variability_pct", "pct"),
+    "cash_sales_pct": ("income", "cash_sales_pct", "pct"),
+    "porcentaje_contado": ("income", "cash_sales_pct", "pct"),
+    "seed": ("period", "seed", "string"),
+}
+
+
+def _normalize_assumption_field(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    raw = raw.replace(" ", "_").replace("-", "_")
+    aliases = {
+        "costo": "cost_pct",
+        "costo_venta": "cost_pct",
+        "costo_de_venta": "cost_pct",
+        "ventas_contado": "cash_sales_pct",
+        "contado": "cash_sales_pct",
+        "ingresos": "ingresos_base_usd",
+        "ingreso_base": "ingresos_base_usd",
+        "variabilidad_ingresos": "variabilidad_ingresos_pct",
+        "variabilidad_costos": "variabilidad_costos_pct",
+        "semilla": "seed",
+    }
+    raw = aliases.get(raw, raw)
+    if raw not in ASSUMPTION_FIELD_MAP:
+        allowed = ", ".join(sorted({"cost_pct", "ingresos_base_usd", "variabilidad_ingresos_pct", "variabilidad_costos_pct", "cash_sales_pct", "seed"}))
+        raise AgentValidationError(f"Supuesto no permitido. Campos permitidos: {allowed}.")
+    # Use public Spanish key for ingreso base so proposal text matches app language.
+    if raw == "base_income_usd":
+        return "ingresos_base_usd"
+    if raw == "income_variability_pct":
+        return "variabilidad_ingresos_pct"
+    if raw == "cost_variability_pct":
+        return "variabilidad_costos_pct"
+    return raw
+
+
+def _normalize_assumption_value(kind: str, value: Any) -> Any:
+    if kind == "string":
+        out = str(value or "").strip()
+        if not out:
+            raise AgentValidationError("El valor de seed no puede estar vacio.")
+        return out
+    number = _to_float(value)
+    if number is None:
+        raise AgentValidationError("Indique un valor valido para el supuesto.")
+    if kind == "positive":
+        if number <= 0:
+            raise AgentValidationError("El ingreso base USD debe ser mayor que cero.")
+        return float(number)
+    if kind == "pct":
+        if 0 <= number <= 1:
+            number *= 100.0
+        if number < 0 or number > 100:
+            raise AgentValidationError("El porcentaje debe estar entre 0 y 100%.")
+        return float(number)
+    return number
+
+
+def _apply_assumption_change(payload: Mapping[str, Any], *, field: str, value: Any) -> tuple[dict[str, Any], Any, Any]:
+    target, key, kind = ASSUMPTION_FIELD_MAP[field]
+    after_value = _normalize_assumption_value(kind, value)
+    projected = deepcopy(dict(payload or {}))
+    section = dict(projected.get(target) or {})
+    before_value = section.get(key)
+    section[key] = after_value
+    projected[target] = section
+    return projected, before_value, after_value
 
 
 def _income_overrides_by_month(raw: Any) -> dict[str, dict[str, Any]]:

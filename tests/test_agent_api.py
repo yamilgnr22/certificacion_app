@@ -283,6 +283,63 @@ class AgentApiTest(unittest.TestCase):
             stored = session.get(AgentProposal, proposal["id"])
         self.assertEqual(stored.status, "applied")
 
+    def test_assumption_change_supports_base_income_and_preserves_manual_entries(self):
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "journal_entry",
+                "args": {
+                    "month": "2026-01",
+                    "description": "Partida previa",
+                    "lines": [
+                        {"account": "Capital", "debit": 1000, "credit": 0},
+                        {"account": "Resultados Acumulados", "debit": 0, "credit": 1000},
+                    ],
+                },
+            }
+        )
+        journal_id = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "partida previa"},
+        ).get_json()["proposal"]["id"]
+        self.client.post(f"/api/agent/proposals/{journal_id}/apply")
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {"intent": "assumption_change", "args": {"field": "ingresos_base_usd", "new_value": 120000}}
+        )
+
+        proposal = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "cambia ingresos base"},
+        ).get_json()["proposal"]
+        apply_resp = self.client.post(f"/api/agent/proposals/{proposal['id']}/apply")
+        detail = self.client.get(f"/api/periodos/{self.periodo['id']}").get_json()["periodo"]
+
+        self.assertEqual(apply_resp.status_code, 200, apply_resp.get_json())
+        self.assertEqual(detail["payload"]["income"]["base_income_usd"], 120000.0)
+        self.assertEqual(detail["payload"]["movements"]["journal_entries"][-1]["description"], "Partida previa")
+        self.assertEqual(proposal["kind"], "assumption_change_proposal")
+        self.assertIn("assumption_impact", proposal)
+
+    def test_assumption_change_rejects_unknown_field_and_out_of_range_value(self):
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {"intent": "assumption_change", "args": {"field": "margen_magico", "new_value": 10}}
+        )
+        bad_field = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "cambia campo raro"},
+        )
+        self.assertEqual(bad_field.status_code, 400)
+        self.assertIn("Supuesto no permitido", bad_field.get_json()["error"])
+
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {"intent": "assumption_change", "args": {"field": "cash_sales_pct", "new_value": 120}}
+        )
+        bad_value = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "contado 120"},
+        )
+        self.assertEqual(bad_value.status_code, 400)
+        self.assertIn("porcentaje", bad_value.get_json()["error"])
+
     def test_proposal_does_not_apply_to_finalized_periodo(self):
         web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
             {"intent": "assumption_change", "args": {"assumption": "cost_pct", "value": 80}}
@@ -339,6 +396,27 @@ class AgentApiTest(unittest.TestCase):
         with self.db_session() as session:
             self.assertEqual(session.get(AgentProposal, proposal_id).status, "expired")
 
+    def test_new_proposal_same_command_supersedes_previous_pending(self):
+        command_id = "cmd_same_test"
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {"intent": "assumption_change", "args": {"field": "cost_pct", "new_value": 75}}
+        )
+        first = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "cambia costo", "ui_context": {"command_id": command_id}},
+        ).get_json()["proposal"]["id"]
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {"intent": "assumption_change", "args": {"field": "cost_pct", "new_value": 76}}
+        )
+        second = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "cambia costo otra vez", "ui_context": {"command_id": command_id}},
+        ).get_json()["proposal"]["id"]
+
+        with self.db_session() as session:
+            self.assertEqual(session.get(AgentProposal, first).status, "superseded")
+            self.assertEqual(session.get(AgentProposal, second).status, "pending")
+
     def test_journal_entry_proposal_adds_entry_to_payload(self):
         web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
             {
@@ -364,6 +442,37 @@ class AgentApiTest(unittest.TestCase):
         self.assertEqual(entries[-1]["debit_account"], "capital")
         self.assertEqual(entries[-1]["credit_account"], "retained_earnings")
         self.assertEqual(entries[-1]["amount"], 500000)
+
+    def test_journal_entry_accepts_multiple_lines_and_preserves_references(self):
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "journal_entry",
+                "args": {
+                    "month": "2026-01",
+                    "description": "Pago parcial a proveedor con impuesto",
+                    "lines": [
+                        {"account": "Proveedores", "debit": 800, "credit": 0, "reference": "F-100"},
+                        {"account": "Impuestos por Pagar", "debit": 200, "credit": 0, "reference": "RET-1"},
+                        {"account": "Caja", "debit": 0, "credit": 1000, "reference": "CK-1"},
+                    ],
+                },
+            }
+        )
+
+        proposal = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "registra pago a proveedor"},
+        ).get_json()["proposal"]
+        resp = self.client.post(f"/api/agent/proposals/{proposal['id']}/apply")
+        detail = self.client.get(f"/api/periodos/{self.periodo['id']}").get_json()["periodo"]
+
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        entry = detail["payload"]["movements"]["journal_entries"][-1]
+        self.assertEqual(entry["description"], "Pago parcial a proveedor con impuesto")
+        self.assertEqual(len(entry["lines"]), 3)
+        self.assertEqual(entry["lines"][0]["reference"], "F-100")
+        result = build_financial_model(detail["payload"])
+        self.assertTrue(result.validations["balance"]["ok"])
 
     def test_journal_entry_proposal_includes_impact(self):
         web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
@@ -415,6 +524,99 @@ class AgentApiTest(unittest.TestCase):
 
         self.assertEqual(resp.status_code, 400)
         self.assertIn("diferentes", resp.get_json()["error"])
+
+    def test_unbalanced_journal_entry_is_rejected(self):
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "journal_entry",
+                "args": {
+                    "month": "2026-01",
+                    "description": "Partida descuadrada",
+                    "lines": [
+                        {"account": "Capital", "debit": 500000, "credit": 0},
+                        {"account": "Resultados Acumulados", "debit": 0, "credit": 400000},
+                    ],
+                },
+            }
+        )
+
+        resp = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "partida descuadrada"},
+        )
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("descuadrada", resp.get_json()["error"])
+
+    def test_unknown_account_journal_entry_is_rejected_with_suggestions(self):
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "journal_entry",
+                "args": {
+                    "month": "2026-01",
+                    "description": "Partida con cuenta nueva",
+                    "lines": [
+                        {"account": "Reservas Inventadas", "debit": 1000, "credit": 0},
+                        {"account": "Capital", "debit": 0, "credit": 1000},
+                    ],
+                },
+            }
+        )
+
+        resp = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "partida con cuenta desconocida"},
+        )
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("Cuentas validas", resp.get_json()["error"])
+
+    def test_journal_entry_outside_period_is_rejected(self):
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "journal_entry",
+                "args": {
+                    "month": "2025-12",
+                    "description": "Fuera de periodo",
+                    "lines": [
+                        {"account": "Capital", "debit": 1000, "credit": 0},
+                        {"account": "Resultados Acumulados", "debit": 0, "credit": 1000},
+                    ],
+                },
+            }
+        )
+
+        resp = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "partida fuera de periodo"},
+        )
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("no esta dentro", resp.get_json()["error"])
+
+    def test_dirty_payload_mutating_intent_does_not_create_proposal(self):
+        payload = self.client.get(f"/api/periodos/{self.periodo['id']}").get_json()["periodo"]["payload"]
+        payload["income"]["cost_pct"] = 71
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {"intent": "journal_entry", "args": {"month": "2026-01", "description": "x", "lines": []}}
+        )
+
+        resp = self.client.post(
+            "/api/agent/command",
+            json={
+                "periodo_id": self.periodo["id"],
+                "message": "registra una partida",
+                "current_payload": payload,
+                "is_dirty": True,
+            },
+        )
+
+        data = resp.get_json()
+        self.assertEqual(resp.status_code, 200, data)
+        self.assertEqual(data["response_type"], "question")
+        self.assertIn("Guarda los cambios", data["assistant_message"])
+        with self.db_session() as session:
+            self.assertEqual(session.query(AgentProposal).count(), 0)
 
     def test_reverse_voucher_proposal_adds_saved_reversal(self):
         web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(

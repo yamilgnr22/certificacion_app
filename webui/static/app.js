@@ -2387,14 +2387,12 @@
         ['Impacto pasivos', formatSignedMoney(proposal.impact?.liabilities || 0)],
         ['Impacto patrimonio', formatSignedMoney(proposal.impact?.equity || 0)],
       ];
-    } else if (proposalKind === 'assumption_change') {
+    } else if (proposalKind === 'assumption_change' || proposalKind === 'assumption_change_proposal') {
       items = [
-        ['Supuesto', proposal.assumption_label || proposal.technical_records?.[0]?.assumption || 'Supuesto'],
-        ['Nuevo valor', proposal.assumption_value !== undefined ? `${formatMoney(proposal.assumption_value)}%` : `${formatMoney(proposal.technical_records?.[0]?.value)}%`],
-        ['Variabilidad', proposal.assumption_variability_pct !== undefined ? `+/- ${formatMoney(proposal.assumption_variability_pct)}%` : `+/- ${formatMoney(proposal.technical_records?.[0]?.cost_variability_pct)}%`],
-        ['Alcance', proposal.scope_label || ''],
-        ['Periodo', proposal.target_month || proposal.month || ''],
-        ['Meses afectados', formatMoney(proposal.affected_months_count || proposal.technical_records?.[0]?.months?.length || 0)],
+        ['Supuesto', proposal.field || proposal.assumption_label || proposal.technical_records?.[0]?.assumption || 'Supuesto'],
+        ['Antes', proposal.before !== undefined ? String(proposal.before) : '-'],
+        ['Despues', proposal.after !== undefined ? String(proposal.after) : (proposal.assumption_value !== undefined ? `${formatMoney(proposal.assumption_value)}%` : `${formatMoney(proposal.technical_records?.[0]?.value)}%`)],
+        ['Alcance', proposal.scope || proposal.scope_label || 'periodo completo'],
       ];
     } else if (proposalKind === 'create_account') {
       const account = proposal.account || proposal.technical_records?.[0] || {};
@@ -2409,13 +2407,13 @@
         ['Mes', proposal.target_month || proposal.month || ''],
         ['Alcance', proposal.scope_label || 'bloque seleccionado'],
       ];
-    } else if (proposalKind === 'journal_entry') {
+    } else if (proposalKind === 'journal_entry' || proposalKind === 'journal_entry_proposal') {
       items = [
         ['Mes', proposal.target_month || proposal.month || ''],
-        ['Debe', proposal.debit_label || journalAccountLabel(proposal.debit_account)],
-        ['Haber', proposal.credit_label || journalAccountLabel(proposal.credit_account)],
-        ['Monto', formatMoney(proposal.amount)],
-        ['Alcance', proposal.scope_label || 'bloque seleccionado'],
+        ['Descripcion', proposal.description || proposal.title || 'Partida doble'],
+        ['Debe total', formatMoney(proposal.totals?.debit || proposal.amount || 0)],
+        ['Haber total', formatMoney(proposal.totals?.credit || proposal.amount || 0)],
+        ['Cuadra', proposal.totals?.balanced === false ? 'No' : 'Si'],
       ];
     } else if (proposalKind === 'compound_events') {
       items = [
@@ -2435,18 +2433,18 @@
         ['Palanca', leverLabel(proposal.lever)],
       ];
     }
-    if (!['journal_entry', 'compound_events'].includes(proposalKind) && proposal.cash_variability_pct !== undefined && proposal.cash_variability_pct !== null) {
+    if (!['journal_entry', 'journal_entry_proposal', 'compound_events'].includes(proposalKind) && proposal.cash_variability_pct !== undefined && proposal.cash_variability_pct !== null) {
       items.push(['Variabilidad caja', `+/- ${formatMoney(proposal.cash_variability_pct)}%`]);
     }
-    if (!['journal_entry', 'compound_events'].includes(proposalKind) && proposal.target_min_cash !== undefined && proposal.target_max_cash !== undefined) {
+    if (!['journal_entry', 'journal_entry_proposal', 'compound_events'].includes(proposalKind) && proposal.target_min_cash !== undefined && proposal.target_max_cash !== undefined) {
       items.push(['Rango objetivo', `${formatMoney(proposal.target_min_cash)} - ${formatMoney(proposal.target_max_cash)}`]);
     }
-    if (!['journal_entry', 'compound_events'].includes(proposalKind) && proposal.purchase_average_nio !== undefined) items.push(['Compras promedio C$', formatMoney(proposal.purchase_average_nio)]);
-    if (!['journal_entry', 'compound_events'].includes(proposalKind) && proposal.purchase_average_usd !== undefined) items.push(['Compras promedio USD', formatMoney(proposal.purchase_average_usd)]);
+    if (!['journal_entry', 'journal_entry_proposal', 'compound_events'].includes(proposalKind) && proposal.purchase_average_nio !== undefined) items.push(['Compras promedio C$', formatMoney(proposal.purchase_average_nio)]);
+    if (!['journal_entry', 'journal_entry_proposal', 'compound_events'].includes(proposalKind) && proposal.purchase_average_usd !== undefined) items.push(['Compras promedio USD', formatMoney(proposal.purchase_average_usd)]);
     if (proposal.adjusted_min_cash !== undefined) items.push(['Caja mínima ajustada', formatMoney(proposal.adjusted_min_cash)]);
     if (proposal.adjusted_max_cash !== undefined) items.push(['Caja máxima ajustada', formatMoney(proposal.adjusted_max_cash)]);
-    if (!['journal_entry', 'compound_events'].includes(proposalKind) && events.length) items.push(['Eventos nuevos', formatMoney(events.length)]);
-    if (!['journal_entry', 'compound_events'].includes(proposalKind) && removedEvents.length) items.push(['Eventos removidos', formatMoney(removedEvents.length)]);
+    if (!['journal_entry', 'journal_entry_proposal', 'compound_events'].includes(proposalKind) && events.length) items.push(['Eventos nuevos', formatMoney(events.length)]);
+    if (!['journal_entry', 'journal_entry_proposal', 'compound_events'].includes(proposalKind) && removedEvents.length) items.push(['Eventos removidos', formatMoney(removedEvents.length)]);
     items.forEach(([label, value]) => {
       const box = document.createElement('div');
       box.className = 'proposal-item';
@@ -2459,10 +2457,10 @@
     });
     wrap.appendChild(grid);
 
-    if ((proposalKind === 'journal_entry' || proposalKind === 'compound_events' || proposalKind === 'voucher_reversal' || proposalKind === 'create_account') && Array.isArray(proposal.journal_rows)) {
+    if ((proposalKind === 'journal_entry' || proposalKind === 'journal_entry_proposal' || proposalKind === 'compound_events' || proposalKind === 'voucher_reversal' || proposalKind === 'create_account') && Array.isArray(proposal.journal_rows)) {
       const journalTable = document.createElement('table');
       journalTable.className = 'journal-proposal-table';
-      journalTable.innerHTML = '<thead><tr><th>Cuenta</th><th>Debe</th><th>Haber</th></tr></thead>';
+      journalTable.innerHTML = '<thead><tr><th>Cuenta</th><th>Debe</th><th>Haber</th><th>Ref</th></tr></thead>';
       const tbody = document.createElement('tbody');
       proposal.journal_rows.forEach(row => {
         const tr = document.createElement('tr');
@@ -2472,7 +2470,9 @@
         debit.textContent = row.debit ? formatMoney(row.debit) : '-';
         const credit = document.createElement('td');
         credit.textContent = row.credit ? formatMoney(row.credit) : '-';
-        tr.append(account, debit, credit);
+        const ref = document.createElement('td');
+        ref.textContent = row.reference || '';
+        tr.append(account, debit, credit, ref);
         tbody.appendChild(tr);
       });
       journalTable.appendChild(tbody);
@@ -2522,6 +2522,36 @@
       impactSection.appendChild(impactGrid);
       wrap.appendChild(impactSection);
     }
+    if (proposalKind === 'assumption_change_proposal' && proposal.assumption_impact) {
+      const impactSection = document.createElement('div');
+      impactSection.className = 'proposal-impact';
+      const impactTitle = document.createElement('div');
+      impactTitle.className = 'proposal-impact-title';
+      impactTitle.textContent = 'Impacto estimado';
+      impactSection.appendChild(impactTitle);
+      const impactGrid = document.createElement('div');
+      impactGrid.className = 'proposal-impact-grid';
+      [
+        ['Ingresos', proposal.assumption_impact.revenue_total_delta],
+        ['Costos totales', proposal.assumption_impact.cost_total_delta],
+        ['Utilidad neta', proposal.assumption_impact.net_income_delta],
+        ['Caja final', proposal.assumption_impact.cash_final_delta],
+        ['Patrimonio final', proposal.assumption_impact.equity_final_delta],
+      ].forEach(([labelText, rawValue]) => {
+        const cell = document.createElement('div');
+        cell.className = 'proposal-impact-item';
+        const label = document.createElement('span');
+        label.textContent = labelText;
+        const delta = document.createElement('strong');
+        const value = Number(rawValue || 0);
+        delta.textContent = value === 0 ? 'sin cambio' : formatSignedMoney(value);
+        delta.dataset.direction = value > 0 ? 'up' : value < 0 ? 'down' : 'neutral';
+        cell.append(label, delta);
+        impactGrid.appendChild(cell);
+      });
+      impactSection.appendChild(impactGrid);
+      wrap.appendChild(impactSection);
+    }
 
     if (proposal.explanation && !messageText) {
       const note = document.createElement('p');
@@ -2562,7 +2592,7 @@
           ? 'Aplicar reverso'
           : proposalKind === 'create_account'
             ? 'Crear cuenta'
-            : ['journal_entry', 'compound_events'].includes(proposalKind)
+            : ['journal_entry', 'journal_entry_proposal', 'compound_events'].includes(proposalKind)
               ? 'Aplicar registro'
               : 'Aplicar propuesta'
     );
@@ -2574,15 +2604,35 @@
     actions.append(apply, discard);
     wrap.appendChild(actions);
 
+    if (proposal.expires_at) {
+      const timer = document.createElement('div');
+      timer.className = 'proposal-note';
+      wrap.insertBefore(timer, actions);
+      const expiresAt = new Date(proposal.expires_at).getTime();
+      const updateTimer = () => {
+        const left = Math.max(0, expiresAt - Date.now());
+        const minutes = Math.floor(left / 60000);
+        const seconds = Math.floor((left % 60000) / 1000);
+        timer.textContent = left > 0 ? `Vence en ${minutes}:${String(seconds).padStart(2, '0')}` : 'Propuesta vencida';
+        if (left <= 0) {
+          apply.disabled = true;
+          markProposalCardStatus(wrap, 'discarded', 'Propuesta vencida. Pedi una nueva.');
+          clearInterval(intervalId);
+        }
+      };
+      const intervalId = setInterval(updateTimer, 1000);
+      updateTimer();
+    }
+
     apply.addEventListener('click', onModelChatApply);
     discard.addEventListener('click', onModelChatDiscard);
     wrap.scrollIntoView({ block: 'nearest' });
   }
 
   function proposalTitle(kind) {
-    if (kind === 'journal_entry' || kind === 'compound_events' || kind === 'voucher_reversal') return 'Registro contable propuesto';
+    if (kind === 'journal_entry' || kind === 'journal_entry_proposal' || kind === 'compound_events' || kind === 'voucher_reversal') return 'Propuesta contable';
     if (kind === 'create_account') return 'Cuenta contable propuesta';
-    if (kind === 'assumption_change') return 'Cambio de supuesto propuesto';
+    if (kind === 'assumption_change' || kind === 'assumption_change_proposal') return 'Propuesta de supuesto';
     if (kind === 'workflow') return 'Accion propuesta';
     if (kind === 'period_change') return 'Cambio de periodo propuesto';
     return 'Propuesta del asistente';
@@ -3454,11 +3504,11 @@
     const removedJournalEntries = pendingChatData?.removed_journal_entries || [];
     applyModelPayload(payloadToApply, { draftId: currentDraftId });
     markEditorDirty(true);
-    if (proposalKind === 'journal_entry' || proposalKind === 'voucher_reversal') {
+    if (proposalKind === 'journal_entry' || proposalKind === 'journal_entry_proposal' || proposalKind === 'voucher_reversal') {
       appendChatMessage(`${journalEntries.length || 1} comprobante(s) aplicado(s) al modelo.`, 'app');
     } else if (proposalKind === 'compound_events') {
       appendChatMessage(`Comprobante compuesto aplicado al modelo (${events.length} evento(s) tecnicos).`, 'app');
-    } else if (proposalKind === 'assumption_change') {
+    } else if (proposalKind === 'assumption_change' || proposalKind === 'assumption_change_proposal') {
       appendChatMessage('Supuesto aplicado al modelo.', 'app');
     } else if (events.length) {
       appendChatMessage(`${events.length} evento(s) aplicado(s) al listado de eventos.`, 'app');

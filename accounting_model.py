@@ -312,11 +312,27 @@ def _equity_vouchers(item: Mapping[str, Any], month: str) -> Iterable[Dict[str, 
 
 def _journal_entry_vouchers(item: Mapping[str, Any], month: str) -> Iterable[Dict[str, Any]]:
     for entry in item.get("journal_entries") or []:
-        amount = _round(entry.get("amount_nio") or entry.get("amount"))
-        if not amount:
+        entry_lines = entry.get("lines")
+        if isinstance(entry_lines, list) and entry_lines:
+            lines = [
+                _line(
+                    _account_label(line.get("account")),
+                    debit=_round(line.get("debit")),
+                    credit=_round(line.get("credit")),
+                    reference=str(line.get("reference") or ""),
+                )
+                for line in entry_lines
+                if isinstance(line, Mapping)
+            ]
+        else:
+            amount = _round(entry.get("amount_nio") or entry.get("amount"))
+            if not amount:
+                continue
+            debit = _account_label(entry.get("debit_account"))
+            credit = _account_label(entry.get("credit_account"))
+            lines = [_line(debit, debit=amount), _line(credit, credit=amount)]
+        if not lines:
             continue
-        debit = _account_label(entry.get("debit_account"))
-        credit = _account_label(entry.get("credit_account"))
         entry_type = str(entry.get("entry_type") or "chat_adjustment")
         voucher_type = "year_close" if entry_type == "year_close_transfer" else "chat_adjustment"
         yield _voucher(
@@ -324,7 +340,7 @@ def _journal_entry_vouchers(item: Mapping[str, Any], month: str) -> Iterable[Dic
             month,
             voucher_type,
             str(entry.get("message") or entry.get("description") or "Partida del chat financiero"),
-            [_line(debit, debit=amount), _line(credit, credit=amount)],
+            lines,
             source=str(entry.get("source") or "chat_financiero"),
             instruction_id=str(entry.get("instruction_id") or ""),
         )

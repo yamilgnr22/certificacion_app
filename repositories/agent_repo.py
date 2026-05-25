@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
+from sqlalchemy import select
 
 from db.models import AgentMessage, AgentProposal, LegacyCallCounter
 
@@ -72,3 +73,21 @@ class AgentRepository:
 
     def get_proposal(self, proposal_id: str) -> AgentProposal | None:
         return self.session.get(AgentProposal, proposal_id)
+
+    def supersede_pending_for_command(self, command_id: str) -> int:
+        command_id = str(command_id or "").strip()
+        if not command_id:
+            return 0
+        records = list(
+            self.session.scalars(
+                select(AgentProposal).where(
+                    AgentProposal.command_id == command_id,
+                    AgentProposal.status == "pending",
+                )
+            )
+        )
+        for proposal in records:
+            proposal.status = "superseded"
+        if records:
+            self.session.flush()
+        return len(records)

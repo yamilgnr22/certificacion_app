@@ -1196,6 +1196,31 @@ def _index_journal_entries(
         month_key = str(entry.get("month") or entry.get("mes") or "").strip()[:7]
         if month_key not in allowed_months:
             continue
+        raw_lines = entry.get("lines")
+        if isinstance(raw_lines, list) and raw_lines:
+            normalized_lines: List[Dict[str, Any]] = []
+            for line in raw_lines:
+                if not isinstance(line, Mapping):
+                    continue
+                account = _normalize_ledger_account(line.get("account") or line.get("cuenta") or "", dynamic_accounts)
+                if not account:
+                    continue
+                debit = _round(_to_float(line.get("debit") or line.get("debe") or 0.0, 0.0))
+                credit = _round(_to_float(line.get("credit") or line.get("haber") or 0.0, 0.0))
+                if (debit > 0 and credit > 0) or (debit <= 0 and credit <= 0):
+                    continue
+                normalized_lines.append({
+                    "account": account,
+                    "debit": debit,
+                    "credit": credit,
+                    "reference": str(line.get("reference") or line.get("referencia") or ""),
+                })
+            if len(normalized_lines) >= 2:
+                normalized = dict(entry)
+                normalized["month"] = month_key
+                normalized["lines"] = normalized_lines
+                out[month_key].append(normalized)
+            continue
         debit_account = _normalize_ledger_account(entry.get("debit_account") or entry.get("debe") or "", dynamic_accounts)
         credit_account = _normalize_ledger_account(entry.get("credit_account") or entry.get("haber") or "", dynamic_accounts)
         if not debit_account or not credit_account or debit_account == credit_account:
@@ -1225,6 +1250,19 @@ def _apply_journal_entries_to_state(
 ) -> Dict[str, float]:
     effects: Dict[str, float] = {"result_accum_delta": 0.0}
     for entry in entries:
+        raw_lines = entry.get("lines")
+        if isinstance(raw_lines, list) and raw_lines:
+            for line in raw_lines:
+                if not isinstance(line, Mapping):
+                    continue
+                account = str(line.get("account") or "")
+                debit = _round(_to_float(line.get("debit") or 0.0, 0.0))
+                credit = _round(_to_float(line.get("credit") or 0.0, 0.0))
+                if debit > 0:
+                    _apply_journal_side(state, effects, account, "debit", debit, dynamic_state, dynamic_specs)
+                if credit > 0:
+                    _apply_journal_side(state, effects, account, "credit", credit, dynamic_state, dynamic_specs)
+            continue
         amount = _round(_to_float(entry.get("amount_nio") or entry.get("amount") or 0.0, 0.0))
         if amount <= 0:
             continue
