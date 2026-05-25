@@ -76,6 +76,7 @@ class AgentToolRegistry:
                 self._recalcular_preview,
             ),
             "reverse_voucher": self._mutating_tool("reverse_voucher"),
+            "correct_voucher": self._mutating_tool("correct_voucher"),
             "journal_entry": self._mutating_tool("journal_entry"),
             "account_transfer": self._mutating_tool("account_transfer"),
             "year_close_transfer": self._mutating_tool("year_close_transfer"),

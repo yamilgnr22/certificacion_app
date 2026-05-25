@@ -835,6 +835,234 @@ class AgentApiTest(unittest.TestCase):
         self.assertIn("Reversa a MAN-2026-0003", reversal["assistant_message"])
         self.assertEqual(reversal["data"]["voucher"]["reference_voucher_id"], "MAN-2026-0003")
 
+    def test_correct_voucher_persisted_creates_compound_proposal_and_applies(self):
+        self._add_saved_voucher("MAN-CORR-0001", amount=1000)
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "correct_voucher",
+                "args": {
+                    "voucher_id": "MAN-CORR-0001",
+                    "correction": {
+                        "month": "2026-01",
+                        "description": "Pago corregido a proveedor",
+                        "lines": [
+                            {"account": "Proveedores", "debit": 800, "credit": 0, "reference": "F-2"},
+                            {"account": "Efectivo", "debit": 0, "credit": 800, "reference": "CK-2"},
+                        ],
+                    },
+                },
+            }
+        )
+
+        proposal = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "corrige el comprobante MAN-CORR-0001"},
+        ).get_json()["proposal"]
+        apply_resp = self.client.post(f"/api/agent/proposals/{proposal['id']}/apply")
+        detail = self.client.get(f"/api/periodos/{self.periodo['id']}").get_json()["periodo"]
+
+        self.assertEqual(proposal["kind"], "compound_voucher_correction")
+        self.assertEqual(proposal["original_voucher_id"], "MAN-CORR-0001")
+        self.assertTrue(proposal["reversal_voucher_id"].startswith("REV-MAN-CORR-0001-"))
+        self.assertEqual(proposal["correction_rows"][0]["debit"], 800)
+        self.assertEqual(apply_resp.status_code, 200, apply_resp.get_json())
+        vouchers = detail["payload"]["accounting"]["vouchers"]
+        self.assertEqual(vouchers[-1]["reference_voucher_id"], "MAN-CORR-0001")
+        entries = detail["payload"]["movements"]["journal_entries"]
+        self.assertEqual(entries[-1]["entry_id"], proposal["correction_entry_id"])
+        self.assertEqual(entries[-1]["description"], "Pago corregido a proveedor")
+        with self.db_session() as session:
+            audit = session.scalars(select(AuditLog).where(AuditLog.action == "agent_apply_proposal")).first()
+            metadata = json.loads(audit.metadata_json)
+        self.assertEqual(metadata["proposal_kind"], "compound_voucher_correction")
+        self.assertEqual(metadata["original_voucher_id"], "MAN-CORR-0001")
+        self.assertEqual(metadata["reversal_voucher_id"], proposal["reversal_voucher_id"])
+        self.assertEqual(metadata["correction_entry_id"], proposal["correction_entry_id"])
+
+    def test_correct_voucher_generated_from_journal_entry_is_traceable(self):
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "journal_entry",
+                "args": {
+                    "month": "2026-01",
+                    "description": "Pago original mal registrado",
+                    "lines": [
+                        {"account": "Proveedores", "debit": 1000, "credit": 0},
+                        {"account": "Efectivo", "debit": 0, "credit": 1000},
+                    ],
+                },
+            }
+        )
+        original_proposal = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "registra pago original"},
+        ).get_json()["proposal"]
+        self.client.post(f"/api/agent/proposals/{original_proposal['id']}/apply")
+        payload = self._payload()
+        original_instruction = payload["movements"]["journal_entries"][-1]["instruction_id"]
+        original_voucher = next(
+            voucher for voucher in build_financial_model(payload).accounting["vouchers"]
+            if voucher.get("instruction_id") == original_instruction
+        )
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "correct_voucher",
+                "args": {
+                    "voucher_id": original_voucher["voucher_id"],
+                    "correction": {
+                        "month": "2026-01",
+                        "description": "Pago original corregido",
+                        "lines": [
+                            {"account": "Proveedores", "debit": 600, "credit": 0},
+                            {"account": "Efectivo", "debit": 0, "credit": 600},
+                        ],
+                    },
+                },
+            }
+        )
+
+        proposal = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "corrige el comprobante generado"},
+        ).get_json()["proposal"]
+        apply_resp = self.client.post(f"/api/agent/proposals/{proposal['id']}/apply")
+        detail = self.client.get(f"/api/periodos/{self.periodo['id']}").get_json()["periodo"]
+
+        self.assertEqual(apply_resp.status_code, 200, apply_resp.get_json())
+        entries = detail["payload"]["movements"]["journal_entries"]
+        self.assertEqual(entries[-2]["entry_type"], "voucher_reversal")
+        self.assertEqual(entries[-2]["voucher_id"], proposal["reversal_voucher_id"])
+        self.assertEqual(entries[-2]["reference_voucher_id"], original_voucher["voucher_id"])
+        self.assertEqual(entries[-1]["entry_id"], proposal["correction_entry_id"])
+        result = build_financial_model(detail["payload"])
+        self.assertTrue(result.validations["balance"]["ok"])
+
+    def test_correct_voucher_rejects_automatic_missing_and_invalid_correction(self):
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "correct_voucher",
+                "args": {
+                    "voucher_id": "CD-2026-0001",
+                    "correction": {
+                        "month": "2026-01",
+                        "description": "Correccion",
+                        "lines": [
+                            {"account": "Capital", "debit": 100, "credit": 0},
+                            {"account": "Resultados Acumulados", "debit": 0, "credit": 100},
+                        ],
+                    },
+                },
+            }
+        )
+        automatic = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "corrige CD-2026-0001"},
+        )
+        self.assertEqual(automatic.status_code, 400)
+        self.assertIn("generado automaticamente", automatic.get_json()["error"])
+
+        self._add_saved_voucher("MAN-CORR-0002")
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {"intent": "correct_voucher", "args": {"voucher_id": "MAN-CORR-0002"}}
+        )
+        missing = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "corrige MAN-CORR-0002"},
+        )
+        self.assertEqual(missing.status_code, 200)
+        self.assertEqual(missing.get_json()["response_type"], "question")
+
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "correct_voucher",
+                "args": {
+                    "voucher_id": "MAN-CORR-0002",
+                    "correction": {
+                        "month": "2026-01",
+                        "description": "Descuadrado",
+                        "lines": [
+                            {"account": "Capital", "debit": 100, "credit": 0},
+                            {"account": "Resultados Acumulados", "debit": 0, "credit": 80},
+                        ],
+                    },
+                },
+            }
+        )
+        unbalanced = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "corrige descuadrado"},
+        )
+        self.assertEqual(unbalanced.status_code, 400)
+        self.assertIn("descuadrada", unbalanced.get_json()["error"])
+
+    def test_correct_voucher_dirty_expired_and_stale_guards(self):
+        self._add_saved_voucher("MAN-CORR-0003")
+        payload = self._payload()
+        payload["income"]["cost_pct"] = 71
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "correct_voucher",
+                "args": {
+                    "voucher_id": "MAN-CORR-0003",
+                    "correction": {
+                        "month": "2026-01",
+                        "description": "Correccion dirty",
+                        "lines": [
+                            {"account": "Capital", "debit": 100, "credit": 0},
+                            {"account": "Resultados Acumulados", "debit": 0, "credit": 100},
+                        ],
+                    },
+                },
+            }
+        )
+        dirty = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "corrige", "current_payload": payload, "is_dirty": True},
+        )
+        self.assertEqual(dirty.status_code, 200)
+        self.assertIn("correccion contable", dirty.get_json()["assistant_message"])
+
+        clean_payload = self._payload()
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "correct_voucher",
+                "args": {
+                    "voucher_id": "MAN-CORR-0003",
+                    "correction": {
+                        "month": "2026-01",
+                        "description": "Correccion expirable",
+                        "lines": [
+                            {"account": "Capital", "debit": 100, "credit": 0},
+                            {"account": "Resultados Acumulados", "debit": 0, "credit": 100},
+                        ],
+                    },
+                },
+            }
+        )
+        expired_id = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "corrige expirable"},
+        ).get_json()["proposal"]["id"]
+        with self.db_session() as session:
+            stored = session.get(AgentProposal, expired_id)
+            stored.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+            session.commit()
+        expired = self.client.post(f"/api/agent/proposals/{expired_id}/apply")
+        self.assertEqual(expired.status_code, 409)
+        with self.db_session() as session:
+            self.assertEqual(session.get(AgentProposal, expired_id).status, "expired")
+
+        stale_id = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "corrige stale"},
+        ).get_json()["proposal"]["id"]
+        clean_payload["income"]["cost_pct"] = 72
+        self._save_payload(clean_payload)
+        stale = self.client.post(f"/api/agent/proposals/{stale_id}/apply")
+        self.assertEqual(stale.status_code, 409)
+        with self.db_session() as session:
+            self.assertEqual(session.get(AgentProposal, stale_id).status, "stale")
+
     def test_discard_proposal_marks_discarded(self):
         web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
             {"intent": "assumption_change", "args": {"assumption": "cost_pct", "value": 80}}

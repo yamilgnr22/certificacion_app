@@ -131,10 +131,17 @@ class AgentCommandService:
             )
         elif intent in MUTATION_INTENTS:
             if used_dirty_payload:
+                message_text = "Guarda los cambios antes de preparar una correccion contable." if intent == "correct_voucher" else "Guarda los cambios antes de preparar una propuesta contable."
                 response = self._question_response(
                     command_id=command_id,
                     intent=intent,
-                    message="Guarda los cambios antes de preparar una propuesta contable.",
+                    message=message_text,
+                )
+            elif intent == "correct_voucher" and not _has_correction_payload(args):
+                response = self._question_response(
+                    command_id=command_id,
+                    intent=intent,
+                    message="Indique el asiento corregido con mes, descripcion y lineas al debe y haber.",
                 )
             else:
                 response = self._proposal_response(
@@ -254,6 +261,10 @@ class AgentCommandService:
             if proposal_data.get("kind") == "voucher_reversal":
                 metadata["original_voucher_id"] = proposal_data.get("original_voucher_id")
                 metadata["reversal_voucher_id"] = proposal_data.get("reversal_voucher_id")
+            if proposal_data.get("kind") == "compound_voucher_correction":
+                metadata["original_voucher_id"] = proposal_data.get("original_voucher_id")
+                metadata["reversal_voucher_id"] = proposal_data.get("reversal_voucher_id")
+                metadata["correction_entry_id"] = proposal_data.get("correction_entry_id")
             after = _periodo_snapshot(periodo)
             AuditService(self.session).log(
                 cpa_user=cpa_user,
@@ -357,8 +368,8 @@ class AgentCommandService:
         ui_context: Mapping[str, Any],
         original_message: str,
     ) -> dict[str, Any]:
-        if intent == "reverse_voucher" and getattr(periodo, "estado", "") != "borrador":
-            raise AgentValidationError("Solo puedo preparar reversos en periodos borrador.")
+        if intent in {"reverse_voucher", "correct_voucher"} and getattr(periodo, "estado", "") != "borrador":
+            raise AgentValidationError("Solo puedo preparar reversos y correcciones en periodos borrador.")
         projected_payload, proposal_payload = self._build_projected_payload(
             intent=intent,
             payload=payload,
@@ -412,6 +423,8 @@ class AgentCommandService:
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         if intent == "reverse_voucher":
             return self._prepare_reverse_voucher(payload, args, command_id, original_message)
+        if intent == "correct_voucher":
+            return self._prepare_correct_voucher(payload, args, command_id, original_message)
         if intent in {"journal_entry", "account_transfer", "year_close_transfer"}:
             return self._prepare_journal_entry(intent, payload, args, command_id, original_message)
         if intent == "assumption_change":
@@ -462,6 +475,89 @@ class AgentCommandService:
             technical_records=[reversal],
             original_message=original_message,
             extra={"original_voucher_id": voucher_id, "reversal_voucher_id": reversal_id},
+        )
+
+    def _prepare_correct_voucher(
+        self,
+        payload: Mapping[str, Any],
+        args: Mapping[str, Any],
+        command_id: str,
+        original_message: str,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        voucher_id = str(args.get("voucher_id") or args.get("original_voucher_id") or "").strip().upper()
+        if not voucher_id:
+            raise AgentValidationError("Indique el comprobante que desea corregir.")
+        persisted_vouchers = _saved_vouchers(payload)
+        result = build_financial_model(payload)
+        voucher, source_kind = _resolve_correctable_voucher(payload, result.accounting.get("vouchers") or [], persisted_vouchers, voucher_id)
+        if str(voucher.get("type") or "").lower() == "reversal":
+            raise AgentValidationError("No se puede corregir un comprobante de reverso.")
+        existing_reversal = _find_reversal_for([*persisted_vouchers, *[dict(v) for v in result.accounting.get("vouchers") or [] if isinstance(v, Mapping)]], voucher_id)
+        if existing_reversal:
+            raise AgentValidationError(f"El comprobante {voucher_id} ya fue reversado por {existing_reversal}.")
+
+        correction = args.get("correction") if isinstance(args.get("correction"), Mapping) else args
+        target_month = str(correction.get("month") or correction.get("target_month") or voucher.get("month") or "")[:7]
+        description = str(correction.get("description") or "").strip()
+        raw_lines = correction.get("lines")
+        lines = self._normalize_journal_lines(raw_lines, payload)
+        self._validate_journal_entry(payload=payload, month=target_month, description=description, lines=lines)
+
+        reversal_id = _unique_reversal_id(voucher_id, [*persisted_vouchers, *[dict(v) for v in result.accounting.get("vouchers") or [] if isinstance(v, Mapping)]])
+        reversal = reverse_voucher(voucher, voucher_id=reversal_id)
+        reversal["type"] = "reversal"
+        reversal["source"] = "chat_financiero"
+        reversal["reference_voucher_id"] = voucher_id
+        reversal["description"] = f"Reverso de {voucher_id}"
+        reversal["instruction_id"] = command_id
+        correction_entry_id = f"JE-{uuid.uuid4().hex[:8].upper()}"
+        correction_entry = {
+            "entry_id": correction_entry_id,
+            "month": target_month,
+            "description": description[:200],
+            "lines": lines,
+            "currency": "nio",
+            "entry_type": "voucher_correction",
+            "source": "chat_financiero",
+            "instruction_id": command_id,
+            "locked": True,
+            "message": original_message,
+            "corrects_voucher_id": voucher_id,
+            "reversal_voucher_id": reversal_id,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        projected = deepcopy(dict(payload or {}))
+        if source_kind == "persisted":
+            projected = _append_saved_voucher(projected, reversal)
+        else:
+            reversal_entry = _journal_entry_from_reversal_voucher(reversal, command_id=command_id, original_message=original_message)
+            projected = _append_journal_entry(projected, reversal_entry)
+        projected = _append_journal_entry(projected, correction_entry)
+        projected = self._ensure_dynamic_accounts_in_payload(projected, [str(line.get("account") or "") for line in lines])
+        build_financial_model(projected)
+
+        correction_rows = [
+            {"account": line["account_label"], "debit": line["debit"], "credit": line["credit"], "reference": line.get("reference") or ""}
+            for line in lines
+        ]
+        return projected, _proposal_payload(
+            kind="compound_voucher_correction",
+            title=f"Corregir comprobante {voucher_id}",
+            assistant_message=f"Prepare la correccion de {voucher_id}: reverso del comprobante original y nuevo asiento corregido.",
+            month=target_month,
+            rows=[],
+            technical_records=[reversal, correction_entry],
+            original_message=original_message,
+            extra={
+                "original_voucher_id": voucher_id,
+                "reversal_voucher_id": reversal_id,
+                "correction_entry_id": correction_entry_id,
+                "description": description[:200],
+                "source_kind": source_kind,
+                "reversal_rows": _voucher_rows(reversal),
+                "correction_rows": correction_rows,
+                "totals": _journal_totals(lines),
+            },
         )
 
     def _prepare_journal_entry(
@@ -947,6 +1043,7 @@ AGENT_COMMAND_SCHEMA: dict[str, Any] = {
                 "show_voucher",
                 "navigate",
                 "reverse_voucher",
+                "correct_voucher",
                 "journal_entry",
                 "account_transfer",
                 "year_close_transfer",
@@ -967,7 +1064,7 @@ AGENT_COMMAND_SCHEMA: dict[str, Any] = {
 }
 
 
-MUTATION_INTENTS = {"reverse_voucher", "journal_entry", "account_transfer", "year_close_transfer", "assumption_change", "create_account", "finalizar_periodo"}
+MUTATION_INTENTS = {"reverse_voucher", "correct_voucher", "journal_entry", "account_transfer", "year_close_transfer", "assumption_change", "create_account", "finalizar_periodo"}
 
 SYSTEM_INTENTS = {"guardar_payload", "generar_documento"}
 
@@ -979,6 +1076,7 @@ def _system_prompt() -> str:
         "Respondé exclusivamente JSON valido con intent y args. "
         "Intents permitidos: explain_balance(account, month), show_ledger(account), "
         "show_voucher(voucher_id), navigate(target), reverse_voucher(voucher_id), "
+        "correct_voucher(voucher_id, correction={month,description,lines}), "
         "journal_entry(month, description, lines=[{account,debit,credit,reference}]), "
         "account_transfer(month, source_account, destination_account, amount), "
         "year_close_transfer(target_month, source_month, amount opcional), "
@@ -1043,6 +1141,32 @@ def _saved_vouchers(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
     return [dict(voucher) for voucher in accounting.get("vouchers") or [] if isinstance(voucher, Mapping)]
 
 
+def _has_correction_payload(args: Mapping[str, Any]) -> bool:
+    correction = args.get("correction") if isinstance(args.get("correction"), Mapping) else args
+    lines = correction.get("lines") if isinstance(correction, Mapping) else None
+    return bool(isinstance(lines, list) and lines)
+
+
+def _resolve_correctable_voucher(
+    payload: Mapping[str, Any],
+    all_vouchers: list[Mapping[str, Any]],
+    persisted_vouchers: list[Mapping[str, Any]],
+    voucher_id: str,
+) -> tuple[dict[str, Any], str]:
+    target = str(voucher_id or "").upper()
+    persisted = next((dict(voucher) for voucher in persisted_vouchers if str(voucher.get("voucher_id") or "").upper() == target), None)
+    if persisted:
+        return persisted, "persisted"
+    generated = next((dict(voucher) for voucher in all_vouchers if str(voucher.get("voucher_id") or "").upper() == target), None)
+    if not generated:
+        raise AgentValidationError(f"No encontre el comprobante {voucher_id}.")
+    instruction_id = str(generated.get("instruction_id") or "").strip()
+    entries = dict((payload or {}).get("movements") or {}).get("journal_entries") or []
+    if instruction_id and any(str(entry.get("instruction_id") or "").strip() == instruction_id for entry in entries if isinstance(entry, Mapping)):
+        return generated, "journal_entry"
+    raise AgentValidationError("Ese comprobante es generado automaticamente; en esta fase solo puedo corregir comprobantes guardados o partidas del chat.")
+
+
 def _find_reversal_for(vouchers: list[Mapping[str, Any]], original_voucher_id: str) -> str:
     original = str(original_voucher_id or "").upper()
     for voucher in vouchers:
@@ -1061,6 +1185,33 @@ def _unique_reversal_id(original_voucher_id: str, vouchers: list[Mapping[str, An
         if candidate.upper() not in existing:
             return candidate
     return f"REV-{original}-{uuid.uuid4().hex[:12].upper()}"
+
+
+def _journal_entry_from_reversal_voucher(voucher: Mapping[str, Any], *, command_id: str, original_message: str) -> dict[str, Any]:
+    return {
+        "entry_id": f"JE-{uuid.uuid4().hex[:8].upper()}",
+        "voucher_id": str(voucher.get("voucher_id") or ""),
+        "reference_voucher_id": str(voucher.get("reference_voucher_id") or ""),
+        "month": str(voucher.get("month") or "")[:7],
+        "description": str(voucher.get("description") or ""),
+        "lines": [
+            {
+                "account": line.get("account"),
+                "debit": line.get("debit") or 0,
+                "credit": line.get("credit") or 0,
+                "reference": line.get("reference") or "",
+            }
+            for line in voucher.get("lines") or []
+            if isinstance(line, Mapping)
+        ],
+        "currency": "nio",
+        "entry_type": "voucher_reversal",
+        "source": "chat_financiero",
+        "instruction_id": command_id,
+        "locked": True,
+        "message": original_message,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 def _append_journal_entry(payload: Mapping[str, Any], entry: Mapping[str, Any]) -> dict[str, Any]:

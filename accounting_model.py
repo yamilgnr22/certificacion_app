@@ -334,15 +334,16 @@ def _journal_entry_vouchers(item: Mapping[str, Any], month: str) -> Iterable[Dic
         if not lines:
             continue
         entry_type = str(entry.get("entry_type") or "chat_adjustment")
-        voucher_type = "year_close" if entry_type == "year_close_transfer" else "chat_adjustment"
+        voucher_type = "year_close" if entry_type == "year_close_transfer" else ("reversal" if entry_type == "voucher_reversal" else "chat_adjustment")
         yield _voucher(
-            "",
+            str(entry.get("voucher_id") or ""),
             month,
             voucher_type,
             str(entry.get("message") or entry.get("description") or "Partida del chat financiero"),
             lines,
             source=str(entry.get("source") or "chat_financiero"),
             instruction_id=str(entry.get("instruction_id") or ""),
+            reference_voucher_id=str(entry.get("reference_voucher_id") or ""),
         )
 
 
