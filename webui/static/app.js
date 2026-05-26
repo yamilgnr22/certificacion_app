@@ -468,6 +468,7 @@
   let selectedClienteName = '';
   let selectedGiroId = '';
   let clientesSearchTimer = null;
+  let catalogoSearchTimer = null;
 
   function setModelMessage(text, type = 'info') {
     const wrap = qs('#modelMessages');
@@ -510,6 +511,10 @@
     setScopedMessage('#clienteFormMessages', text, type);
   }
 
+  function setCatalogoMessage(text, type = 'info') {
+    setScopedMessage('#catalogoMessages', text, type);
+  }
+
   async function fetchJson(url, options = {}) {
     const resp = await fetch(url, options);
     let data = {};
@@ -521,6 +526,15 @@
       throw err;
     }
     return data;
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? '')
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#039;');
   }
 
   function clearDocExtraction() {
@@ -3600,11 +3614,67 @@
     await requestModelChatProposal('deshacer último ajuste');
   }
 
+  async function loadCatalogo() {
+    const params = new URLSearchParams();
+    const q = qs('#catalogoSearch')?.value?.trim();
+    const type = qs('#catalogoTypeFilter')?.value || '';
+    const section = qs('#catalogoSectionFilter')?.value || '';
+    if (q) params.set('q', q);
+    if (type) params.set('type', type);
+    if (section) params.set('section', section);
+    try {
+      setCatalogoMessage('Cargando catalogo...', 'info');
+      const data = await fetchJson(`/api/catalogo${params.toString() ? `?${params}` : ''}`);
+      renderCatalogo(data.accounts || [], data.summary || {});
+      setCatalogoMessage('', 'info');
+    } catch (e) {
+      renderCatalogo([], {});
+      setCatalogoMessage(String(e.message || e), 'error');
+    }
+  }
+
+  function renderCatalogo(accounts, summary) {
+    const summaryEl = qs('#catalogoSummary');
+    if (summaryEl) {
+      const missing = (summary?.missing_required || []).length;
+      summaryEl.textContent = `${summary?.total ?? accounts.length} cuenta(s) activas · ${summary?.required_count ?? 0} obligatorias${missing ? ` · faltan ${missing}` : ''}`;
+    }
+    const wrap = qs('#catalogoList');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+    if (!accounts.length) {
+      wrap.className = 'table-preview empty-state';
+      wrap.textContent = 'Sin cuentas para mostrar.';
+      return;
+    }
+    wrap.className = 'table-preview';
+    const table = document.createElement('table');
+    table.className = 'statement-table';
+    table.innerHTML = '<thead><tr><th>Codigo</th><th>NIIF</th><th>Nombre</th><th>Tipo</th><th>Seccion</th><th>Naturaleza</th><th>Origen</th></tr></thead><tbody></tbody>';
+    const tbody = table.querySelector('tbody');
+    accounts.forEach((account) => {
+      const tr = document.createElement('tr');
+      const badge = account.required_model_account ? ' <span class="badge ok">obligatoria</span>' : '';
+      tr.innerHTML = `
+        <td>${escapeHtml(account.code || '')}</td>
+        <td>${escapeHtml(account.niif_code || '')}</td>
+        <td>${escapeHtml(account.name || '')}${badge}</td>
+        <td>${escapeHtml(account.account_type || '')}</td>
+        <td>${escapeHtml(account.section || '')}</td>
+        <td>${escapeHtml(account.normal_balance || '')}</td>
+        <td>${escapeHtml(account.source || '')}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+    wrap.appendChild(table);
+  }
+
   function activateMode(target) {
     if (!target) return;
     qsa('.mode-tab').forEach(b => b.classList.toggle('active', b.getAttribute('data-mode-target') === target));
     qsa('.mode-panel').forEach(panel => panel.classList.toggle('hidden', panel.id !== target));
     if (target === 'clientesMode') refreshClientes();
+    if (target === 'catalogoMode') loadCatalogo();
   }
 
   qsa('.mode-tab').forEach((btn) => {
@@ -3636,6 +3706,13 @@
   qs('#btnRefreshSavedModels')?.addEventListener('click', refreshSavedModels);
   qs('#savedModelsFilter')?.addEventListener('input', renderSavedModels);
   qs('#btnRefreshClientes')?.addEventListener('click', refreshClientes);
+  qs('#btnRefreshCatalogo')?.addEventListener('click', loadCatalogo);
+  qs('#catalogoTypeFilter')?.addEventListener('change', loadCatalogo);
+  qs('#catalogoSectionFilter')?.addEventListener('change', loadCatalogo);
+  qs('#catalogoSearch')?.addEventListener('input', () => {
+    clearTimeout(catalogoSearchTimer);
+    catalogoSearchTimer = setTimeout(loadCatalogo, 300);
+  });
   qs('#btnNewCliente')?.addEventListener('click', () => openClienteForm({ mode: 'new' }));
   qs('#btnCloseClienteForm')?.addEventListener('click', () => qs('#clienteFormPanel')?.classList.add('hidden'));
   qs('#btnSaveCliente')?.addEventListener('click', saveCliente);

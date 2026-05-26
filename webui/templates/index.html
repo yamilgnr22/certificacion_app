@@ -27,6 +27,10 @@
             <span class="mode-tab-icon" aria-hidden="true">◐</span>
             <span>Clientes</span>
           </button>
+          <button class="mode-tab" type="button" data-mode-target="catalogoMode">
+            <span class="mode-tab-icon" aria-hidden="true">CAT</span>
+            <span>Catalogo</span>
+          </button>
           <button class="mode-tab active" type="button" data-mode-target="modelMode">
             <span class="mode-tab-icon" aria-hidden="true">◧</span>
             <span>Editor avanzado</span>
@@ -204,6 +208,53 @@
           <div class="actions">
             <button id="btnSavePeriodo" class="btn primary" type="button">Crear periodo (borrador)</button>
           </div>
+        </section>
+      </div>
+
+      <div id="catalogoMode" class="mode-panel hidden">
+        <section class="card">
+          <div class="workbench-header">
+            <div>
+              <h2>Catalogo contable</h2>
+              <p class="workbench-subtitle">Catalogo NIIF PYME enriquecido con el detalle operativo del modelo.</p>
+            </div>
+            <button id="btnRefreshCatalogo" class="btn" type="button">Actualizar</button>
+          </div>
+          <div id="catalogoMessages" class="messages"></div>
+          <div class="client-toolbar">
+            <div class="field">
+              <label>Buscar</label>
+              <input id="catalogoSearch" type="text" placeholder="Codigo, NIIF, nombre o alias">
+            </div>
+            <div class="field">
+              <label>Tipo</label>
+              <select id="catalogoTypeFilter">
+                <option value="">Todos</option>
+                <option value="activo">Activo</option>
+                <option value="pasivo">Pasivo</option>
+                <option value="patrimonio">Patrimonio</option>
+                <option value="ingreso">Ingreso</option>
+                <option value="costo">Costo</option>
+                <option value="gasto">Gasto</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Seccion</label>
+              <select id="catalogoSectionFilter">
+                <option value="">Todas</option>
+                <option value="corriente">Corriente</option>
+                <option value="no_corriente">No corriente</option>
+                <option value="patrimonio">Patrimonio</option>
+                <option value="ingresos">Ingresos</option>
+                <option value="costo_ventas">Costo de ventas</option>
+                <option value="gastos_operativos">Gastos operativos</option>
+                <option value="gastos_financieros">Gastos financieros</option>
+                <option value="otros_egresos">Otros egresos</option>
+              </select>
+            </div>
+          </div>
+          <div id="catalogoSummary" class="muted"></div>
+          <div id="catalogoList" class="table-preview empty-state">Catalogo no cargado.</div>
         </section>
       </div>
 

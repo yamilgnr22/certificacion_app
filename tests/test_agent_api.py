@@ -481,6 +481,45 @@ class AgentApiTest(unittest.TestCase):
         self.assertEqual(entries[-1]["credit_account"], "retained_earnings")
         self.assertEqual(entries[-1]["amount"], 500000)
 
+    def test_journal_entry_uses_account_catalog_alias(self):
+        with self.db_session() as session:
+            session.add(AccountCatalog(
+                id="exp_rent",
+                code="exp_rent",
+                niif_code="619.05",
+                name="Renta",
+                account_type="gasto",
+                section="gastos_operativos",
+                aliases_json=json.dumps(["alquiler"]),
+                display_order=6195,
+                source="niif_pyme_enriched",
+                active=1,
+            ))
+            session.commit()
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "journal_entry",
+                "args": {
+                    "month": "2026-01",
+                    "description": "Registro de alquiler",
+                    "lines": [
+                        {"account": "alquiler", "debit": 1000, "credit": 0},
+                        {"account": "cash", "debit": 0, "credit": 1000},
+                    ],
+                },
+            }
+        )
+
+        resp = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "registra alquiler"},
+        )
+        entry = resp.get_json()["proposal"]["technical_records"][0]
+
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(entry["lines"][0]["account"], "exp_rent")
+        self.assertEqual(entry["lines"][0]["account_label"], "Renta")
+
     def test_journal_entry_accepts_multiple_lines_and_preserves_references(self):
         web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
             {
@@ -1166,7 +1205,7 @@ class AgentApiTest(unittest.TestCase):
         detail = self.client.get(f"/api/periodos/{self.periodo['id']}").get_json()["periodo"]
 
         self.assertEqual(apply_resp.status_code, 200, apply_resp.get_json())
-        self.assertEqual(detail["payload"]["movements"]["journal_entries"][-1]["credit_account"], "Reservas Legales")
+        self.assertEqual(detail["payload"]["movements"]["journal_entries"][-1]["credit_account"], "reservas_legales")
         self.assertTrue(any(acc["name"] == "Reservas Legales" for acc in detail["payload"]["accounting"]["dynamic_accounts"]))
         result = build_financial_model(detail["payload"])
         self.assertIn("Reservas Legales", set(result.df_esf_mensual_full["Descripcion"]))

@@ -4,7 +4,7 @@ import json
 from datetime import date, datetime
 from typing import Any
 
-from db.models import Cliente, GiroNegocio, PeriodoCertificacion
+from db.models import AccountCatalog, Cliente, GiroNegocio, PeriodoCertificacion
 
 
 def parse_json_object(value: str | None, fallback: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -90,4 +90,24 @@ def periodo_to_basic_dict(periodo: PeriodoCertificacion) -> dict[str, Any]:
         "created_at": iso(periodo.created_at),
         "updated_at": iso(periodo.updated_at),
         "finalized_at": iso(periodo.finalized_at),
+    }
+
+
+def account_to_dict(account: AccountCatalog) -> dict[str, Any]:
+    return {
+        "id": account.id,
+        "code": account.code,
+        "niif_code": account.niif_code,
+        "name": account.name,
+        "account_type": account.account_type,
+        "section": account.section,
+        "normal_balance": account.normal_balance,
+        "parent_code": account.parent_code,
+        "aliases": json.loads(account.aliases_json or "[]"),
+        "display_order": account.display_order,
+        "required_model_account": bool(account.required_model_account),
+        "source": account.source,
+        "active": bool(account.active),
+        "created_at": iso(account.created_at),
+        "updated_at": iso(account.updated_at),
     }

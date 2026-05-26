@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from services.audit_service import AuditService
+from services.account_service import AccountCatalogService
 from services.agent_service import (
     AgentCommandService,
     AgentConfigError,
@@ -22,6 +23,7 @@ from services.rollforward_service import RollforwardService
 
 __all__ = [
     "AuditService",
+    "AccountCatalogService",
     "AgentCommandService",
     "AgentConfigError",
     "AgentNotFoundError",

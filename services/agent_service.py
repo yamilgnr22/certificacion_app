@@ -641,7 +641,7 @@ class AgentCommandService:
             if not isinstance(raw, Mapping):
                 continue
             raw_account = raw.get("account") or raw.get("cuenta") or raw.get("debit_account") or raw.get("credit_account")
-            account = self.tools.normalize_account(raw_account)
+            account = self._normalize_account(raw_account)
             label = self._account_label(account, payload)
             if not label:
                 invalid_accounts.append(str(raw_account or "").strip() or "(sin cuenta)")
@@ -656,7 +656,7 @@ class AgentCommandService:
                 "reference": str(raw.get("reference") or raw.get("referencia") or "").strip(),
             })
         if invalid_accounts:
-            suggestions = ", ".join(_valid_account_suggestions(payload)[:12])
+            suggestions = ", ".join(self._valid_account_suggestions(payload)[:12])
             raise AgentValidationError(
                 f"No reconozco la cuenta {invalid_accounts[0]}. Use una cuenta existente. Cuentas validas: {suggestions}."
             )
@@ -703,6 +703,21 @@ class AgentCommandService:
         found = self.accounts.get_by_code(account) or self.accounts.get_by_name(account)
         return found.name if found else ""
 
+    def _normalize_account(self, raw_account: Any) -> str:
+        normalized = self.tools.normalize_account(str(raw_account or ""))
+        if normalized in LEDGER_ACCOUNT_LABELS:
+            return normalized
+        found = self.accounts.find_by_text(str(raw_account or "")) or self.accounts.find_by_text(normalized)
+        return found.code if found else normalized
+
+    def _valid_account_suggestions(self, payload: Mapping[str, Any]) -> list[str]:
+        labels = _valid_account_suggestions(payload)
+        for account in self.accounts.list_active():
+            label = account.name.strip()
+            if label and label not in labels:
+                labels.append(label)
+        return sorted(labels)
+
     def _ensure_dynamic_accounts_in_payload(self, payload: Mapping[str, Any], accounts: list[str]) -> dict[str, Any]:
         projected = deepcopy(dict(payload or {}))
         for account in accounts:
@@ -710,7 +725,7 @@ class AgentCommandService:
                 continue
             if account in _dynamic_account_lookup(projected):
                 continue
-            found = self.accounts.get_by_code(account) or self.accounts.get_by_name(account)
+            found = self.accounts.get_by_code(account) or self.accounts.get_by_name(account) or self.accounts.find_by_text(account)
             if found:
                 projected = _append_dynamic_account(projected, _account_catalog_payload(found))
         return projected
@@ -761,7 +776,7 @@ class AgentCommandService:
             raise AgentValidationError("La combinacion tipo-seccion no es valida para el catalogo contable.")
 
         code = _account_code(args.get("code") or name)
-        if self.accounts.get_by_code(code) or self.accounts.get_by_name(name):
+        if self.accounts.get_by_code(code) or self.accounts.get_by_name(name) or self.accounts.find_by_text(name):
             raise AgentValidationError(f"La cuenta {name} ya existe en el catalogo.")
 
         account_record = {
@@ -810,7 +825,7 @@ class AgentCommandService:
         name = str(account.get("name") or "").strip()
         if not code or not name:
             raise AgentValidationError("La propuesta no contiene una cuenta valida para crear.")
-        if self.accounts.get_by_code(code) or self.accounts.get_by_name(name):
+        if self.accounts.get_by_code(code) or self.accounts.get_by_name(name) or self.accounts.find_by_text(name):
             return
         account = self.accounts.create(
             id=code,
@@ -1230,9 +1245,13 @@ def _append_dynamic_account(payload: Mapping[str, Any], account: Mapping[str, An
     accounts = list(accounting.get("dynamic_accounts") or [])
     clean = {
         "code": str(account.get("code") or "").strip(),
+        "niif_code": str(account.get("niif_code") or "").strip(),
         "name": str(account.get("name") or "").strip(),
         "account_type": _normalize_account_type(account.get("account_type")),
         "section": _normalize_account_section(account.get("section")),
+        "normal_balance": str(account.get("normal_balance") or "").strip(),
+        "parent_code": str(account.get("parent_code") or "").strip(),
+        "aliases": list(account.get("aliases") or []),
         "source": str(account.get("source") or "chat_financiero").strip(),
     }
     existing_codes = {str(item.get("code") or "").strip() for item in accounts if isinstance(item, Mapping)}
@@ -1259,11 +1278,19 @@ def _dynamic_account_lookup(payload: Mapping[str, Any]) -> dict[str, dict[str, A
 
 
 def _account_catalog_payload(account: Any) -> dict[str, Any]:
+    try:
+        aliases = json.loads(account.aliases_json or "[]")
+    except Exception:
+        aliases = []
     return {
         "code": account.code,
+        "niif_code": account.niif_code,
         "name": account.name,
         "account_type": account.account_type,
         "section": account.section,
+        "normal_balance": account.normal_balance,
+        "parent_code": account.parent_code,
+        "aliases": aliases if isinstance(aliases, list) else [],
         "source": account.source,
     }
 

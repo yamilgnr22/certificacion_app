@@ -37,6 +37,7 @@ from model_storage import (
 from db.engine import get_engine, session_factory
 from db.runtime import DatabaseNotInitialized, DatabaseOutOfDate, require_alembic_version
 from services import (
+    AccountCatalogService,
     AgentCommandService,
     AgentConfigError,
     AgentNotFoundError,
@@ -110,6 +111,7 @@ def _is_db_api_path(path: str) -> bool:
         or path.startswith("/api/periodos")
         or path.startswith("/api/audit")
         or path.startswith("/api/agent")
+        or path.startswith("/api/catalogo")
     )
 
 
@@ -278,6 +280,20 @@ def api_get_giro(giro_id: str):
         if not giro:
             return {"ok": False, "error": "Giro no encontrado"}, 404
         return {"ok": True, "giro": giro}
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.get("/api/catalogo")
+def api_list_account_catalog():
+    try:
+        service = AccountCatalogService(_db_session())
+        accounts = service.list(
+            query=request.args.get("q", ""),
+            account_type=request.args.get("type", ""),
+            section=request.args.get("section", ""),
+        )
+        return {"ok": True, "accounts": accounts, "summary": service.summary()}
     except Exception as exc:
         return _service_error_response(exc)
 
