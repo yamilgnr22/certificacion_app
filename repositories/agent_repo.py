@@ -91,3 +91,21 @@ class AgentRepository:
         if records:
             self.session.flush()
         return len(records)
+
+    def recent_applied_proposals(self, *, periodo_id: str, limit: int = 10) -> list[AgentProposal]:
+        stmt = (
+            select(AgentProposal)
+            .where(AgentProposal.periodo_id == periodo_id, AgentProposal.status == "applied")
+            .order_by(AgentProposal.applied_at.desc(), AgentProposal.created_at.desc())
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt))
+
+    def recent_messages(self, *, periodo_id: str, cpa_user: str, limit: int = 10) -> list[AgentMessage]:
+        stmt = (
+            select(AgentMessage)
+            .where(AgentMessage.periodo_id == periodo_id, AgentMessage.cpa_user == (cpa_user or "system"))
+            .order_by(AgentMessage.created_at.desc())
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt))

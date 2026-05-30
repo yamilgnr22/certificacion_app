@@ -2511,6 +2511,12 @@
         ['Seccion', account.section || ''],
         ['Requiere confirmacion', 'Si'],
       ];
+    } else if (proposalKind === 'compound_agent_proposal') {
+      items.push(
+        ['Tipo', proposal.compound_type || 'plan compuesto'],
+        ['Pasos', formatMoney((proposal.user_visible_steps || []).length)],
+        ['Mes', proposal.target_month || proposal.month || ''],
+      );
     } else if (proposalKind === 'compound_voucher_correction') {
       items = [
         ['Original', proposal.original_voucher_id || ''],
@@ -2551,18 +2557,18 @@
         ['Palanca', leverLabel(proposal.lever)],
       ];
     }
-    if (!['journal_entry', 'journal_entry_proposal', 'compound_events', 'compound_voucher_correction'].includes(proposalKind) && proposal.cash_variability_pct !== undefined && proposal.cash_variability_pct !== null) {
+    if (!['journal_entry', 'journal_entry_proposal', 'compound_events', 'compound_voucher_correction', 'compound_agent_proposal'].includes(proposalKind) && proposal.cash_variability_pct !== undefined && proposal.cash_variability_pct !== null) {
       items.push(['Variabilidad caja', `+/- ${formatMoney(proposal.cash_variability_pct)}%`]);
     }
-    if (!['journal_entry', 'journal_entry_proposal', 'compound_events', 'compound_voucher_correction'].includes(proposalKind) && proposal.target_min_cash !== undefined && proposal.target_max_cash !== undefined) {
+    if (!['journal_entry', 'journal_entry_proposal', 'compound_events', 'compound_voucher_correction', 'compound_agent_proposal'].includes(proposalKind) && proposal.target_min_cash !== undefined && proposal.target_max_cash !== undefined) {
       items.push(['Rango objetivo', `${formatMoney(proposal.target_min_cash)} - ${formatMoney(proposal.target_max_cash)}`]);
     }
-    if (!['journal_entry', 'journal_entry_proposal', 'compound_events', 'compound_voucher_correction'].includes(proposalKind) && proposal.purchase_average_nio !== undefined) items.push(['Compras promedio C$', formatMoney(proposal.purchase_average_nio)]);
-    if (!['journal_entry', 'journal_entry_proposal', 'compound_events', 'compound_voucher_correction'].includes(proposalKind) && proposal.purchase_average_usd !== undefined) items.push(['Compras promedio USD', formatMoney(proposal.purchase_average_usd)]);
+    if (!['journal_entry', 'journal_entry_proposal', 'compound_events', 'compound_voucher_correction', 'compound_agent_proposal'].includes(proposalKind) && proposal.purchase_average_nio !== undefined) items.push(['Compras promedio C$', formatMoney(proposal.purchase_average_nio)]);
+    if (!['journal_entry', 'journal_entry_proposal', 'compound_events', 'compound_voucher_correction', 'compound_agent_proposal'].includes(proposalKind) && proposal.purchase_average_usd !== undefined) items.push(['Compras promedio USD', formatMoney(proposal.purchase_average_usd)]);
     if (proposal.adjusted_min_cash !== undefined) items.push(['Caja mínima ajustada', formatMoney(proposal.adjusted_min_cash)]);
     if (proposal.adjusted_max_cash !== undefined) items.push(['Caja máxima ajustada', formatMoney(proposal.adjusted_max_cash)]);
-    if (!['journal_entry', 'journal_entry_proposal', 'compound_events', 'compound_voucher_correction'].includes(proposalKind) && events.length) items.push(['Eventos nuevos', formatMoney(events.length)]);
-    if (!['journal_entry', 'journal_entry_proposal', 'compound_events', 'compound_voucher_correction'].includes(proposalKind) && removedEvents.length) items.push(['Eventos removidos', formatMoney(removedEvents.length)]);
+    if (!['journal_entry', 'journal_entry_proposal', 'compound_events', 'compound_voucher_correction', 'compound_agent_proposal'].includes(proposalKind) && events.length) items.push(['Eventos nuevos', formatMoney(events.length)]);
+    if (!['journal_entry', 'journal_entry_proposal', 'compound_events', 'compound_voucher_correction', 'compound_agent_proposal'].includes(proposalKind) && removedEvents.length) items.push(['Eventos removidos', formatMoney(removedEvents.length)]);
     items.forEach(([label, value]) => {
       const box = document.createElement('div');
       box.className = 'proposal-item';
@@ -2603,7 +2609,21 @@
       journalTable.appendChild(tbody);
       wrap.appendChild(journalTable);
     };
-    if (proposalKind === 'compound_voucher_correction') {
+    if (proposalKind === 'compound_agent_proposal') {
+      (proposal.user_visible_steps || []).forEach((step, index) => {
+        if (!step || typeof step !== 'object') return;
+        const stepTitle = step.title || `Paso ${index + 1}`;
+        if (step.kind === 'create_account') {
+          const account = step.account || {};
+          const note = document.createElement('div');
+          note.className = 'proposal-note';
+          note.textContent = `${index + 1}. ${stepTitle}: ${account.name || ''} (${account.account_type || ''} / ${account.section || ''})`;
+          wrap.appendChild(note);
+        } else if (Array.isArray(step.rows)) {
+          appendJournalTable(`${index + 1}. ${stepTitle}`, step.rows);
+        }
+      });
+    } else if (proposalKind === 'compound_voucher_correction') {
       appendJournalTable(`1. Reverso de ${proposal.original_voucher_id || ''}`, proposal.reversal_rows);
       appendJournalTable('2. Nuevo asiento corregido', proposal.correction_rows);
     } else if ((proposalKind === 'journal_entry' || proposalKind === 'journal_entry_proposal' || proposalKind === 'compound_events' || proposalKind === 'voucher_reversal' || proposalKind === 'create_account') && Array.isArray(proposal.journal_rows)) {
@@ -2723,8 +2743,8 @@
           ? 'Aplicar reverso'
           : proposalKind === 'create_account'
             ? 'Crear cuenta'
-            : proposalKind === 'compound_voucher_correction'
-              ? 'Aplicar correccion'
+            : (proposalKind === 'compound_voucher_correction' || proposalKind === 'compound_agent_proposal')
+              ? 'Aplicar todo'
               : ['journal_entry', 'journal_entry_proposal', 'compound_events'].includes(proposalKind)
               ? 'Aplicar registro'
               : 'Aplicar propuesta'
@@ -2763,6 +2783,7 @@
   }
 
   function proposalTitle(kind) {
+    if (kind === 'compound_agent_proposal') return 'Propuesta compuesta';
     if (kind === 'compound_voucher_correction') return 'Correccion contable propuesta';
     if (kind === 'journal_entry' || kind === 'journal_entry_proposal' || kind === 'compound_events' || kind === 'voucher_reversal') return 'Propuesta contable';
     if (kind === 'create_account') return 'Cuenta contable propuesta';

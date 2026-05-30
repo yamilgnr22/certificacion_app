@@ -900,9 +900,12 @@ class AgentApiTest(unittest.TestCase):
         apply_resp = self.client.post(f"/api/agent/proposals/{proposal['id']}/apply")
         detail = self.client.get(f"/api/periodos/{self.periodo['id']}").get_json()["periodo"]
 
-        self.assertEqual(proposal["kind"], "compound_voucher_correction")
+        self.assertEqual(proposal["kind"], "compound_agent_proposal")
+        self.assertEqual(proposal["compound_type"], "voucher_correction")
         self.assertEqual(proposal["original_voucher_id"], "MAN-CORR-0001")
         self.assertTrue(proposal["reversal_voucher_id"].startswith("REV-MAN-CORR-0001-"))
+        self.assertEqual(proposal["user_visible_steps"][0]["kind"], "voucher_reversal")
+        self.assertEqual(proposal["user_visible_steps"][1]["kind"], "journal_entry")
         self.assertEqual(proposal["correction_rows"][0]["debit"], 800)
         self.assertEqual(apply_resp.status_code, 200, apply_resp.get_json())
         vouchers = detail["payload"]["accounting"]["vouchers"]
@@ -911,9 +914,10 @@ class AgentApiTest(unittest.TestCase):
         self.assertEqual(entries[-1]["entry_id"], proposal["correction_entry_id"])
         self.assertEqual(entries[-1]["description"], "Pago corregido a proveedor")
         with self.db_session() as session:
-            audit = session.scalars(select(AuditLog).where(AuditLog.action == "agent_apply_proposal")).first()
+            audit = session.scalars(select(AuditLog).where(AuditLog.action == "agent_apply_compound_proposal")).first()
             metadata = json.loads(audit.metadata_json)
-        self.assertEqual(metadata["proposal_kind"], "compound_voucher_correction")
+        self.assertEqual(metadata["proposal_kind"], "compound_agent_proposal")
+        self.assertEqual(metadata["compound_type"], "voucher_correction")
         self.assertEqual(metadata["original_voucher_id"], "MAN-CORR-0001")
         self.assertEqual(metadata["reversal_voucher_id"], proposal["reversal_voucher_id"])
         self.assertEqual(metadata["correction_entry_id"], proposal["correction_entry_id"])
@@ -1171,6 +1175,210 @@ class AgentApiTest(unittest.TestCase):
 
         self.assertEqual(resp.status_code, 400)
         self.assertIn("tipo-seccion", resp.get_json()["error"])
+
+    def test_compound_plan_creates_account_and_journal_atomically(self):
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "compound_plan",
+                "steps": [
+                    {"tool": "find_account", "args": {"name": "Reserva Legal"}},
+                    {"tool": "create_account", "args": {"name": "Reserva Legal", "account_type": "patrimonio", "section": "patrimonio"}},
+                    {
+                        "tool": "journal_entry",
+                        "args": {
+                            "month": "2026-01",
+                            "description": "Traslado a reserva legal",
+                            "lines": [
+                                {"account": "Resultados Acumulados", "debit": 100000, "credit": 0},
+                                {"account": "Reserva Legal", "debit": 0, "credit": 100000},
+                            ],
+                        },
+                    },
+                ],
+            }
+        )
+
+        response = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "crea reserva legal y traslada 100000"},
+        )
+        proposal = response.get_json()["proposal"]
+
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertEqual(proposal["kind"], "compound_agent_proposal")
+        self.assertEqual(proposal["compound_type"], "planned_account_and_entry")
+        self.assertEqual(len(proposal["account_operations"]), 1)
+        self.assertEqual(proposal["user_visible_steps"][0]["kind"], "create_account")
+        self.assertEqual(proposal["user_visible_steps"][1]["kind"], "journal_entry")
+
+        apply_resp = self.client.post(f"/api/agent/proposals/{proposal['id']}/apply")
+        detail = self.client.get(f"/api/periodos/{self.periodo['id']}").get_json()["periodo"]
+
+        self.assertEqual(apply_resp.status_code, 200, apply_resp.get_json())
+        with self.db_session() as session:
+            account = session.get(AccountCatalog, "reserva_legal")
+            self.assertIsNotNone(account)
+            audit = session.scalars(select(AuditLog).where(AuditLog.action == "agent_apply_compound_proposal")).first()
+            metadata = json.loads(audit.metadata_json)
+        self.assertEqual(metadata["proposal_kind"], "compound_agent_proposal")
+        self.assertEqual(metadata["compound_type"], "planned_account_and_entry")
+        self.assertIn("reserva_legal", metadata["created_account_codes"])
+        entries = detail["payload"]["movements"]["journal_entries"]
+        self.assertEqual(entries[-1]["description"], "Traslado a reserva legal")
+        self.assertEqual(entries[-1]["lines"][1]["account"], "reserva_legal")
+
+    def test_compound_plan_omits_account_creation_when_account_exists(self):
+        with self.db_session() as session:
+            session.add(
+                AccountCatalog(
+                    id="reserva_legal",
+                    code="reserva_legal",
+                    name="Reserva Legal",
+                    account_type="patrimonio",
+                    section="patrimonio",
+                    aliases_json=json.dumps(["reserva"]),
+                    source="test",
+                )
+            )
+            session.commit()
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "compound_plan",
+                "steps": [
+                    {"tool": "find_account", "args": {"name": "reserva"}},
+                    {"tool": "create_account", "args": {"name": "Reserva Legal", "account_type": "patrimonio", "section": "patrimonio"}},
+                    {
+                        "tool": "journal_entry",
+                        "args": {
+                            "month": "2026-01",
+                            "description": "Traslado a reserva existente",
+                            "lines": [
+                                {"account": "Resultados Acumulados", "debit": 1000, "credit": 0},
+                                {"account": "reserva", "debit": 0, "credit": 1000},
+                            ],
+                        },
+                    },
+                ],
+            }
+        )
+
+        proposal = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "usa reserva existente"},
+        ).get_json()["proposal"]
+
+        self.assertEqual(proposal["kind"], "compound_agent_proposal")
+        self.assertEqual(proposal["account_operations"], [])
+        self.assertEqual([step["kind"] for step in proposal["user_visible_steps"]], ["journal_entry"])
+        self.assertEqual(proposal["technical_records"][-1]["lines"][1]["account"], "reserva_legal")
+
+    def test_compound_plan_catalog_change_marks_stale(self):
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "compound_plan",
+                "steps": [
+                    {"tool": "create_account", "args": {"name": "Reserva Nueva", "account_type": "patrimonio", "section": "patrimonio"}},
+                    {
+                        "tool": "journal_entry",
+                        "args": {
+                            "month": "2026-01",
+                            "description": "Traslado a reserva nueva",
+                            "lines": [
+                                {"account": "Resultados Acumulados", "debit": 1000, "credit": 0},
+                                {"account": "Reserva Nueva", "debit": 0, "credit": 1000},
+                            ],
+                        },
+                    },
+                ],
+            }
+        )
+        proposal_id = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "crea reserva nueva"},
+        ).get_json()["proposal"]["id"]
+        with self.db_session() as session:
+            session.add(
+                AccountCatalog(
+                    id="otra_cuenta",
+                    code="otra_cuenta",
+                    name="Otra Cuenta",
+                    account_type="patrimonio",
+                    section="patrimonio",
+                    source="test",
+                )
+            )
+            session.commit()
+
+        apply_resp = self.client.post(f"/api/agent/proposals/{proposal_id}/apply")
+
+        self.assertEqual(apply_resp.status_code, 409)
+        with self.db_session() as session:
+            self.assertEqual(session.get(AgentProposal, proposal_id).status, "stale")
+
+    def test_short_memory_repeats_last_applied_journal_entry(self):
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "journal_entry",
+                "args": {
+                    "month": "2026-01",
+                    "description": "Pago base",
+                    "lines": [
+                        {"account": "Proveedores", "debit": 1000, "credit": 0},
+                        {"account": "Efectivo", "debit": 0, "credit": 1000},
+                    ],
+                },
+            }
+        )
+        base = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "registra pago base"},
+        ).get_json()["proposal"]
+        self.client.post(f"/api/agent/proposals/{base['id']}/apply")
+
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {"intent": "journal_entry", "args": {"repeat_last": True, "month": "2026-02", "amount": 1500}}
+        )
+        repeated = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "hace lo mismo en febrero por 1500"},
+        ).get_json()["proposal"]
+
+        self.assertEqual(repeated["kind"], "journal_entry_proposal")
+        self.assertEqual(repeated["month"], "2026-02")
+        self.assertEqual(repeated["journal_rows"][0]["debit"], 1500)
+        self.assertEqual(repeated["journal_rows"][1]["credit"], 1500)
+
+    def test_short_memory_rejects_amount_change_for_multiline_entry(self):
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "journal_entry",
+                "args": {
+                    "month": "2026-01",
+                    "description": "Asiento multilinea",
+                    "lines": [
+                        {"account": "Proveedores", "debit": 1000, "credit": 0},
+                        {"account": "Capital", "debit": 500, "credit": 0},
+                        {"account": "Efectivo", "debit": 0, "credit": 1500},
+                    ],
+                },
+            }
+        )
+        base = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "registra asiento multilinea"},
+        ).get_json()["proposal"]
+        self.client.post(f"/api/agent/proposals/{base['id']}/apply")
+
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {"intent": "journal_entry", "args": {"repeat_last": True, "month": "2026-02", "amount": 1500}}
+        )
+        repeated = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "hace lo mismo por 1500"},
+        )
+
+        self.assertEqual(repeated.status_code, 400)
+        self.assertIn("mas de dos lineas", repeated.get_json()["error"])
 
     def test_dynamic_account_can_be_used_in_ledger_after_creation(self):
         with self.db_session() as session:

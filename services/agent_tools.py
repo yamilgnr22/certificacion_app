@@ -82,6 +82,7 @@ class AgentToolRegistry:
             "year_close_transfer": self._mutating_tool("year_close_transfer"),
             "assumption_change": self._mutating_tool("assumption_change"),
             "create_account": self._mutating_tool("create_account"),
+            "compound_plan": self._mutating_tool("compound_plan"),
             "guardar_payload": self._mutating_tool("guardar_payload"),
             "finalizar_periodo": self._mutating_tool("finalizar_periodo"),
             "generar_documento": self._mutating_tool("generar_documento"),

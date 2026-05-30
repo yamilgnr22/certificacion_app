@@ -16,13 +16,14 @@ from llm import LLMProvider, LLMProviderError, get_llm_provider
 from repositories import AccountRepository, AgentRepository, PeriodoRepository
 from services.audit_service import AuditService, stable_hash
 from services.agent_tools import AgentToolRegistry
+from services.agent_planner import AgentPlanError, AgentPlanner
 from services.periodo_service import PeriodoService
 from services.rollforward_service import RollforwardService
 from services.serializers import parse_json_object
 
 
 PROMPT_VERSION = "agent-command-v1.0.0"
-MAX_TOOL_CALLS_PER_TURN = 1
+MAX_TOOL_CALLS_PER_TURN = 3
 MAX_TURN_DURATION_S = 30.0
 
 
@@ -46,6 +47,10 @@ class AgentProposalConflictError(AgentServiceError):
     pass
 
 
+class AgentCatalogChangedError(AgentServiceError):
+    pass
+
+
 class AgentCommandService:
     """Orquestador del asistente contable nuevo.
 
@@ -59,6 +64,7 @@ class AgentCommandService:
         self.agent_repo = AgentRepository(session)
         self.accounts = AccountRepository(session)
         self.tools = AgentToolRegistry()
+        self.planner = AgentPlanner()
         self.provider = provider
 
     def handle_command(
@@ -123,6 +129,7 @@ class AgentCommandService:
 
         intent = str(interpreted.get("intent") or "").strip()
         args = interpreted.get("args") if isinstance(interpreted.get("args"), dict) else {}
+        args = self._apply_short_memory(intent, args, periodo_id=periodo.id, cpa_user=cpa_user)
         if intent in {"", "clarification", "question"}:
             response = self._question_response(
                 command_id=command_id,
@@ -137,6 +144,21 @@ class AgentCommandService:
                     intent=intent,
                     message=message_text,
                 )
+            elif intent == "compound_plan":
+                try:
+                    self.planner.validate(interpreted)
+                except AgentPlanError as exc:
+                    response = self._question_response(command_id=command_id, intent=intent, message=str(exc))
+                else:
+                    response = self._proposal_response(
+                        command_id=command_id,
+                        intent=intent,
+                        periodo=periodo,
+                        payload=payload,
+                        args={"steps": interpreted.get("steps") or []},
+                        ui_context=ui_context,
+                        original_message=message,
+                    )
             elif intent == "correct_voucher" and not _has_correction_payload(args):
                 response = self._question_response(
                     command_id=command_id,
@@ -230,6 +252,12 @@ class AgentCommandService:
             raise AgentProposalConflictError("El modelo cambio desde que se genero la propuesta. Pedi una propuesta nueva.")
 
         proposal_data = parse_json_object(proposal.proposal_json)
+        if proposal_data.get("kind") == "compound_agent_proposal":
+            stale_reason = self._compound_catalog_stale_reason(proposal_data)
+            if stale_reason:
+                proposal.status = "stale"
+                self.session.commit()
+                raise AgentProposalConflictError(stale_reason)
         if proposal_data.get("kind") == "finalizar_periodo":
             return self._apply_finalizar_periodo(proposal, periodo, proposal_data=proposal_data, cpa_user=cpa_user)
 
@@ -239,6 +267,10 @@ class AgentCommandService:
 
         before = _periodo_snapshot(periodo)
         try:
+            if proposal_data.get("kind") == "compound_agent_proposal":
+                for account in proposal_data.get("account_operations") or []:
+                    if isinstance(account, Mapping):
+                        self._apply_account_creation({"account": dict(account)}, command_id=proposal.command_id, cpa_user=cpa_user, strict=True)
             result = build_financial_model(projected_payload)
             periodo.payload_json = json.dumps(projected_payload, ensure_ascii=False, sort_keys=True, default=str)
             periodo.validation_json = json.dumps(result.validations, ensure_ascii=False, sort_keys=True, default=str)
@@ -265,12 +297,27 @@ class AgentCommandService:
                 metadata["original_voucher_id"] = proposal_data.get("original_voucher_id")
                 metadata["reversal_voucher_id"] = proposal_data.get("reversal_voucher_id")
                 metadata["correction_entry_id"] = proposal_data.get("correction_entry_id")
+            if proposal_data.get("kind") == "compound_agent_proposal":
+                metadata["compound_type"] = proposal_data.get("compound_type")
+                metadata["execution_plan"] = proposal_data.get("execution_plan")
+                metadata["user_visible_steps"] = proposal_data.get("user_visible_steps")
+                if proposal_data.get("original_voucher_id"):
+                    metadata["original_voucher_id"] = proposal_data.get("original_voucher_id")
+                if proposal_data.get("reversal_voucher_id"):
+                    metadata["reversal_voucher_id"] = proposal_data.get("reversal_voucher_id")
+                if proposal_data.get("correction_entry_id"):
+                    metadata["correction_entry_id"] = proposal_data.get("correction_entry_id")
+                metadata["created_account_codes"] = [
+                    str(account.get("code") or "")
+                    for account in proposal_data.get("account_operations") or []
+                    if isinstance(account, Mapping)
+                ]
             after = _periodo_snapshot(periodo)
             AuditService(self.session).log(
                 cpa_user=cpa_user,
                 entity_type="periodo",
                 entity_id=periodo.id,
-                action="agent_apply_proposal",
+                action="agent_apply_compound_proposal" if proposal_data.get("kind") == "compound_agent_proposal" else "agent_apply_proposal",
                 summary=str(proposal_data.get("title") or "Aplico propuesta del asistente contable"),
                 before=before,
                 after=after,
@@ -284,6 +331,12 @@ class AgentCommandService:
                 "assistant_message": "Listo, aplique la propuesta al periodo.",
                 "periodo_id": periodo.id,
             }
+        except AgentCatalogChangedError:
+            self.session.rollback()
+            if proposal_data.get("kind") == "compound_agent_proposal":
+                self._mark_proposal_stale_after_rollback(proposal_id)
+                raise AgentProposalConflictError("El catalogo cambio mientras aplicabas la propuesta. Pedi una propuesta nueva.")
+            raise
         except Exception:
             self.session.rollback()
             raise
@@ -311,6 +364,54 @@ class AgentCommandService:
     @staticmethod
     def _provider_from_config() -> LLMProvider:
         return get_llm_provider()
+
+    def _apply_short_memory(self, intent: str, args: Mapping[str, Any], *, periodo_id: str, cpa_user: str) -> dict[str, Any]:
+        args = dict(args or {})
+        if intent != "journal_entry" or not bool(args.get("repeat_last")):
+            return args
+        previous = self._last_applied_journal_entry(periodo_id=periodo_id)
+        if not previous:
+            raise AgentValidationError("No encontre un asiento aplicado reciente para repetir.")
+        lines = deepcopy(list(previous.get("lines") or []))
+        if not lines:
+            raise AgentValidationError("El ultimo asiento no tiene lineas reutilizables.")
+        amount = _to_float(args.get("amount") or args.get("monto"))
+        if amount is not None:
+            if len(lines) != 2:
+                raise AgentValidationError("No puedo cambiar el monto de un asiento con mas de dos lineas. Pasame el asiento completo.")
+            for line in lines:
+                if float(line.get("debit") or 0) > 0:
+                    line["debit"] = amount
+                    line["credit"] = 0
+                elif float(line.get("credit") or 0) > 0:
+                    line["debit"] = 0
+                    line["credit"] = amount
+        args["lines"] = lines
+        args["description"] = str(args.get("description") or previous.get("description") or "Asiento repetido")
+        args["month"] = str(args.get("month") or args.get("target_month") or previous.get("month") or "")[:7]
+        args["memory_source"] = {
+            "proposal_id": previous.get("proposal_id"),
+            "entry_id": previous.get("entry_id"),
+            "month": previous.get("month"),
+        }
+        return args
+
+    def _last_applied_journal_entry(self, *, periodo_id: str) -> dict[str, Any] | None:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
+        for proposal in self.agent_repo.recent_applied_proposals(periodo_id=periodo_id, limit=10):
+            applied_at = proposal.applied_at or proposal.created_at
+            if applied_at and _as_aware(applied_at) < cutoff:
+                continue
+            proposal_data = parse_json_object(proposal.proposal_json)
+            records = list(proposal_data.get("technical_records") or [])
+            for record in reversed(records):
+                if not isinstance(record, Mapping):
+                    continue
+                if record.get("lines") and str(record.get("entry_type") or "") not in {"voucher_reversal"}:
+                    entry = dict(record)
+                    entry["proposal_id"] = proposal.id
+                    return entry
+        return None
 
     def _tool_response(self, *, command_id: str, intent: str, tool_result: Mapping[str, Any]) -> dict[str, Any]:
         response_type = str(tool_result.get("response_type") or "answer")
@@ -425,6 +526,8 @@ class AgentCommandService:
             return self._prepare_reverse_voucher(payload, args, command_id, original_message)
         if intent == "correct_voucher":
             return self._prepare_correct_voucher(payload, args, command_id, original_message)
+        if intent == "compound_plan":
+            return self._prepare_compound_plan(payload, args, command_id, original_message)
         if intent in {"journal_entry", "account_transfer", "year_close_transfer"}:
             return self._prepare_journal_entry(intent, payload, args, command_id, original_message)
         if intent == "assumption_change":
@@ -540,8 +643,20 @@ class AgentCommandService:
             {"account": line["account_label"], "debit": line["debit"], "credit": line["credit"], "reference": line.get("reference") or ""}
             for line in lines
         ]
+        execution_plan = [
+            {"tool": "reverse_voucher", "args": {"voucher_id": voucher_id}, "mutates": True},
+            {
+                "tool": "journal_entry",
+                "args": {"month": target_month, "description": description[:200], "lines": lines},
+                "mutates": True,
+            },
+        ]
+        user_visible_steps = [
+            {"kind": "voucher_reversal", "title": f"Reverso de {voucher_id}", "rows": _voucher_rows(reversal)},
+            {"kind": "journal_entry", "title": "Nuevo asiento corregido", "rows": correction_rows},
+        ]
         return projected, _proposal_payload(
-            kind="compound_voucher_correction",
+            kind="compound_agent_proposal",
             title=f"Corregir comprobante {voucher_id}",
             assistant_message=f"Prepare la correccion de {voucher_id}: reverso del comprobante original y nuevo asiento corregido.",
             month=target_month,
@@ -549,6 +664,9 @@ class AgentCommandService:
             technical_records=[reversal, correction_entry],
             original_message=original_message,
             extra={
+                "compound_type": "voucher_correction",
+                "execution_plan": execution_plan,
+                "user_visible_steps": user_visible_steps,
                 "original_voucher_id": voucher_id,
                 "reversal_voucher_id": reversal_id,
                 "correction_entry_id": correction_entry_id,
@@ -557,6 +675,87 @@ class AgentCommandService:
                 "reversal_rows": _voucher_rows(reversal),
                 "correction_rows": correction_rows,
                 "totals": _journal_totals(lines),
+            },
+        )
+
+    def _prepare_compound_plan(
+        self,
+        payload: Mapping[str, Any],
+        args: Mapping[str, Any],
+        command_id: str,
+        original_message: str,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        steps = self.planner.validate({"steps": args.get("steps") or []})
+        create_steps = [step for step in steps if step.tool == "create_account"]
+        journal_steps = [step for step in steps if step.tool == "journal_entry"]
+        if len(create_steps) > 1 or len(journal_steps) != 1:
+            raise AgentValidationError("El plan compuesto debe incluir un solo asiento y, como maximo, una cuenta nueva.")
+
+        projected = deepcopy(dict(payload or {}))
+        execution_plan: list[dict[str, Any]] = []
+        user_visible_steps: list[dict[str, Any]] = []
+        account_operations: list[dict[str, Any]] = []
+        technical_records: list[dict[str, Any]] = []
+        journal_rows: list[dict[str, Any]] = []
+
+        for step in steps:
+            execution_plan.append({"tool": step.tool, "args": step.args, "mutates": step.tool in {"create_account", "journal_entry"}})
+            if step.tool in {"find_account", "validate_account"}:
+                name = str(step.args.get("name") or step.args.get("account") or "").strip()
+                if name:
+                    found = self.accounts.find_by_text(name)
+                    execution_plan[-1]["result"] = {"found": bool(found), "code": found.code if found else ""}
+                continue
+            if step.tool == "create_account":
+                name = str(step.args.get("name") or step.args.get("account_name") or "").strip()
+                existing = self.accounts.find_by_text(name) or self.accounts.get_by_name(name) or self.accounts.get_by_code(_account_code(name))
+                if existing:
+                    execution_plan[-1]["result"] = {"skipped": True, "reason": "account_exists", "code": existing.code}
+                    projected = self._ensure_dynamic_accounts_in_payload(projected, [existing.code])
+                    continue
+                projected, create_payload = self._prepare_create_account(projected, step.args, command_id, original_message)
+                account = dict(create_payload.get("account") or {})
+                account_operations.append(account)
+                technical_records.append(account)
+                user_visible_steps.append({
+                    "kind": "create_account",
+                    "title": f"Crear cuenta {account.get('name')}",
+                    "account": account,
+                })
+                execution_plan[-1]["result"] = {"proposed": True, "code": account.get("code")}
+                continue
+            if step.tool == "journal_entry":
+                projected, journal_payload = self._prepare_journal_entry("journal_entry", projected, step.args, command_id, original_message)
+                rows = list(journal_payload.get("journal_rows") or [])
+                journal_rows = rows
+                technical_records.extend(list(journal_payload.get("technical_records") or []))
+                user_visible_steps.append({
+                    "kind": "journal_entry",
+                    "title": journal_payload.get("title") or "Asiento contable",
+                    "description": journal_payload.get("description") or step.args.get("description") or "",
+                    "month": journal_payload.get("month"),
+                    "rows": rows,
+                    "totals": journal_payload.get("totals") or {},
+                })
+                execution_plan[-1]["result"] = {"proposed": True, "month": journal_payload.get("month")}
+
+        if not journal_rows:
+            raise AgentValidationError("No pude preparar el asiento contable del plan.")
+        build_financial_model(projected)
+        return projected, _proposal_payload(
+            kind="compound_agent_proposal",
+            title="Propuesta compuesta del asistente",
+            assistant_message="Prepare una propuesta compuesta con los pasos contables solicitados.",
+            month=_extract_target_month({"user_visible_steps": user_visible_steps}, args),
+            rows=journal_rows,
+            technical_records=technical_records,
+            original_message=original_message,
+            extra={
+                "compound_type": "planned_account_and_entry",
+                "execution_plan": execution_plan,
+                "user_visible_steps": user_visible_steps,
+                "account_operations": account_operations,
+                "catalog_before_hash": self._catalog_hash(),
             },
         )
 
@@ -708,7 +907,7 @@ class AgentCommandService:
         if normalized in LEDGER_ACCOUNT_LABELS:
             return normalized
         found = self.accounts.find_by_text(str(raw_account or "")) or self.accounts.find_by_text(normalized)
-        return found.code if found else normalized
+        return found.code if found else _account_code(normalized)
 
     def _valid_account_suggestions(self, payload: Mapping[str, Any]) -> list[str]:
         labels = _valid_account_suggestions(payload)
@@ -784,6 +983,9 @@ class AgentCommandService:
             "name": name,
             "account_type": account_type,
             "section": section,
+            "normal_balance": str(args.get("normal_balance") or ("debe" if account_type in {"activo", "gasto", "costo"} else "haber")),
+            "parent_code": str(args.get("parent_code") or "").strip(),
+            "aliases": [str(alias).strip() for alias in (args.get("aliases") or []) if str(alias).strip()] if isinstance(args.get("aliases"), list) else [],
             "source": "chat_financiero",
             "instruction_id": command_id,
             "message": original_message,
@@ -819,13 +1021,15 @@ class AgentCommandService:
             original_message=original_message,
         )
 
-    def _apply_account_creation(self, proposal_payload: Mapping[str, Any], *, command_id: str, cpa_user: str) -> None:
+    def _apply_account_creation(self, proposal_payload: Mapping[str, Any], *, command_id: str, cpa_user: str, strict: bool = False) -> None:
         account = dict(proposal_payload.get("account") or {})
         code = str(account.get("code") or "").strip()
         name = str(account.get("name") or "").strip()
         if not code or not name:
             raise AgentValidationError("La propuesta no contiene una cuenta valida para crear.")
         if self.accounts.get_by_code(code) or self.accounts.get_by_name(name) or self.accounts.find_by_text(name):
+            if strict:
+                raise AgentCatalogChangedError("account exists")
             return
         account = self.accounts.create(
             id=code,
@@ -833,6 +1037,9 @@ class AgentCommandService:
             name=name,
             account_type=str(account.get("account_type") or ""),
             section=str(account.get("section") or ""),
+            normal_balance=str(account.get("normal_balance") or "") or None,
+            parent_code=str(account.get("parent_code") or "") or None,
+            aliases_json=json.dumps(list(account.get("aliases") or []), ensure_ascii=False),
             source=str(account.get("source") or "chat_financiero"),
         )
         AuditService(self.session).log(
@@ -848,6 +1055,42 @@ class AgentCommandService:
                 "account": _account_catalog_payload(account),
             },
         )
+
+    def _catalog_hash(self) -> str:
+        rows = []
+        for account in self.accounts.list_active():
+            rows.append({
+                "code": account.code,
+                "name": account.name,
+                "aliases_json": account.aliases_json,
+                "account_type": account.account_type,
+                "section": account.section,
+                "parent_code": account.parent_code,
+                "active": account.active,
+            })
+        rows.sort(key=lambda row: str(row.get("code") or ""))
+        return stable_hash(rows)
+
+    def _compound_catalog_stale_reason(self, proposal_data: Mapping[str, Any]) -> str:
+        if proposal_data.get("kind") != "compound_agent_proposal":
+            return ""
+        expected = str(proposal_data.get("catalog_before_hash") or "")
+        if expected and expected != self._catalog_hash():
+            return "El catalogo contable cambio desde que se genero la propuesta. Pedi una propuesta nueva."
+        for account in proposal_data.get("account_operations") or []:
+            if not isinstance(account, Mapping):
+                continue
+            code = str(account.get("code") or "").strip()
+            name = str(account.get("name") or "").strip()
+            if self.accounts.get_by_code(code) or self.accounts.get_by_name(name) or self.accounts.find_by_text(name):
+                return f"La cuenta {name or code} ya existe en el catalogo. Pedi una propuesta nueva."
+        return ""
+
+    def _mark_proposal_stale_after_rollback(self, proposal_id: str) -> None:
+        proposal = self.agent_repo.get_proposal(proposal_id)
+        if proposal and proposal.status == "pending":
+            proposal.status = "stale"
+            self.session.commit()
 
     def _question_response(self, *, command_id: str, intent: str, message: str) -> dict[str, Any]:
         return {
@@ -1064,6 +1307,7 @@ AGENT_COMMAND_SCHEMA: dict[str, Any] = {
                 "year_close_transfer",
                 "assumption_change",
                 "create_account",
+                "compound_plan",
                 "recalcular_preview",
                 "guardar_payload",
                 "finalizar_periodo",
@@ -1073,13 +1317,14 @@ AGENT_COMMAND_SCHEMA: dict[str, Any] = {
             ],
         },
         "args": {"type": "object"},
+        "steps": {"type": "array"},
         "assistant_message": {"type": "string"},
     },
     "required": ["intent", "args"],
 }
 
 
-MUTATION_INTENTS = {"reverse_voucher", "correct_voucher", "journal_entry", "account_transfer", "year_close_transfer", "assumption_change", "create_account", "finalizar_periodo"}
+MUTATION_INTENTS = {"reverse_voucher", "correct_voucher", "journal_entry", "account_transfer", "year_close_transfer", "assumption_change", "create_account", "compound_plan", "finalizar_periodo"}
 
 SYSTEM_INTENTS = {"guardar_payload", "generar_documento"}
 
@@ -1097,9 +1342,11 @@ def _system_prompt() -> str:
         "year_close_transfer(target_month, source_month, amount opcional), "
         "assumption_change(field, new_value, scope=period), "
         "create_account(name, account_type, section), "
+        "compound_plan(steps=[{tool,args}]) para instrucciones autocontenidas que requieren crear una cuenta y registrar un asiento; "
         "recalcular_preview(), guardar_payload(), finalizar_periodo(), generar_documento(), "
         "question. "
-        "Si falta cuenta, mes o monto, usa question. Si el usuario pide crear una cuenta nueva, usa create_account. "
+        "Si falta cuenta, mes o monto, usa question. Si el usuario pide crear una cuenta nueva y tambien registrar una partida en la misma instruccion, usa compound_plan. Si solo pide crear cuenta, usa create_account. "
+        "Si el usuario dice 'lo mismo' o 'igual que antes', usa journal_entry con repeat_last=true y el nuevo month o amount indicado. "
         "Si pide guardar o recalcular, usa guardar_payload o recalcular_preview. "
         "Si pide finalizar el periodo, usa finalizar_periodo. Si pide generar el documento, usa generar_documento."
     )
