@@ -465,6 +465,7 @@
   let currentClienteId = null;
   let currentClienteOriginalCedula = '';
   let currentClienteExtractionMeta = null;
+  let recurringExpenseAccounts = [];
   let selectedClienteId = '';
   let selectedClienteName = '';
   let selectedGiroId = '';
@@ -514,6 +515,13 @@
 
   function setCatalogoMessage(text, type = 'info') {
     setScopedMessage('#catalogoMessages', text, type);
+  }
+
+  async function loadRecurringExpenseAccounts() {
+    if (recurringExpenseAccounts.length) return recurringExpenseAccounts;
+    const data = await fetchJson('/api/catalogo?account_type=gasto&section=gastos_operativos&recurring=1');
+    recurringExpenseAccounts = data.accounts || [];
+    return recurringExpenseAccounts;
   }
 
   async function fetchJson(url, options = {}) {
@@ -1029,10 +1037,12 @@
       return;
     }
     wrap.classList.remove('hidden');
+    const needsAction = !!meta.name_review_required;
     const badge = document.createElement('div');
-    badge.className = meta.name_review_required ? 'name-review-badge warn' : 'name-review-badge ok';
-    badge.textContent = meta.name_review_required ? 'Revisar nombre extraido' : 'Nombre verificado';
+    badge.className = needsAction ? 'name-review-badge warn' : 'name-review-badge ok';
+    badge.textContent = needsAction ? 'Revisar nombre extraido' : 'Nombre verificado';
     wrap.appendChild(badge);
+    if (!needsAction) return;
     if (meta.name_review_reason) {
       const reason = document.createElement('div');
       reason.className = 'name-review-reason';
@@ -1420,18 +1430,38 @@
     const origin = qs('#clienteTemplateOrigin');
     if (!wrap) return;
     wrap.replaceChildren();
-    const plantilla = data?.plantilla || {};
+    let items = Array.isArray(data?.items) ? data.items : [];
+    if (!items.length && data?.plantilla && recurringExpenseAccounts.length) {
+      items = legacyTemplateToCatalogItems(data.plantilla);
+    }
+    const warnings = Array.isArray(data?.warnings) ? data.warnings : [];
     if (origin) origin.textContent = data ? `Origen: ${data.origen || 'default'}` : 'Sin plantilla cargada.';
-    if (!Object.keys(plantilla).length) {
+    if (!recurringExpenseAccounts.length) {
+      wrap.className = 'template-editor empty-state';
+      wrap.textContent = 'Cargando cuentas recurrentes...';
+      loadRecurringExpenseAccounts()
+        .then(() => renderClienteTemplate(data))
+        .catch((err) => {
+          wrap.textContent = `No se pudo cargar el catalogo de gastos: ${err.message || err}`;
+        });
+      return;
+    }
+    if (!items.length) {
       wrap.className = 'template-editor empty-state';
       wrap.textContent = 'Abra o guarde un cliente para revisar la plantilla.';
       return;
     }
     wrap.className = 'template-editor';
-    Object.entries(plantilla).forEach(([name, amount]) => addTemplateRow(name, amount));
+    if (warnings.length) {
+      const note = document.createElement('div');
+      note.className = 'template-warning';
+      note.textContent = warnings.join(' ');
+      wrap.appendChild(note);
+    }
+    items.forEach(item => addTemplateRow(item.account_code, item.amount_usd));
   }
 
-  function addTemplateRow(name = '', amount = 0) {
+  function addTemplateRow(accountCode = '', amount = 0) {
     const wrap = qs('#clienteTemplateEditor');
     if (!wrap) return;
     if (wrap.classList.contains('empty-state')) {
@@ -1440,10 +1470,19 @@
     }
     const row = document.createElement('div');
     row.className = 'template-row';
-    const nameInput = document.createElement('input');
-    nameInput.type = 'text';
-    nameInput.value = name;
-    nameInput.placeholder = 'Concepto';
+    const accountSelect = document.createElement('select');
+    accountSelect.className = 'template-account-select';
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = 'Seleccione cuenta';
+    accountSelect.appendChild(placeholder);
+    recurringExpenseAccounts.forEach(account => {
+      const opt = document.createElement('option');
+      opt.value = account.code;
+      opt.textContent = account.name;
+      if (account.code === accountCode) opt.selected = true;
+      accountSelect.appendChild(opt);
+    });
     const amountInput = document.createElement('input');
     amountInput.type = 'number';
     amountInput.step = '0.01';
@@ -1454,25 +1493,57 @@
     remove.className = 'btn danger';
     remove.textContent = 'Eliminar';
     remove.addEventListener('click', () => row.remove());
-    row.append(nameInput, amountInput, remove);
+    accountSelect.addEventListener('change', refreshTemplateAccountOptions);
+    row.append(accountSelect, amountInput, remove);
     wrap.appendChild(row);
+    refreshTemplateAccountOptions();
+  }
+
+  function legacyTemplateToCatalogItems(plantilla) {
+    const out = new Map();
+    Object.entries(plantilla || {}).forEach(([label, amount]) => {
+      const account = recurringExpenseAccounts.find(item =>
+        item.legacy_payload_key === label
+        || item.name === label
+        || (item.aliases || []).includes(label)
+      );
+      if (!account) return;
+      const current = out.get(account.code) || 0;
+      out.set(account.code, current + Number(amount || 0));
+    });
+    return Array.from(out.entries()).map(([account_code, amount_usd]) => ({ account_code, amount_usd }));
   }
 
   function collectTemplateRows() {
     const rows = qsa('#clienteTemplateEditor .template-row');
-    const out = {};
+    const items = [];
+    const used = new Set();
     for (const row of rows) {
-      const inputs = row.querySelectorAll('input');
-      const key = (inputs[0]?.value || '').trim();
-      const amount = Number(inputs[1]?.value || 0);
-      if (!key) continue;
+      const accountCode = row.querySelector('select')?.value || '';
+      const amount = Number(row.querySelector('input[type="number"]')?.value || 0);
+      if (!accountCode) continue;
+      const account = recurringExpenseAccounts.find(item => item.code === accountCode);
+      const name = account?.name || accountCode;
+      if (used.has(accountCode)) throw new Error(`${name} esta duplicado. Deje una sola linea.`);
       if (!Number.isFinite(amount) || amount < 0) {
-        throw new Error(`Monto invalido para ${key}`);
+        throw new Error(`Monto invalido para ${name}`);
       }
-      out[key] = amount;
+      used.add(accountCode);
+      items.push({ account_code: accountCode, amount_usd: amount });
     }
-    if (!Object.keys(out).length) throw new Error('La plantilla no puede estar vacia.');
-    return out;
+    if (!items.length) throw new Error('La plantilla no puede estar vacia.');
+    return { version: 2, items };
+  }
+
+  function refreshTemplateAccountOptions() {
+    const selected = new Set(qsa('#clienteTemplateEditor .template-row select').map(sel => sel.value).filter(Boolean));
+    qsa('#clienteTemplateEditor .template-row select').forEach(select => {
+      const current = select.value;
+      Array.from(select.options).forEach(opt => {
+        if (!opt.value) return;
+        opt.disabled = opt.value !== current && selected.has(opt.value);
+      });
+    });
   }
 
   async function saveClienteTemplate() {
@@ -3735,9 +3806,11 @@
     const q = qs('#catalogoSearch')?.value?.trim();
     const type = qs('#catalogoTypeFilter')?.value || '';
     const section = qs('#catalogoSectionFilter')?.value || '';
+    const postableOnly = qs('#catalogoPostableOnly')?.checked ?? true;
     if (q) params.set('q', q);
     if (type) params.set('type', type);
     if (section) params.set('section', section);
+    if (postableOnly) params.set('postable', '1');
     try {
       setCatalogoMessage('Cargando catalogo...', 'info');
       const data = await fetchJson(`/api/catalogo${params.toString() ? `?${params}` : ''}`);
@@ -3766,15 +3839,19 @@
     wrap.className = 'table-preview';
     const table = document.createElement('table');
     table.className = 'statement-table';
-    table.innerHTML = '<thead><tr><th>Codigo</th><th>NIIF</th><th>Nombre</th><th>Tipo</th><th>Seccion</th><th>Naturaleza</th><th>Origen</th></tr></thead><tbody></tbody>';
+    table.innerHTML = '<thead><tr><th>Codigo</th><th>NIIF</th><th>Nombre</th><th>Uso</th><th>Tipo</th><th>Seccion</th><th>Naturaleza</th><th>Origen</th></tr></thead><tbody></tbody>';
     const tbody = table.querySelector('tbody');
     accounts.forEach((account) => {
       const tr = document.createElement('tr');
       const badge = account.required_model_account ? ' <span class="badge ok">obligatoria</span>' : '';
+      const postableBadge = account.is_postable ? '<span class="badge ok">Registrable</span>' : '<span class="badge muted">Rubro</span>';
+      const depth = account.parent_code ? 1 : 0;
+      const nameStyle = depth ? ' style="padding-left: 24px;"' : '';
       tr.innerHTML = `
         <td>${escapeHtml(account.code || '')}</td>
         <td>${escapeHtml(account.niif_code || '')}</td>
-        <td>${escapeHtml(account.name || '')}${badge}</td>
+        <td${nameStyle}>${escapeHtml(account.name || '')}${badge}</td>
+        <td>${postableBadge}</td>
         <td>${escapeHtml(account.account_type || '')}</td>
         <td>${escapeHtml(account.section || '')}</td>
         <td>${escapeHtml(account.normal_balance || '')}</td>
@@ -3825,6 +3902,7 @@
   qs('#btnRefreshCatalogo')?.addEventListener('click', loadCatalogo);
   qs('#catalogoTypeFilter')?.addEventListener('change', loadCatalogo);
   qs('#catalogoSectionFilter')?.addEventListener('change', loadCatalogo);
+  qs('#catalogoPostableOnly')?.addEventListener('change', loadCatalogo);
   qs('#catalogoSearch')?.addEventListener('input', () => {
     clearTimeout(catalogoSearchTimer);
     catalogoSearchTimer = setTimeout(loadCatalogo, 300);

@@ -457,8 +457,10 @@ html, body {
   align-items: flex-start;
   gap: 16px;
   margin-bottom: 16px;
+  flex-wrap: wrap;
 }
-.workbench-header.compact { margin-bottom: 8px; }
+.workbench-header.compact { margin-bottom: 8px; gap: 8px; }
+.workbench-header.compact h3 { flex: 1 1 auto; min-width: 0; }
 .workbench-header h2,
 .workbench-header h3 { margin: 0; }
 .workbench-subtitle {
@@ -597,7 +599,7 @@ input[type="checkbox"] {
   justify-content: center;
   gap: 8px;
   background: transparent;
-  color: var(--text-strong);
+  color: var(--primary);
   font-family: inherit;
   font-size: 14px;
   font-weight: 500;
@@ -671,7 +673,16 @@ input[type="checkbox"] {
   padding-top: 16px;
   border-top: 1px solid var(--divider);
 }
-.small-actions .btn { height: 32px; padding: 0 12px; font-size: 13px; }
+.small-actions { gap: 4px; }
+.small-actions .btn {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  min-width: 0;
+  font-weight: 500;
+}
 
 /* ============================================================
    MESSAGES (toasts inline)
@@ -728,6 +739,7 @@ input[type="checkbox"] {
 .badge.ok { background: rgba(105, 240, 174, 0.15); color: var(--success); }
 .badge.bad { background: rgba(255, 82, 82, 0.15); color: var(--danger); }
 .badge.warn { background: rgba(255, 213, 79, 0.15); color: var(--warn); }
+.badge.muted { background: rgba(255, 255, 255, 0.08); color: var(--muted); }
 
 /* ============================================================
    STEPPER - Material horizontal
@@ -860,10 +872,24 @@ input[type="checkbox"] {
   border-radius: var(--radius-sm);
   transition: background var(--motion-fast);
   cursor: pointer;
+  flex-wrap: wrap;
 }
+.client-item > div:first-child { flex: 1 1 200px; min-width: 0; }
 .client-item:hover { background: var(--surface-3); }
 .client-item .meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
-.client-actions { display: inline-flex; gap: 4px; }
+.client-actions {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.client-actions .btn {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  min-width: 0;
+}
 
 .empty-state {
   padding: 24px;
@@ -875,12 +901,11 @@ input[type="checkbox"] {
 }
 
 .client-detail-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+  display: flex;
+  flex-direction: column;
   gap: 16px;
   margin-top: 16px;
 }
-@media (max-width: 1100px) { .client-detail-grid { grid-template-columns: 1fr; } }
 
 .form-section-title {
   font-size: 12px !important;
@@ -989,20 +1014,37 @@ input[type="checkbox"] {
 .name-candidate:hover { background: var(--surface-6); }
 
 /* Saved list (periodos/borradores/finales) */
-.saved-list { display: flex; flex-direction: column; gap: 4px; }
+.saved-list { display: flex; flex-direction: column; gap: 6px; }
 .saved-item {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
-  padding: 12px 16px;
+  padding: 12px 14px;
   background: var(--surface-3);
   border-radius: var(--radius-sm);
   transition: background var(--motion-fast);
+  flex-wrap: wrap;
 }
+.saved-item > div:first-child { flex: 1 1 180px; min-width: 0; }
 .saved-item:hover { background: var(--surface-4); }
-.saved-item .meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
-.saved-actions { display: inline-flex; gap: 4px; }
+.saved-item .meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.saved-actions,
+.saved-item .actions {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.saved-actions .btn,
+.saved-item .actions .btn {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  min-width: 0;
+}
 
 .periodo-item .periodo-badges { display: inline-flex; gap: 6px; margin: 4px 0; }
 .periodo-status {
@@ -1024,12 +1066,27 @@ input[type="checkbox"] {
 .template-editor { display: flex; flex-direction: column; gap: 6px; }
 .template-row {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr auto;
+  grid-template-columns: minmax(220px, 1.6fr) minmax(120px, .7fr) auto;
   gap: 8px;
   align-items: end;
   padding: 8px;
   background: var(--surface-3);
   border-radius: var(--radius-sm);
+}
+.template-warning {
+  color: var(--warn);
+  font-size: 12px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 213, 79, 0.25);
+  border-radius: var(--radius-sm);
+}
+.template-row .btn.danger {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  min-width: 0;
 }
 @media (max-width: 720px) { .template-row { grid-template-columns: 1fr 1fr; } }
 
@@ -1180,12 +1237,11 @@ input[type="checkbox"] {
    ============================================================ */
 .model-workbench { padding: 20px 24px; }
 .workbench-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 5fr) minmax(0, 4fr);
+  display: flex;
+  flex-direction: column;
   gap: 24px;
 }
-@media (max-width: 1280px) { .workbench-grid { grid-template-columns: 1fr; } }
-.esf-stack { grid-template-columns: 1fr; }
+.esf-stack { /* legacy hook, ahora redundante */ }
 .workbench-inputs h3 {
   font-size: 11px;
   text-transform: uppercase;
@@ -1374,14 +1430,40 @@ input[type="checkbox"] {
 
 .chat-compose {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   margin-top: 12px;
-  align-items: flex-end;
+  align-items: center;
+  padding: 6px 6px 6px 12px;
+  background: var(--surface-3);
+  border-radius: 24px;
+  box-shadow: var(--elev-1);
+  transition: box-shadow var(--motion-fast);
 }
+.chat-compose:focus-within { box-shadow: var(--elev-3); }
 .chat-compose textarea {
   flex: 1;
-  resize: vertical;
-  min-height: 60px;
+  resize: none;
+  min-height: 24px;
+  max-height: 120px;
+  line-height: 1.4;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  padding: 6px 4px !important;
+}
+.chat-compose textarea:hover,
+.chat-compose textarea:focus { background: transparent !important; border: 0 !important; box-shadow: none !important; }
+.chat-send-btn {
+  width: 36px !important;
+  height: 36px !important;
+  min-width: 36px !important;
+  padding: 0 !important;
+  border-radius: 50% !important;
+  flex-shrink: 0;
+}
+.chat-send-btn .material-symbols-outlined {
+  font-size: 20px;
 }
 
 .chat-scope-toolbar { font-size: 12px; }

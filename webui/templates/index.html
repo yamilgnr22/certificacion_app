@@ -164,7 +164,7 @@
             <div id="clienteTemplatePanel" class="client-template-panel subcard locked">
               <div class="subcard-lock-overlay">Guarda el cliente primero</div>
               <div class="workbench-header compact">
-                <h3><span class="subcard-status" aria-hidden="true">○</span> Plantilla de gastos</h3>
+                <h3><span class="subcard-status" aria-hidden="true">○</span> Gastos recurrentes del cliente</h3>
                 <div class="actions small-actions">
                   <button id="btnAddTemplateLine" class="btn" type="button">+ Línea</button>
                   <button id="btnResetTemplate" class="btn" type="button">Reset</button>
@@ -251,6 +251,10 @@
                 <option value="otros_egresos">Otros egresos</option>
               </select>
             </div>
+            <label class="checkbox-inline catalogo-postable-toggle">
+              <input id="catalogoPostableOnly" type="checkbox" checked>
+              Solo registrables
+            </label>
           </div>
           <div id="catalogoSummary" class="muted"></div>
           <div id="catalogoList" class="table-preview empty-state">Catálogo no cargado.</div>
@@ -617,8 +621,10 @@
             <button class="chat-chip" type="button" data-chat-message="Genera el documento">Generar</button>
           </div>
           <div class="chat-compose">
-            <textarea id="modelChatInput" rows="3" spellcheck="false" placeholder="Ej: traslada resultados del ejercicio 2025 a acumulados en enero 2026"></textarea>
-            <button id="btnModelChatSend" class="btn primary" type="button">Enviar</button>
+            <textarea id="modelChatInput" rows="1" spellcheck="false" placeholder="Escribe un mensaje..."></textarea>
+            <button id="btnModelChatSend" class="btn primary chat-send-btn" type="button" aria-label="Enviar">
+              <span class="material-symbols-outlined" aria-hidden="true">send</span>
+            </button>
           </div>
           <div class="chat-history-panel">
             <div class="chat-history-header">
