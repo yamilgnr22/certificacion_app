@@ -3,10 +3,11 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Certificación CPA — Web</title>
+    <title>Certificación CPA</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Roboto+Mono:wght@400;500&display=swap" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&display=swap" />
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
@@ -23,21 +24,21 @@
           <div id="sidebarContextEstado" class="sidebar-context-estado"></div>
         </div>
         <nav class="sidebar-nav" aria-label="Modo de trabajo">
-          <button class="mode-tab" type="button" data-mode-target="clientesMode">
-            <span class="mode-tab-icon" aria-hidden="true">◐</span>
-            <span>Clientes</span>
+          <button class="mode-tab" type="button" data-mode-target="clientesMode" title="Clientes">
+            <span class="mode-tab-icon material-symbols-outlined" aria-hidden="true">groups</span>
+            <span class="mode-tab-label">Clientes</span>
           </button>
-          <button class="mode-tab" type="button" data-mode-target="catalogoMode">
-            <span class="mode-tab-icon" aria-hidden="true">CAT</span>
-            <span>Catalogo</span>
+          <button class="mode-tab" type="button" data-mode-target="catalogoMode" title="Catalogo">
+            <span class="mode-tab-icon material-symbols-outlined" aria-hidden="true">format_list_bulleted</span>
+            <span class="mode-tab-label">Catálogo</span>
           </button>
-          <button class="mode-tab active" type="button" data-mode-target="modelMode">
-            <span class="mode-tab-icon" aria-hidden="true">◧</span>
-            <span>Editor avanzado</span>
+          <button class="mode-tab active" type="button" data-mode-target="modelMode" title="Editor avanzado">
+            <span class="mode-tab-icon material-symbols-outlined" aria-hidden="true">tune</span>
+            <span class="mode-tab-label">Editor</span>
           </button>
-          <button class="mode-tab" type="button" data-mode-target="excelMode">
-            <span class="mode-tab-icon" aria-hidden="true">◨</span>
-            <span>Generar desde Excel</span>
+          <button class="mode-tab" type="button" data-mode-target="excelMode" title="Generar desde Excel">
+            <span class="mode-tab-icon material-symbols-outlined" aria-hidden="true">grid_on</span>
+            <span class="mode-tab-label">Excel</span>
           </button>
         </nav>
         <div class="sidebar-footer">
@@ -50,17 +51,14 @@
       <div id="clientesMode" class="mode-panel hidden">
         <section class="card client-manager">
           <div class="workbench-header">
-            <div>
-              <h2>Clientes</h2>
-              <p class="workbench-subtitle">Cree, revise y seleccione clientes para precargar el modelo financiero.</p>
-            </div>
+            <h2>Clientes</h2>
             <button id="btnNewCliente" class="btn primary" type="button">Nuevo cliente</button>
           </div>
           <div id="clientesMessages" class="messages"></div>
           <div class="client-toolbar">
             <div class="field">
               <label>Buscar</label>
-              <input id="clientesSearch" type="text" placeholder="Nombre, cedula, negocio o RUC">
+              <input id="clientesSearch" type="text" placeholder="Nombre, cédula, negocio o RUC">
             </div>
             <div class="field">
               <label>Giro</label>
@@ -75,38 +73,40 @@
 
         <section id="clienteFormPanel" class="card client-form-panel hidden">
           <div class="workbench-header">
-            <div>
-              <h2 id="clienteFormTitle">Nuevo cliente</h2>
-              <p class="workbench-subtitle">Revise los datos antes de guardar. La extraccion documental solo precarga el formulario.</p>
-            </div>
+            <h2 id="clienteFormTitle">Nuevo cliente</h2>
             <button id="btnCloseClienteForm" class="btn" type="button">Cerrar</button>
           </div>
           <div id="clienteFormMessages" class="messages"></div>
-          <ol id="clienteStepper" class="stepper" aria-label="Pasos para configurar al cliente">
-            <li class="step" data-step="cliente"><span class="step-num">1</span><span class="step-label">Datos del cliente</span></li>
+          <ol id="clienteStepper" class="stepper" aria-label="Pasos">
+            <li class="step" data-step="cliente"><span class="step-num">1</span><span class="step-label">Cliente</span></li>
             <li class="step locked" data-step="periodos"><span class="step-num">2</span><span class="step-label">Periodos</span></li>
-            <li class="step locked" data-step="plantilla"><span class="step-num">3</span><span class="step-label">Plantilla de gastos</span></li>
-            <li class="step locked" data-step="editor"><span class="step-num">4</span><span class="step-label">Editor avanzado</span></li>
+            <li class="step locked" data-step="plantilla"><span class="step-num">3</span><span class="step-label">Plantilla</span></li>
+            <li class="step locked" data-step="editor"><span class="step-num">4</span><span class="step-label">Editor</span></li>
           </ol>
-          <div class="doc-extract-panel">
-            <div class="doc-extract-header">
-              <div>
+
+          <details class="doc-extract-panel">
+            <summary style="cursor:pointer; list-style:none;">
+              <div class="doc-extract-header">
                 <h3>Extraer desde documentos</h3>
-                <p class="workbench-subtitle">Use cedula y matricula para precargar campos del cliente.</p>
+                <button id="btnClienteExtractDocs" class="btn primary" type="button">Extraer</button>
               </div>
-              <button id="btnClienteExtractDocs" class="btn primary" type="button">Extraer datos</button>
-            </div>
+            </summary>
             <div class="doc-extract-grid">
-              <div class="field"><label>Cedula - Frente</label><input id="c_doc_cedula_front" type="file" accept=".png,.jpg,.jpeg,.bmp,.tif,.tiff,.pdf"></div>
-              <div class="field"><label>Cedula - Reverso</label><input id="c_doc_cedula_back" type="file" accept=".png,.jpg,.jpeg,.bmp,.tif,.tiff,.pdf"></div>
-              <div class="field"><label>Matricula</label><input id="c_doc_matricula" type="file" accept=".png,.jpg,.jpeg,.bmp,.tif,.tiff,.pdf"></div>
+              <div class="field"><label>Cédula frente</label><input id="c_doc_cedula_front" type="file" accept=".png,.jpg,.jpeg,.bmp,.tif,.tiff,.pdf"></div>
+              <div class="field"><label>Cédula reverso</label><input id="c_doc_cedula_back" type="file" accept=".png,.jpg,.jpeg,.bmp,.tif,.tiff,.pdf"></div>
+              <div class="field"><label>Matrícula</label><input id="c_doc_matricula" type="file" accept=".png,.jpg,.jpeg,.bmp,.tif,.tiff,.pdf"></div>
             </div>
-          </div>
-          <h3 class="form-section-title">Identificación personal</h3>
+          </details>
+
+          <h3 class="form-section-title">Identificación</h3>
           <div class="grid-3">
-            <div class="field" data-client-field="nombre_completo"><label>Nombre completo</label><input id="c_nombre_completo" type="text"></div>
-            <div class="field" data-client-field="cedula"><label>Cedula</label><input id="c_cedula" type="text"></div>
-            <div class="field"><label>Fecha nacimiento</label><input id="c_fecha_nacimiento" type="date"></div>
+            <div class="field" data-client-field="nombre_completo">
+              <label>Nombre completo</label>
+              <input id="c_nombre_completo" type="text">
+              <div id="c_nameReview" class="name-review hidden"></div>
+            </div>
+            <div class="field" data-client-field="cedula"><label>Cédula</label><input id="c_cedula" type="text"></div>
+            <div class="field"><label>Nacimiento</label><input id="c_fecha_nacimiento" type="date"></div>
             <div class="field"><label>Sexo</label>
               <select id="c_sexo">
                 <option value="">—</option>
@@ -115,39 +115,40 @@
                 <option value="Otro">Otro</option>
               </select>
             </div>
-            <div class="field"><label>Estado civil</label><input id="c_estado_civil" type="text" placeholder="casada, soltero..."></div>
-            <div class="field"><label>Profesion</label><input id="c_profesion" type="text" placeholder="Licenciada en Economia"></div>
+            <div class="field"><label>Estado civil</label><input id="c_estado_civil" type="text" placeholder="soltero, casado..."></div>
+            <div class="field"><label>Profesión</label><input id="c_profesion" type="text"></div>
           </div>
 
-          <h3 class="form-section-title">Contacto y domicilio</h3>
+          <h3 class="form-section-title">Contacto</h3>
           <div class="grid-3">
-            <div class="field"><label>Telefono</label><input id="c_telefono" type="text"></div>
+            <div class="field"><label>Teléfono</label><input id="c_telefono" type="text"></div>
             <div class="field"><label>Email</label><input id="c_email" type="text"></div>
-            <div class="field"><label>Direccion domicilio</label><input id="c_direccion_domicilio" type="text"></div>
-            <div class="field"><label>Municipio / Departamento</label><input id="c_domicilio" type="text" placeholder="Municipio de Managua, Departamento de Managua."></div>
+            <div class="field"><label>Dirección</label><input id="c_direccion_domicilio" type="text"></div>
+            <div class="field"><label>Municipio / Dpto.</label><input id="c_domicilio" type="text" placeholder="Managua"></div>
           </div>
 
-          <h3 class="form-section-title">Datos del negocio</h3>
+          <h3 class="form-section-title">Negocio</h3>
           <div class="grid-3">
             <div class="field" data-client-field="nombre_negocio"><label>Nombre del negocio</label><input id="c_nombre_negocio" type="text"></div>
-            <div class="field" data-client-field="giro_negocio_id"><label>Giro de negocio</label><select id="c_giro_negocio_id"></select></div>
-            <div class="field" data-client-field="direccion_negocio"><label>Direccion negocio</label><input id="c_direccion_negocio" type="text"></div>
-            <div class="field"><label>Fecha inicio negocio</label><input id="c_fecha_inicio_negocio" type="date"></div>
-            <div class="field"><label>Antigüedad del negocio</label><input id="c_antiguedad" type="text" placeholder="6 años"></div>
+            <div class="field" data-client-field="giro_negocio_id"><label>Giro</label><select id="c_giro_negocio_id"></select></div>
+            <div class="field" data-client-field="direccion_negocio"><label>Dirección</label><input id="c_direccion_negocio" type="text"></div>
+            <div class="field"><label>Inicio</label><input id="c_fecha_inicio_negocio" type="date"></div>
+            <div class="field"><label>Antigüedad</label><input id="c_antiguedad" type="text" placeholder="6 años"></div>
             <div class="field"><label>Empleados</label><input id="c_empleados" type="text" placeholder="6"></div>
           </div>
 
-          <h3 class="form-section-title">Datos tributarios y bancarios</h3>
+          <h3 class="form-section-title">Tributario y bancario</h3>
           <div class="grid-3">
             <div class="field"><label>RUC</label><input id="c_ruc" type="text"></div>
-            <div class="field"><label>Matricula / ROC</label><input id="c_matricula_roc" type="text"></div>
-            <div class="field"><label>Régimen tributario</label><input id="c_regimen" type="text" placeholder="Cuota Fija, General..."></div>
-            <div class="field"><label>Banco</label><input id="c_banco" type="text" placeholder="BAC, LAFISE..."></div>
+            <div class="field"><label>Matrícula / ROC</label><input id="c_matricula_roc" type="text"></div>
+            <div class="field"><label>Régimen</label><input id="c_regimen" type="text" placeholder="Cuota Fija, General..."></div>
+            <div class="field"><label>Banco</label><input id="c_banco" type="text"></div>
           </div>
+
           <div class="actions actions-bar">
-            <button id="btnSaveCliente" class="btn primary" type="button">Guardar cliente</button>
+            <button id="btnSaveCliente" class="btn primary" type="button">Guardar</button>
             <button id="btnUseClienteInModel" class="btn hidden" type="button">Usar en modelo</button>
-            <button id="btnDeleteCliente" class="btn danger hidden" type="button" title="Eliminar cliente">Eliminar</button>
+            <button id="btnDeleteCliente" class="btn danger hidden" type="button">Eliminar</button>
           </div>
 
           <div class="client-detail-grid">
@@ -155,58 +156,59 @@
               <div class="subcard-lock-overlay">Guarda el cliente primero</div>
               <div class="workbench-header compact">
                 <h3><span class="subcard-status" aria-hidden="true">○</span> Periodos</h3>
-                <button id="btnNewPeriodo" class="btn primary" type="button" disabled>Nuevo periodo</button>
+                <button id="btnNewPeriodo" class="btn primary" type="button" disabled>Nuevo</button>
               </div>
               <div id="periodosMessages" class="messages"></div>
-              <div id="clientePeriodosList" class="saved-list empty-state">Abra o guarde un cliente para revisar sus periodos.</div>
+              <div id="clientePeriodosList" class="saved-list empty-state">Sin periodos.</div>
             </div>
             <div id="clienteTemplatePanel" class="client-template-panel subcard locked">
               <div class="subcard-lock-overlay">Guarda el cliente primero</div>
               <div class="workbench-header compact">
-                <div>
-                  <h3><span class="subcard-status" aria-hidden="true">○</span> Plantilla de gastos</h3>
-                  <p id="clienteTemplateOrigin" class="workbench-subtitle">Sin plantilla cargada. Personalice las categorias y montos por defecto del cliente.</p>
-                </div>
+                <h3><span class="subcard-status" aria-hidden="true">○</span> Plantilla de gastos</h3>
                 <div class="actions small-actions">
-                  <button id="btnAddTemplateLine" class="btn" type="button">Agregar linea</button>
-                  <button id="btnResetTemplate" class="btn" type="button">Resetear a giro</button>
-                  <button id="btnSaveTemplate" class="btn primary" type="button">Guardar plantilla</button>
+                  <button id="btnAddTemplateLine" class="btn" type="button">+ Línea</button>
+                  <button id="btnResetTemplate" class="btn" type="button">Reset</button>
+                  <button id="btnSaveTemplate" class="btn primary" type="button">Guardar</button>
                 </div>
               </div>
-              <div id="clienteTemplateEditor" class="template-editor empty-state">Abra o guarde un cliente para revisar la plantilla.</div>
+              <p id="clienteTemplateOrigin" class="workbench-subtitle"></p>
+              <div id="clienteTemplateEditor" class="template-editor empty-state">Sin plantilla.</div>
             </div>
           </div>
         </section>
 
         <section id="periodoFormPanel" class="card periodo-form-panel hidden">
           <div class="workbench-header">
-            <div>
-              <h2 id="periodoFormTitle">Nuevo periodo</h2>
-              <p class="workbench-subtitle" id="periodoFormSubtitle"></p>
-            </div>
+            <h2 id="periodoFormTitle">Nuevo periodo</h2>
             <button id="btnClosePeriodoForm" class="btn" type="button">Cerrar</button>
           </div>
+          <p class="workbench-subtitle" id="periodoFormSubtitle"></p>
           <div id="periodoFormMessages" class="messages"></div>
           <div class="grid-3">
             <div class="field"><label>Mes inicial</label><input id="periodo_mes_inicial" type="month" /></div>
             <div class="field"><label>Mes final</label><input id="periodo_mes_final" type="month" /></div>
             <div class="field"><label>Tasa de cambio</label><input id="periodo_tasa_cambio" type="number" step="0.0001" value="36.6243" /></div>
-            <div class="field"><label>Ingresos base USD/mes</label><input id="periodo_ingresos_base_usd" type="number" step="100" value="50000" /></div>
-            <div class="field"><label>Variabilidad ingresos %</label><input id="periodo_var_ingresos" type="number" step="0.5" value="12" /></div>
-            <div class="field"><label>% Costo sobre ventas</label><input id="periodo_cost_pct" type="number" step="0.5" value="70" /></div>
-            <div class="field"><label>Variabilidad costos %</label><input id="periodo_var_costos" type="number" step="0.5" value="5" /></div>
-            <div class="field"><label>% Ventas contado</label><input id="periodo_cash_sales_pct" type="number" step="1" value="85" /></div>
-            <div class="field"><label>Semilla (opcional)</label><input id="periodo_seed" type="text" placeholder="auto" /></div>
           </div>
+          <details>
+            <summary class="form-section-title" style="cursor:pointer;">Parámetros del modelo</summary>
+            <div class="grid-3">
+              <div class="field"><label>Ingresos base USD/mes</label><input id="periodo_ingresos_base_usd" type="number" step="100" value="50000" /></div>
+              <div class="field"><label>Variabilidad ingresos %</label><input id="periodo_var_ingresos" type="number" step="0.5" value="12" /></div>
+              <div class="field"><label>% Costo sobre ventas</label><input id="periodo_cost_pct" type="number" step="0.5" value="70" /></div>
+              <div class="field"><label>Variabilidad costos %</label><input id="periodo_var_costos" type="number" step="0.5" value="5" /></div>
+              <div class="field"><label>% Ventas contado</label><input id="periodo_cash_sales_pct" type="number" step="1" value="85" /></div>
+              <div class="field"><label>Semilla</label><input id="periodo_seed" type="text" placeholder="auto" /></div>
+            </div>
+          </details>
           <div class="rollforward-block">
             <label class="checkbox">
               <input id="periodo_rollforward" type="checkbox" />
-              <span>Roll-forward: usar saldos finales del periodo anterior</span>
+              <span>Roll-forward: usar saldos del periodo anterior</span>
             </label>
             <div id="rollforwardPreview" class="rollforward-preview hidden"></div>
           </div>
-          <div class="actions">
-            <button id="btnSavePeriodo" class="btn primary" type="button">Crear periodo (borrador)</button>
+          <div class="actions actions-bar">
+            <button id="btnSavePeriodo" class="btn primary" type="button">Crear periodo</button>
           </div>
         </section>
       </div>
@@ -214,17 +216,14 @@
       <div id="catalogoMode" class="mode-panel hidden">
         <section class="card">
           <div class="workbench-header">
-            <div>
-              <h2>Catalogo contable</h2>
-              <p class="workbench-subtitle">Catalogo NIIF PYME enriquecido con el detalle operativo del modelo.</p>
-            </div>
+            <h2>Catálogo contable</h2>
             <button id="btnRefreshCatalogo" class="btn" type="button">Actualizar</button>
           </div>
           <div id="catalogoMessages" class="messages"></div>
           <div class="client-toolbar">
             <div class="field">
               <label>Buscar</label>
-              <input id="catalogoSearch" type="text" placeholder="Codigo, NIIF, nombre o alias">
+              <input id="catalogoSearch" type="text" placeholder="Código, NIIF, nombre o alias">
             </div>
             <div class="field">
               <label>Tipo</label>
@@ -239,7 +238,7 @@
               </select>
             </div>
             <div class="field">
-              <label>Seccion</label>
+              <label>Sección</label>
               <select id="catalogoSectionFilter">
                 <option value="">Todas</option>
                 <option value="corriente">Corriente</option>
@@ -254,20 +253,15 @@
             </div>
           </div>
           <div id="catalogoSummary" class="muted"></div>
-          <div id="catalogoList" class="table-preview empty-state">Catalogo no cargado.</div>
+          <div id="catalogoList" class="table-preview empty-state">Catálogo no cargado.</div>
         </section>
       </div>
 
       <div id="modelMode" class="mode-panel">
         <section class="card">
           <div class="workbench-header">
-            <div>
-              <h2>Editor avanzado del periodo</h2>
-              <p class="workbench-subtitle">Seleccione un periodo creado desde el tab Clientes para editarlo, previsualizarlo y generar el documento.</p>
-            </div>
-            <div class="actions">
-              <button id="btnRefreshEditablePeriodos" class="btn" type="button">Actualizar</button>
-            </div>
+            <h2>Editor del periodo</h2>
+            <button id="btnRefreshEditablePeriodos" class="btn" type="button">Actualizar</button>
           </div>
           <div id="editorMessages" class="messages"></div>
           <div class="active-periodo-toolbar">
@@ -284,20 +278,20 @@
               <span id="epHeaderRango">—</span>
               <span class="badge" id="epHeaderEstado">—</span>
               <span class="badge warn hidden" id="epHeaderRecompute">Recalcular</span>
-              <span class="badge ok hidden" id="epHeaderDirty">Cambios sin guardar</span>
+              <span class="badge ok hidden" id="epHeaderDirty">Sin guardar</span>
             </div>
             <div class="active-periodo-actions">
-              <button id="btnSavePeriodoChanges" class="btn primary hidden" type="button">Guardar cambios al periodo</button>
-              <button id="btnDuplicateActivePeriodo" class="btn hidden" type="button">Duplicar como borrador</button>
+              <button id="btnSavePeriodoChanges" class="btn primary hidden" type="button">Guardar</button>
+              <button id="btnDuplicateActivePeriodo" class="btn hidden" type="button">Duplicar</button>
             </div>
           </div>
           <div id="editorReadonlyBanner" class="readonly-banner hidden">
-            Este periodo esta <strong id="erbEstado">finalizado</strong>. Para modificarlo, duplicarlo como borrador.
+            Periodo <strong id="erbEstado">finalizado</strong>. Duplique para modificar.
           </div>
         </section>
 
         <section class="card">
-          <h2>Periodo financiero</h2>
+          <h2>Periodo</h2>
           <div class="grid-4 compact-grid">
             <div class="field"><label>Mes inicio</label><input id="m_mes_inicio" type="month" value="2025-11"></div>
             <div class="field"><label>Mes final</label><input id="m_mes_final" type="month" value="2026-04"></div>
@@ -307,7 +301,7 @@
         </section>
 
         <section id="modelPreviewCard" class="card hidden">
-          <h2>Resumen del modelo</h2>
+          <h2>Resumen</h2>
           <div class="account-toolbar model-block-toolbar hidden">
             <label for="modelBlockSelectSummary">Bloque</label>
             <select id="modelBlockSelectSummary" class="model-block-select"></select>
@@ -317,37 +311,34 @@
 
         <section class="card model-workbench" id="erWorkbench">
           <div class="workbench-header">
-            <div>
-              <h2>Estado de Resultados</h2>
-              <p class="workbench-subtitle">Datos base arriba, resultado completo abajo.</p>
-            </div>
+            <h2>Estado de Resultados</h2>
             <button id="btnModeloER" class="btn primary" type="button">Generar ER</button>
           </div>
           <div class="workbench-grid">
             <div class="workbench-inputs">
-              <h3>Periodo, ingresos y costos</h3>
+              <h3>Ingresos y costos</h3>
               <div class="grid-4 compact-grid">
                 <div class="field"><label>Ingresos base USD</label><input id="m_ingresos_base" type="number" step="0.01" value="108000"></div>
-                <div class="field"><label>Variabilidad ingresos %</label><input id="m_var_ingresos" type="number" step="0.1" value="15"></div>
-                <div class="field"><label>Costo base %</label><input id="m_costo_pct" type="number" step="0.1" value="70"></div>
-                <div class="field"><label>Variabilidad costo +/- %</label><input id="m_var_costo" type="number" step="0.1" value="5"></div>
-                <div class="field"><label>Ventas contado %</label><input id="m_contado_pct" type="number" step="0.1" value="85"></div>
+                <div class="field"><label>Var. ingresos %</label><input id="m_var_ingresos" type="number" step="0.1" value="15"></div>
+                <div class="field"><label>Costo %</label><input id="m_costo_pct" type="number" step="0.1" value="70"></div>
+                <div class="field"><label>Var. costo %</label><input id="m_var_costo" type="number" step="0.1" value="5"></div>
+                <div class="field"><label>Contado %</label><input id="m_contado_pct" type="number" step="0.1" value="85"></div>
                 <div class="field"><label>Compras base USD</label><input id="m_compras_base" type="number" step="0.01" value="120000"></div>
-                <div class="field"><label>Variabilidad compras %</label><input id="m_var_compras" type="number" step="0.1" value="10"></div>
-                <div class="field"><label>Interés mensual créditos %</label><input id="m_interes_creditos" type="number" step="0.1" value="0"></div>
+                <div class="field"><label>Var. compras %</label><input id="m_var_compras" type="number" step="0.1" value="10"></div>
+                <div class="field"><label>Interés mensual %</label><input id="m_interes_creditos" type="number" step="0.1" value="0"></div>
               </div>
 
-              <h3>Gastos operativos mensuales en USD</h3>
+              <h3>Gastos operativos USD/mes</h3>
               <div class="grid-4 compact-grid">
-                <div class="field"><label>Sueldos y salarios</label><input id="m_g_sueldos" type="number" value="2700"></div>
-                <div class="field"><label>Servicios públicos</label><input id="m_g_servicios" type="number" value="600"></div>
+                <div class="field"><label>Sueldos</label><input id="m_g_sueldos" type="number" value="2700"></div>
+                <div class="field"><label>Servicios</label><input id="m_g_servicios" type="number" value="600"></div>
                 <div class="field"><label>Alcaldía y DGI</label><input id="m_g_alcaldia" type="number" value="50"></div>
                 <div class="field"><label>Combustible</label><input id="m_g_combustible" type="number" value="500"></div>
                 <div class="field"><label>Publicidad</label><input id="m_g_publicidad" type="number" value="1500"></div>
                 <div class="field"><label>Mantenimientos</label><input id="m_g_mantenimientos" type="number" value="0"></div>
                 <div class="field"><label>Renta</label><input id="m_g_renta" type="number" value="440"></div>
                 <div class="field"><label>Seguros</label><input id="m_g_seguros" type="number" value="0"></div>
-                <div class="field"><label>Otros gastos</label><input id="m_g_otros" type="number" value="350"></div>
+                <div class="field"><label>Otros</label><input id="m_g_otros" type="number" value="350"></div>
               </div>
             </div>
             <div class="workbench-output">
@@ -356,56 +347,55 @@
                 <label for="modelBlockSelectEr">Bloque</label>
                 <select id="modelBlockSelectEr" class="model-block-select"></select>
               </div>
-              <div id="modelErPreview" class="table-preview empty-state">Pulse Generar ER para calcular.</div>
+              <div id="modelErPreview" class="table-preview empty-state">Pulse Generar ER.</div>
             </div>
           </div>
         </section>
 
         <section class="card model-workbench" id="esfWorkbench">
           <div class="workbench-header">
-            <div>
-              <h2>Estado de Situación Financiera</h2>
-              <p class="workbench-subtitle">Saldos y ajustes arriba, balance completo debajo.</p>
-            </div>
+            <h2>Estado de Situación Financiera</h2>
             <button id="btnModeloESF" class="btn primary" type="button">Generar ESF</button>
           </div>
           <div class="workbench-grid esf-stack">
             <div class="workbench-inputs">
-              <h3>Saldos iniciales en córdobas</h3>
+              <h3>Saldos iniciales (córdobas)</h3>
               <div class="grid-4 compact-grid">
                 <div class="field"><label>Efectivo</label><input id="m_b_cash" type="number" value="410193"></div>
                 <div class="field"><label>Cuentas por cobrar</label><input id="m_b_ar" type="number" value="62261"></div>
                 <div class="field"><label>Inventario</label><input id="m_b_inventory" type="number" value="5310538"></div>
-                <div class="field"><label>Bienes inmuebles</label><input id="m_b_real_estate" type="number" value="0"></div>
-                <div class="field"><label>Mobiliario y equipos</label><input id="m_b_equipment" type="number" value="549366"></div>
+                <div class="field"><label>Inmuebles</label><input id="m_b_real_estate" type="number" value="0"></div>
+                <div class="field"><label>Mobiliario</label><input id="m_b_equipment" type="number" value="549366"></div>
                 <div class="field"><label>Vehículos</label><input id="m_b_vehicles" type="number" value="0"></div>
-                <div class="field"><label>Depreciación acumulada</label><input id="m_b_accum_dep" type="number" value="-68676"></div>
-                <div class="field"><label>Tarjetas de crédito</label><input id="m_b_cards" type="number" value="183122"></div>
+                <div class="field"><label>Dep. acumulada</label><input id="m_b_accum_dep" type="number" value="-68676"></div>
+                <div class="field"><label>Tarjetas</label><input id="m_b_cards" type="number" value="183122"></div>
                 <div class="field"><label>Proveedores</label><input id="m_b_suppliers" type="number" value="0"></div>
-                <div class="field"><label>Impuestos por pagar</label><input id="m_b_taxes" type="number" value="0"></div>
+                <div class="field"><label>Impuestos</label><input id="m_b_taxes" type="number" value="0"></div>
                 <div class="field"><label>Gastos acumulados</label><input id="m_b_accrued" type="number" value="0"></div>
-                <div class="field"><label>Créditos personales</label><input id="m_b_personal" type="number" value="47612"></div>
-                <div class="field"><label>Créditos prendarios</label><input id="m_b_pledge" type="number" value="0"></div>
-                <div class="field"><label>Créditos comerciales</label><input id="m_b_commercial" type="number" value="0"></div>
-                <div class="field"><label>Créditos hipotecarios</label><input id="m_b_mortgage" type="number" value="0"></div>
-                <div class="field"><label>Resultados acumulados</label><input id="m_b_retained" type="number" value="3424750"></div>
+                <div class="field"><label>Créd. personales</label><input id="m_b_personal" type="number" value="47612"></div>
+                <div class="field"><label>Créd. prendarios</label><input id="m_b_pledge" type="number" value="0"></div>
+                <div class="field"><label>Créd. comerciales</label><input id="m_b_commercial" type="number" value="0"></div>
+                <div class="field"><label>Hipotecarios</label><input id="m_b_mortgage" type="number" value="0"></div>
+                <div class="field"><label>Resultados acum.</label><input id="m_b_retained" type="number" value="3424750"></div>
               </div>
 
-              <h3>Vida útil de activos fijos (años)</h3>
-              <p class="workbench-subtitle">Controla el cálculo automático de depreciación por línea recta.</p>
-              <div class="grid-3 compact-grid">
-                <div class="field"><label>Bienes inmuebles</label><input id="m_life_real_estate" type="number" step="0.5" min="0.1" value="40"></div>
-                <div class="field"><label>Mobiliario y equipos</label><input id="m_life_equipment" type="number" step="0.5" min="0.1" value="8"></div>
-                <div class="field"><label>Vehículos</label><input id="m_life_vehicles" type="number" step="0.5" min="0.1" value="5"></div>
-              </div>
+              <details>
+                <summary class="form-section-title" style="cursor:pointer;">Vida útil de activos fijos</summary>
+                <div class="grid-3 compact-grid">
+                  <div class="field"><label>Inmuebles (años)</label><input id="m_life_real_estate" type="number" step="0.5" min="0.1" value="40"></div>
+                  <div class="field"><label>Mobiliario (años)</label><input id="m_life_equipment" type="number" step="0.5" min="0.1" value="8"></div>
+                  <div class="field"><label>Vehículos (años)</label><input id="m_life_vehicles" type="number" step="0.5" min="0.1" value="5"></div>
+                </div>
+              </details>
 
-              <h3>Ajustes puntuales por mes</h3>
-              <div class="field">
-                <label>Eventos</label>
-                <textarea id="m_eventos" rows="5" spellcheck="false">2026-02,owner_withdrawal,600000,nio
+              <details>
+                <summary class="form-section-title" style="cursor:pointer;">Eventos puntuales</summary>
+                <div class="field">
+                  <textarea id="m_eventos" rows="5" spellcheck="false">2026-02,owner_withdrawal,600000,nio
 2025-12,asset_vehicle,567677,nio</textarea>
-                <small class="hint">Formato por línea: mes, cuenta, monto, moneda, origen opcional. Ejemplos de cuenta: owner_withdrawal, capital_contribution, asset_equipment, asset_vehicle, loan_pledge_new, loan_pledge_payment.</small>
-              </div>
+                  <small class="hint">Formato: mes, cuenta, monto, moneda. Ej: owner_withdrawal, capital_contribution, asset_equipment.</small>
+                </div>
+              </details>
             </div>
             <div class="workbench-output">
               <h3>ESF calculado</h3>
@@ -413,7 +403,7 @@
                 <label for="modelBlockSelectEsf">Bloque</label>
                 <select id="modelBlockSelectEsf" class="model-block-select"></select>
               </div>
-              <div id="modelEsfPreview" class="table-preview empty-state">Pulse Generar ESF para calcular.</div>
+              <div id="modelEsfPreview" class="table-preview empty-state">Pulse Generar ESF.</div>
             </div>
             <div class="workbench-output">
               <h3>Movimiento por cuenta</h3>
@@ -421,7 +411,7 @@
                 <label for="modelAccountSelect">Cuenta</label>
                 <select id="modelAccountSelect"></select>
               </div>
-              <div id="modelAccountMovementPreview" class="table-preview empty-state">Pulse Generar ESF para revisar movimientos.</div>
+              <div id="modelAccountMovementPreview" class="table-preview empty-state">Genere ESF.</div>
             </div>
             <div id="accountingWorkbench" class="workbench-output accounting-workbench">
               <h3>Libro diario</h3>
@@ -431,33 +421,32 @@
                 <label for="modelVoucherAccountFilter">Cuenta</label>
                 <select id="modelVoucherAccountFilter"></select>
               </div>
-              <div id="modelVoucherPreview" class="table-preview empty-state">Pulse Previsualizar todo para revisar comprobantes.</div>
-              <h3>Mayor por cuenta</h3>
-              <div id="modelLedgerPreview" class="table-preview empty-state">Seleccione una cuenta para ver el mayor.</div>
+              <div id="modelVoucherPreview" class="table-preview empty-state">Previsualice para ver comprobantes.</div>
+              <h3>Mayor</h3>
+              <div id="modelLedgerPreview" class="table-preview empty-state">Seleccione una cuenta.</div>
               <h3>Trazabilidad</h3>
-              <div id="modelTracePreview" class="trace-preview empty-state">Seleccione una cuenta para ver los comprobantes que explican sus saldos.</div>
+              <div id="modelTracePreview" class="trace-preview empty-state">Seleccione una cuenta.</div>
             </div>
           </div>
         </section>
 
         <section class="card">
           <div class="actions center">
-            <button id="btnSaveDraft" class="btn" type="button">Guardar borrador JSON</button>
+            <button id="btnSaveDraft" class="btn" type="button">Guardar JSON</button>
             <button id="btnOpenSavedModels" class="btn" type="button">Cargar JSON</button>
-            <button id="btnModeloPreview" class="btn primary xl" type="button">Previsualizar todo</button>
+            <button id="btnModeloPreview" class="btn primary xl" type="button">Previsualizar</button>
             <button id="btnModeloGenerar" class="btn xl" type="button" disabled>Generar documento</button>
-            <button id="btnSaveFinal" class="btn" type="button">Guardar final JSON</button>
+            <button id="btnSaveFinal" class="btn" type="button">Guardar final</button>
           </div>
           <div id="modelMessages" class="messages"></div>
           <div id="savedModelsPanel" class="saved-models hidden">
             <div class="saved-models-header">
               <h3>Respaldo legacy JSON</h3>
-              <p class="muted">Respaldo del flujo anterior. El flujo principal es Clientes -> Periodos -> Editor avanzado.</p>
               <button id="btnRefreshSavedModels" class="btn" type="button">Actualizar</button>
             </div>
             <div class="field">
               <label>Filtro</label>
-              <input id="savedModelsFilter" type="text" placeholder="Cliente, cedula, banco o periodo">
+              <input id="savedModelsFilter" type="text" placeholder="Cliente, cédula, banco o periodo">
             </div>
             <div class="saved-models-grid">
               <div>
@@ -465,8 +454,8 @@
                 <div id="draftsList" class="saved-list empty-state">Sin borradores.</div>
               </div>
               <div>
-                <h3>Historico final</h3>
-                <div id="finalsList" class="saved-list empty-state">Sin historicos.</div>
+                <h3>Histórico final</h3>
+                <div id="finalsList" class="saved-list empty-state">Sin históricos.</div>
               </div>
             </div>
           </div>
@@ -492,7 +481,7 @@
             <div id="prev-excel" class="preview clickable" data-input="#excel"></div>
           </div>
           <div class="field">
-            <label>Cédula – Frente</label>
+            <label>Cédula frente</label>
             <div id="dz-ced-front" class="dropzone" aria-label="Adjuntar Cédula frente">
               <input id="cedula_front" class="hidden-input" type="file" accept=".png,.jpg,.jpeg,.bmp,.tif,.tiff,.pdf" />
               <div class="dz-content">
@@ -506,7 +495,7 @@
             <div id="prev-cedula-front" class="preview clickable" data-input="#cedula_front"></div>
           </div>
           <div class="field">
-            <label>Cédula – Reverso</label>
+            <label>Cédula reverso</label>
             <div id="dz-ced-back" class="dropzone" aria-label="Adjuntar Cédula reverso">
               <input id="cedula_back" class="hidden-input" type="file" accept=".png,.jpg,.jpeg,.bmp,.tif,.tiff,.pdf" />
               <div class="dz-content">
@@ -520,8 +509,8 @@
             <div id="prev-cedula-back" class="preview clickable" data-input="#cedula_back"></div>
           </div>
           <div class="field">
-            <label>Matrícula/ROC</label>
-            <div id="dz-matricula" class="dropzone" aria-label="Adjuntar Matrícula/ROC">
+            <label>Matrícula / ROC</label>
+            <div id="dz-matricula" class="dropzone" aria-label="Adjuntar Matrícula">
               <input id="matricula" class="hidden-input" type="file" accept=".png,.jpg,.jpeg,.bmp,.tif,.tiff,.pdf" />
               <div class="dz-content">
                 <svg class="dz-icon upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -537,21 +526,19 @@
       </section>
 
       <section class="card">
-        <div class="grid-4">
+        <div class="grid-2">
           <div class="field">
             <label>Tipo de ESF</label>
             <div class="options">
               <label><input type="radio" name="esf_tipo" value="corte" checked> Al corte</label>
-              <label style="margin-left: 12px;"><input type="radio" name="esf_tipo" value="mensual"> Mensual</label>
+              <label><input type="radio" name="esf_tipo" value="mensual"> Mensual</label>
             </div>
-            <small class="hint">Selecciona qué hoja usar del Excel: ESF_Corte o ESF_Mensual.</small>
           </div>
           <div class="field">
             <label>Generación</label>
             <div class="options">
-              <label><input type="checkbox" id="allow_errors" checked> Generar aunque haya errores de validación</label>
+              <label><input type="checkbox" id="allow_errors" checked> Generar aunque haya errores</label>
             </div>
-            <small class="hint">Si está activo, no se detendrá por fallos en ER/ESF.</small>
           </div>
         </div>
       </section>
@@ -564,34 +551,13 @@
 
       <section class="card">
         <div id="stepper" class="stepper">
-          <div class="step" data-step="excel">
-            <span class="dot"></span>
-            <span class="label">Cargar Excel</span>
-          </div>
-          <div class="step" data-step="er">
-            <span class="dot"></span>
-            <span class="label">ER</span>
-          </div>
-          <div class="step" data-step="esf">
-            <span class="dot"></span>
-            <span class="label">ESF</span>
-          </div>
-          <div class="step" data-step="docs_cedula">
-            <span class="dot"></span>
-            <span class="label">Cédula</span>
-          </div>
-          <div class="step" data-step="docs_matricula">
-            <span class="dot"></span>
-            <span class="label">Matrícula</span>
-          </div>
-          <div class="step" data-step="llm">
-            <span class="dot"></span>
-            <span class="label">LLM</span>
-          </div>
-          <div class="step" data-step="done">
-            <span class="dot"></span>
-            <span class="label">Completado</span>
-          </div>
+          <div class="step" data-step="excel"><span class="dot"></span><span class="label">Excel</span></div>
+          <div class="step" data-step="er"><span class="dot"></span><span class="label">ER</span></div>
+          <div class="step" data-step="esf"><span class="dot"></span><span class="label">ESF</span></div>
+          <div class="step" data-step="docs_cedula"><span class="dot"></span><span class="label">Cédula</span></div>
+          <div class="step" data-step="docs_matricula"><span class="dot"></span><span class="label">Matrícula</span></div>
+          <div class="step" data-step="llm"><span class="dot"></span><span class="label">LLM</span></div>
+          <div class="step" data-step="done"><span class="dot"></span><span class="label">Hecho</span></div>
         </div>
         <div id="messages" class="messages"></div>
       </section>
@@ -607,15 +573,15 @@
             <div id="res-esf"></div>
           </div>
           <div class="result-group">
-            <h3><span class="result-title"><span class="abbr" title="Documentos — Cédula">Cédula</span></span><span class="badge">—</span></h3>
+            <h3><span class="result-title"><span class="abbr" title="Cédula">Cédula</span></span><span class="badge">—</span></h3>
             <div id="res-docs-cedula"></div>
           </div>
           <div class="result-group">
-            <h3><span class="result-title"><span class="abbr" title="Documentos — Matrícula">Matrícula</span></span><span class="badge">—</span></h3>
+            <h3><span class="result-title"><span class="abbr" title="Matrícula">Matrícula</span></span><span class="badge">—</span></h3>
             <div id="res-docs-matricula"></div>
           </div>
           <div class="result-group">
-            <h3><span class="result-title"><span class="abbr" title="Validación LLM">LLM</span></span><span class="badge">—</span></h3>
+            <h3><span class="result-title"><span class="abbr" title="LLM">LLM</span></span><span class="badge">—</span></h3>
             <div id="res-llm"></div>
           </div>
         </div>
@@ -632,13 +598,13 @@
       <aside class="app-assistant" aria-label="Asistente contable">
         <section id="modelChatCard" class="model-chat-card">
           <div class="assistant-header">
-            <h2>Asistente contable</h2>
-            <p class="assistant-subtitle">Consultar saldos, filtrar el libro diario, reversar comprobantes, guardar o generar documentos.</p>
+            <h2>Asistente</h2>
+            <p class="assistant-subtitle">Saldos, libro diario, reversos, ajustes y generación.</p>
           </div>
           <div class="account-toolbar chat-scope-toolbar">
             <label for="modelChatScopeSelect">Alcance</label>
             <select id="modelChatScopeSelect">
-              <option value="block">Bloque seleccionado</option>
+              <option value="block">Bloque</option>
               <option value="global">Modelo completo</option>
             </select>
           </div>
@@ -646,20 +612,20 @@
           <div class="chat-quick-actions" aria-label="Acciones rapidas del asistente">
             <button class="chat-chip" type="button" data-chat-message="Explicame de donde sale el saldo de la cuenta seleccionada">Explicar saldo</button>
             <button class="chat-chip" type="button" data-chat-message="Muestrame el mayor de la cuenta seleccionada">Ver mayor</button>
-            <button class="chat-chip" type="button" data-chat-message="Reversa el comprobante ">Reversar comprobante</button>
-            <button class="chat-chip" type="button" data-chat-message="Guarda este borrador">Guardar borrador</button>
-            <button class="chat-chip" type="button" data-chat-message="Genera el documento">Generar documento</button>
+            <button class="chat-chip" type="button" data-chat-message="Reversa el comprobante ">Reversar</button>
+            <button class="chat-chip" type="button" data-chat-message="Guarda este borrador">Guardar</button>
+            <button class="chat-chip" type="button" data-chat-message="Genera el documento">Generar</button>
           </div>
           <div class="chat-compose">
-            <textarea id="modelChatInput" rows="3" spellcheck="false" placeholder="Ej: traslada resultados del ejercicio 2025 a resultados acumulados en enero 2026"></textarea>
+            <textarea id="modelChatInput" rows="3" spellcheck="false" placeholder="Ej: traslada resultados del ejercicio 2025 a acumulados en enero 2026"></textarea>
             <button id="btnModelChatSend" class="btn primary" type="button">Enviar</button>
           </div>
           <div class="chat-history-panel">
             <div class="chat-history-header">
-              <h3>Historial de ajustes</h3>
-              <button id="btnUndoLastChatAdjustment" class="btn" type="button">Deshacer ultimo ajuste</button>
+              <h3>Historial</h3>
+              <button id="btnUndoLastChatAdjustment" class="btn" type="button">Deshacer</button>
             </div>
-            <div id="modelChatHistory" class="chat-history empty-state">Sin ajustes aplicados por chat.</div>
+            <div id="modelChatHistory" class="chat-history empty-state">Sin ajustes.</div>
           </div>
         </section>
       </aside>
