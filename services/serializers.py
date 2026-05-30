@@ -66,6 +66,8 @@ def cliente_to_dict(cliente: Cliente, *, include_giro: bool = False) -> dict[str
         "antiguedad": cliente.antiguedad,
         "empleados": cliente.empleados,
         "domicilio": cliente.domicilio,
+        "last_cedula_extracted": parse_json_object(cliente.last_cedula_extracted_json),
+        "last_matricula_extracted": parse_json_object(cliente.last_matricula_extracted_json),
         "plantilla_gastos": parse_json_object(cliente.plantilla_gastos_json) if cliente.plantilla_gastos_json else None,
         "activo": bool(cliente.activo),
         "created_at": iso(cliente.created_at),

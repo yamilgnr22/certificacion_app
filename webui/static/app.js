@@ -464,6 +464,7 @@
   let currentClienteDetail = null;
   let currentClienteId = null;
   let currentClienteOriginalCedula = '';
+  let currentClienteExtractionMeta = null;
   let selectedClienteId = '';
   let selectedClienteName = '';
   let selectedGiroId = '';
@@ -754,6 +755,7 @@
     currentClienteDetail = null;
     currentClienteId = null;
     currentClienteOriginalCedula = '';
+    currentClienteExtractionMeta = null;
     ['c_nombre_completo', 'c_cedula', 'c_telefono', 'c_email', 'c_nombre_negocio', 'c_ruc',
       'c_matricula_roc', 'c_direccion_domicilio', 'c_direccion_negocio', 'c_fecha_nacimiento',
       'c_fecha_inicio_negocio', 'c_giro_negocio_id',
@@ -770,6 +772,7 @@
     setClienteFormMessage('', 'info');
     renderClienteTemplate(null);
     renderClientePeriodos([]);
+    renderNameReview(null);
     updateClienteFormUiState();
   }
 
@@ -829,6 +832,7 @@
     const cliente = detail.cliente || detail;
     currentClienteId = cliente.id || null;
     currentClienteOriginalCedula = cliente.cedula || '';
+    currentClienteExtractionMeta = cliente.last_cedula_extracted || null;
     const mapping = {
       c_nombre_completo: cliente.nombre_completo,
       c_cedula: cliente.cedula,
@@ -853,13 +857,14 @@
       c_domicilio: cliente.domicilio,
     };
     Object.entries(mapping).forEach(([id, value]) => setClienteField(id, value));
+    renderNameReview(currentClienteExtractionMeta);
     renderClienteTemplate(detail.plantilla_gastos || null);
     renderClientePeriodos(detail.periodos || []);
     updateClienteFormUiState();
   }
 
   function collectClientePayload() {
-    return {
+    const payload = {
       nombre_completo: clienteFieldValue('c_nombre_completo'),
       cedula: clienteFieldValue('c_cedula'),
       telefono: clienteFieldValue('c_telefono'),
@@ -882,6 +887,10 @@
       empleados: clienteFieldValue('c_empleados'),
       domicilio: clienteFieldValue('c_domicilio'),
     };
+    if (currentClienteExtractionMeta) {
+      payload.last_cedula_extracted_json = currentClienteExtractionMeta;
+    }
+    return payload;
   }
 
   function validateClientePayload(payload) {
@@ -893,6 +902,9 @@
       ['giro_negocio_id', 'Seleccione un giro.'],
     ];
     const errors = required.filter(([key]) => !payload[key]).map(([key, message]) => ({ key, message }));
+    if (currentClienteExtractionMeta?.name_review_required && !currentClienteExtractionMeta?.name_review_resolved) {
+      errors.push({ key: 'nombre_completo', message: 'Revise y confirme el nombre extraido antes de guardar.' });
+    }
     markClienteInvalid(errors);
     return errors;
   }
@@ -901,7 +913,7 @@
     const payload = collectClientePayload();
     const errors = validateClientePayload(payload);
     if (errors.length) {
-      setClienteFormMessage('Revise los campos requeridos.', 'error');
+      setClienteFormMessage(errors[0]?.message || 'Revise los campos requeridos.', 'error');
       return;
     }
     if (currentClienteId && payload.cedula !== currentClienteOriginalCedula) {
@@ -962,9 +974,11 @@
   }
 
   function applyClientePatchToForm(patch) {
+    currentClienteExtractionMeta = buildNameExtractionMeta(patch);
     const mapping = {
       nombre_completo: 'c_nombre_completo',
       cedula: 'c_cedula',
+      fecha_nacimiento: 'c_fecha_nacimiento',
       direccion_personal: 'c_direccion_domicilio',
       direccion_negocio: 'c_direccion_negocio',
       matricula: 'c_matricula_roc',
@@ -976,6 +990,9 @@
     };
     Object.entries(mapping).forEach(([key, id]) => {
       let value = patch[key];
+      if (key === 'nombre_completo' && typeof value === 'string') {
+        value = formatPersonName(value);
+      }
       // Normalizar sexo a las opciones del select
       if (key === 'sexo' && typeof value === 'string') {
         const n = value.trim().toLowerCase();
@@ -985,6 +1002,81 @@
       }
       setClienteField(id, value);
     });
+    renderNameReview(currentClienteExtractionMeta);
+  }
+
+  function buildNameExtractionMeta(patch) {
+    const candidates = Array.isArray(patch?.name_candidates) ? patch.name_candidates : [];
+    if (!patch || (!patch.name_review_required && !candidates.length && !patch.nombres_raw && !patch.apellidos_raw)) return null;
+    return {
+      nombres_raw: patch.nombres_raw || '',
+      apellidos_raw: patch.apellidos_raw || '',
+      nombre_completo: patch.nombre_completo || '',
+      name_review_required: !!patch.name_review_required,
+      name_review_reason: patch.name_review_reason || '',
+      name_review_resolved: !patch.name_review_required,
+      selected_name_source: patch.selected_name_source || '',
+      raw_name_candidates: candidates,
+    };
+  }
+
+  function renderNameReview(meta) {
+    const wrap = qs('#c_nameReview');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+    if (!meta || (!meta.name_review_required && !(meta.raw_name_candidates || []).length)) {
+      wrap.classList.add('hidden');
+      return;
+    }
+    wrap.classList.remove('hidden');
+    const badge = document.createElement('div');
+    badge.className = meta.name_review_required ? 'name-review-badge warn' : 'name-review-badge ok';
+    badge.textContent = meta.name_review_required ? 'Revisar nombre extraido' : 'Nombre verificado';
+    wrap.appendChild(badge);
+    if (meta.name_review_reason) {
+      const reason = document.createElement('div');
+      reason.className = 'name-review-reason';
+      reason.textContent = meta.name_review_reason;
+      wrap.appendChild(reason);
+    }
+    const candidates = meta.raw_name_candidates || [];
+    if (candidates.length) {
+      const list = document.createElement('div');
+      list.className = 'name-candidates';
+      candidates.forEach(candidate => {
+        const value = candidate.nombre_completo || '';
+        if (!value) return;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'name-candidate';
+        btn.textContent = `${candidate.source || 'lectura'}: ${value}`;
+        btn.addEventListener('click', () => {
+          setClienteField('c_nombre_completo', formatPersonName(value));
+          currentClienteExtractionMeta = {
+            ...(currentClienteExtractionMeta || meta),
+            name_review_resolved: true,
+            selected_name_source: candidate.source || '',
+          };
+          renderNameReview(currentClienteExtractionMeta);
+        });
+        list.appendChild(btn);
+      });
+      wrap.appendChild(list);
+    }
+  }
+
+  function formatPersonName(value) {
+    const particles = new Set(['de', 'del', 'la', 'las', 'los', 'y']);
+    return String(value || '')
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((word, index) => word.split('-').map(part => {
+        const lower = part.toLowerCase();
+        if (index > 0 && particles.has(lower)) return lower;
+        return lower.charAt(0).toUpperCase() + lower.slice(1);
+      }).join('-'))
+      .join(' ');
   }
 
   async function extractClienteDocs() {
@@ -1485,7 +1577,10 @@
       direccion_negocio: 'm_direccion_negocio',
       giro_negocio: 'm_giro_negocio',
     };
-    Object.entries(mapping).forEach(([key, id]) => setFieldValue(id, patch[key]));
+    Object.entries(mapping).forEach(([key, id]) => {
+      const value = key === 'nombre_completo' ? formatPersonName(patch[key]) : patch[key];
+      setFieldValue(id, value);
+    });
     lastModelPayload = null;
     setGenerateEnabled(false);
     clearDocExtraction();
@@ -3718,6 +3813,15 @@
   qs('#btnSaveCliente')?.addEventListener('click', saveCliente);
   qs('#btnDeleteCliente')?.addEventListener('click', deleteCliente);
   qs('#btnClienteExtractDocs')?.addEventListener('click', extractClienteDocs);
+  qs('#c_nombre_completo')?.addEventListener('input', () => {
+    if (!currentClienteExtractionMeta?.name_review_required) return;
+    currentClienteExtractionMeta = {
+      ...currentClienteExtractionMeta,
+      name_review_resolved: true,
+      selected_name_source: 'manual',
+    };
+    renderNameReview(currentClienteExtractionMeta);
+  });
   qs('#btnUseClienteInModel')?.addEventListener('click', () => useClienteInModel(currentClienteDetail));
   qs('#btnAddTemplateLine')?.addEventListener('click', () => addTemplateRow('', 0));
   qs('#btnResetTemplate')?.addEventListener('click', resetClienteTemplateToGiro);

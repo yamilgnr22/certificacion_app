@@ -205,6 +205,24 @@ class ClienteApiTest(unittest.TestCase):
         with self.db_session() as session:
             self.assertEqual(list(session.scalars(select(Cliente))), [])
 
+    def test_cliente_persists_name_extraction_metadata(self):
+        payload = cliente_payload()
+        payload["last_cedula_extracted_json"] = {
+            "name_review_required": True,
+            "name_review_resolved": True,
+            "selected_name_source": "manual",
+            "raw_name_candidates": [{"source": "cedula_general", "nombre_completo": "Cliente Uno"}],
+        }
+
+        resp = self.client.post("/api/clientes", json=payload)
+
+        self.assertEqual(resp.status_code, 201)
+        with self.db_session() as session:
+            stored = session.get(Cliente, resp.get_json()["cliente"]["id"])
+            meta = json.loads(stored.last_cedula_extracted_json)
+        self.assertTrue(meta["name_review_required"])
+        self.assertEqual(meta["selected_name_source"], "manual")
+
 
 if __name__ == "__main__":
     unittest.main()

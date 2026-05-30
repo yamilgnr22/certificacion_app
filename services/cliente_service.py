@@ -45,6 +45,8 @@ class ClienteService:
         "antiguedad",
         "empleados",
         "domicilio",
+        "last_cedula_extracted_json",
+        "last_matricula_extracted_json",
     }
     SEXO_VALIDOS = {"femenino", "masculino", "otro"}
 
@@ -213,6 +215,12 @@ class ClienteService:
                     )
                 # Normalizamos capitalizando para mostrar consistente
                 value = normalized.capitalize()
+            if key in {"last_cedula_extracted_json", "last_matricula_extracted_json"} and value is not None:
+                if isinstance(value, (dict, list)):
+                    value = json.dumps(value, ensure_ascii=False, sort_keys=True)
+                else:
+                    json.loads(str(value))
+                    value = str(value)
             out[key] = value
         if not partial:
             for key in self.REQUIRED:

@@ -12,6 +12,7 @@ class DocumentExtractionMappingTest(unittest.TestCase):
                 "cedula": {
                     "nombre_completo": "Kitiel Rosibel Montiel Gonzalez",
                     "numero_cedula": "3610604910000X",
+                    "fecha_nacimiento": "06-04-1991",
                     "sexo": "F",
                     "direccion_formal": "Residencial Daniel Chavarria, Econs III, 1 cuadra norte, media cuadra este",
                     "domicilio_formal": "Municipio de Managua, Departamento de Managua",
@@ -31,6 +32,7 @@ class DocumentExtractionMappingTest(unittest.TestCase):
 
         self.assertEqual(patch["nombre_completo"], "Kitiel Rosibel Montiel González")
         self.assertEqual(patch["cedula"], "361-060491-0000X")
+        self.assertEqual(patch["fecha_nacimiento"], "1991-04-06")
         self.assertEqual(patch["sexo"], "Femenino")
         self.assertEqual(patch["domicilio"], "Municipio de Managua, Departamento de Managua.")
         self.assertEqual(patch["regimen"], "Cuota fija")
@@ -59,6 +61,105 @@ class DocumentExtractionMappingTest(unittest.TestCase):
         self.assertNotIn("cedula", patch)
         self.assertNotIn("sexo", patch)
 
+    def test_build_client_patch_title_cases_uppercase_name_without_surname_rewrites(self):
+        extraction = {
+            "documents": {
+                "cedula": {
+                    "nombres_raw": "DAYANA MARILEN",
+                    "apellidos_raw": "CENTENO LUQUEZ",
+                    "nombre_completo": "DAYANA MARILEN CENTENO LUQUEZ",
+                },
+                "matricula": {},
+            }
+        }
+
+        patch = build_client_patch(extraction)
+
+        self.assertEqual(patch["nombre_completo"], "Dayana Marilen Centeno Luquez")
+        self.assertEqual(patch["nombres_raw"], "Dayana Marilen")
+        self.assertEqual(patch["apellidos_raw"], "Centeno Luquez")
+
+    def test_build_client_patch_marks_review_when_focused_name_differs(self):
+        extraction = {
+            "documents": {
+                "cedula": {
+                    "nombres_raw": "DAYANA MARILEN",
+                    "apellidos_raw": "CENTENO LIQUEZ",
+                    "nombre_completo": "DAYANA MARILEN CENTENO LIQUEZ",
+                    "name_review_required": False,
+                    "name_review_reason": None,
+                    "name_candidates": [],
+                },
+                "matricula": {},
+            },
+            "name_verification": {
+                "nombres_raw": "DAYANA MARILEN",
+                "apellidos_raw": "CENTENO LUQUEZ",
+                "nombre_completo": "DAYANA MARILEN CENTENO LUQUEZ",
+                "uncertain_characters": [],
+            },
+        }
+
+        patch = build_client_patch(extraction)
+
+        self.assertEqual(patch["nombre_completo"], "Dayana Marilen Centeno Luquez")
+        self.assertTrue(patch["name_review_required"])
+        self.assertIn("verificacion", patch["name_review_reason"])
+        self.assertGreaterEqual(len(patch["name_candidates"]), 2)
+
+    def test_build_client_patch_marks_review_when_matricula_name_differs(self):
+        extraction = {
+            "documents": {
+                "cedula": {
+                    "nombres_raw": "DAYANA MARILEN",
+                    "apellidos_raw": "CENTENO LUQUEZ",
+                    "nombre_completo": "DAYANA MARILEN CENTENO LUQUEZ",
+                },
+                "matricula": {
+                    "nombre_contribuyente": "Dayana Marilen Centeno Lopez",
+                },
+            }
+        }
+
+        patch = build_client_patch(extraction)
+
+        self.assertTrue(patch["name_review_required"])
+        self.assertIn("matricula", patch["name_review_reason"])
+
+    def test_build_client_patch_does_not_rewrite_unknown_surnames(self):
+        extraction = {
+            "documents": {
+                "cedula": {
+                    "nombre_completo": "DAYANA MARILEN CENTENO LIQUEZ",
+                },
+                "matricula": {},
+            }
+        }
+
+        patch = build_client_patch(extraction)
+
+        self.assertEqual(patch["nombre_completo"], "Dayana Marilen Centeno Liquez")
+
+    def test_build_client_patch_normalizes_visible_cedula_dates(self):
+        extraction = {
+            "documents": {
+                "cedula": {
+                    "nombre_completo": "DAYANA MARILEN CENTENO LUQUEZ",
+                    "fecha_nacimiento": "28-01-1999",
+                    "fecha_emision": "27/08/2019",
+                    "fecha_expiracion": "2029-08-27",
+                },
+                "matricula": {},
+            }
+        }
+
+        patch = build_client_patch(extraction)
+
+        self.assertEqual(patch["nombre_completo"], "Dayana Marilen Centeno Luquez")
+        self.assertEqual(patch["fecha_nacimiento"], "1999-01-28")
+        self.assertEqual(patch["fecha_emision_cedula"], "2019-08-27")
+        self.assertEqual(patch["fecha_expiracion_cedula"], "2029-08-27")
+
     def test_matricula_summary_ignores_invalid_llm_summary(self):
         extraction = {
             "documents": {
@@ -74,6 +175,22 @@ class DocumentExtractionMappingTest(unittest.TestCase):
         patch = build_client_patch(extraction)
 
         self.assertEqual(patch["matricula"], "RNVD-117331; ROC No. 138034303")
+
+    def test_matricula_summary_strips_image_label_noise(self):
+        extraction = {
+            "documents": {
+                "cedula": {},
+                "matricula": {
+                    "codigo_interno": "RNVD-126096",
+                    "roc": "138224421.Cedula de identidad - anverso/frente",
+                    "resumen_linea": "RNVD-126096; ROC No. 138224421.Cedula de identidad - anverso/frente",
+                },
+            }
+        }
+
+        patch = build_client_patch(extraction)
+
+        self.assertEqual(patch["matricula"], "RNVD-126096; ROC No. 138224421")
 
 
 if __name__ == "__main__":
