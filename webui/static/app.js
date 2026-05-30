@@ -1578,27 +1578,39 @@
     setClienteFormMessage('Plantilla restablecida desde el giro. Guarde plantilla para conservar el cambio.', 'info');
   }
 
+  const TEMPLATE_CODE_TO_MODEL_FIELD = {
+    exp_salaries: 'm_g_sueldos',
+    exp_services: 'm_g_servicios',
+    exp_alcaldia_dgi: 'm_g_alcaldia',
+    exp_fuel: 'm_g_combustible',
+    exp_advertising: 'm_g_publicidad',
+    exp_maintenance: 'm_g_mantenimientos',
+    exp_rent: 'm_g_renta',
+    exp_insurance: 'm_g_seguros',
+    exp_other: 'm_g_otros',
+  };
+
   function applyClienteTemplateToModel(templateData) {
-    const template = templateData?.plantilla || {};
-    const mapping = {
-      'Sueldos y Salarios': 'm_g_sueldos',
-      'Servicios Publicos': 'm_g_servicios',
-      'Servicios Públicos': 'm_g_servicios',
-      'Alcaldia y DGI': 'm_g_alcaldia',
-      'Alcaldía y DGI': 'm_g_alcaldia',
-      'Combustible': 'm_g_combustible',
-      'Publicidad': 'm_g_publicidad',
-      'Mantenimientos': 'm_g_mantenimientos',
-      'Renta': 'm_g_renta',
-      'Seguros': 'm_g_seguros',
-      'Otros Gastos': 'm_g_otros',
-      'Otros gastos': 'm_g_otros',
-    };
+    const items = Array.isArray(templateData?.items) ? templateData.items : [];
+    if (items.length) {
+      const unmatched = [];
+      items.forEach((item) => {
+        const id = TEMPLATE_CODE_TO_MODEL_FIELD[item?.account_code];
+        if (id) setFieldValue(id, item.amount_usd);
+        else unmatched.push(item?.account_code || '');
+      });
+      return unmatched.filter(Boolean);
+    }
+    // Fallback: cliente legacy con plantilla_gastos_json en formato viejo
+    // { "Sueldos y Salarios": 2700, ... }. Se busca cuenta del catalogo
+    // por legacy_payload_key cargado en recurringExpenseAccounts.
+    const legacy = templateData && typeof templateData === 'object' && !Array.isArray(templateData) ? templateData : {};
     const unmatched = [];
-    Object.entries(template).forEach(([key, value]) => {
-      const id = mapping[key];
+    Object.entries(legacy).forEach(([label, value]) => {
+      const account = recurringExpenseAccounts.find((a) => a.legacy_payload_key === label || a.name === label);
+      const id = account ? TEMPLATE_CODE_TO_MODEL_FIELD[account.code] : null;
       if (id) setFieldValue(id, value);
-      else unmatched.push(key);
+      else unmatched.push(label);
     });
     return unmatched;
   }
