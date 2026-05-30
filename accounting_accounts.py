@@ -58,6 +58,19 @@ LEDGER_ACCOUNT_LABELS = {
     "capital": "Capital",
     "retained_earnings": "Resultados Acumulados",
     "current_earnings": "Resultados del Ejercicio",
+    "revenue": "Ingresos",
+    "cogs": "Costo de Venta",
+    "exp_salaries": "Sueldos y Salarios",
+    "exp_services": "Servicios Publicos",
+    "depreciation_expense": "Gasto por Depreciacion",
+    "financial_expenses": "Gastos Financieros",
+    "exp_alcaldia_dgi": "Alcaldia y DGI",
+    "exp_fuel": "Combustible",
+    "exp_advertising": "Publicidad",
+    "exp_maintenance": "Mantenimientos",
+    "exp_rent": "Renta",
+    "exp_insurance": "Seguros",
+    "exp_other": "Otros Gastos",
 }
 
 

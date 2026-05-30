@@ -493,6 +493,7 @@ class AgentApiTest(unittest.TestCase):
                 aliases_json=json.dumps(["alquiler"]),
                 display_order=6195,
                 source="niif_pyme_enriched",
+                is_postable=1,
                 active=1,
             ))
             session.commit()
@@ -647,6 +648,58 @@ class AgentApiTest(unittest.TestCase):
 
         self.assertEqual(resp.status_code, 400)
         self.assertIn("Cuentas validas", resp.get_json()["error"])
+
+    def test_non_postable_catalog_account_is_rejected_with_child_suggestion(self):
+        with self.db_session() as session:
+            session.add(
+                AccountCatalog(
+                    id="niif_611",
+                    code="niif_611",
+                    niif_code="611",
+                    name="Sueldos",
+                    account_type="gasto",
+                    section="gastos_operativos",
+                    source="niif_pyme",
+                    is_postable=0,
+                )
+            )
+            session.add(
+                AccountCatalog(
+                    id="exp_salaries",
+                    code="exp_salaries",
+                    niif_code="611.01",
+                    name="Sueldos y Salarios",
+                    account_type="gasto",
+                    section="gastos_operativos",
+                    parent_code="niif_611",
+                    source="niif_pyme_enriched",
+                    is_postable=1,
+                )
+            )
+            session.commit()
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "journal_entry",
+                "args": {
+                    "month": "2026-01",
+                    "description": "Registro contra rubro",
+                    "lines": [
+                        {"account": "611", "debit": 1000, "credit": 0},
+                        {"account": "cash", "debit": 0, "credit": 1000},
+                    ],
+                },
+            }
+        )
+
+        resp = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "registra sueldos contra 611"},
+        )
+
+        self.assertEqual(resp.status_code, 400)
+        error = resp.get_json()["error"]
+        self.assertIn("es un rubro", error)
+        self.assertIn("611.01 Sueldos y Salarios", error)
 
     def test_journal_entry_outside_period_is_rejected(self):
         web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
@@ -1238,6 +1291,7 @@ class AgentApiTest(unittest.TestCase):
                     section="patrimonio",
                     aliases_json=json.dumps(["reserva"]),
                     source="test",
+                    is_postable=1,
                 )
             )
             session.commit()
@@ -1305,6 +1359,7 @@ class AgentApiTest(unittest.TestCase):
                     account_type="patrimonio",
                     section="patrimonio",
                     source="test",
+                    is_postable=1,
                 )
             )
             session.commit()
@@ -1390,6 +1445,7 @@ class AgentApiTest(unittest.TestCase):
                     account_type="patrimonio",
                     section="patrimonio",
                     source="test",
+                    is_postable=1,
                 )
             )
             session.commit()

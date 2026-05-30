@@ -288,10 +288,16 @@ def api_get_giro(giro_id: str):
 def api_list_account_catalog():
     try:
         service = AccountCatalogService(_db_session())
+        recurring_arg = str(request.args.get("recurring") or "").strip().lower()
+        recurring = True if recurring_arg in {"1", "true", "yes", "si"} else None
+        postable_arg = str(request.args.get("postable") or "").strip().lower()
+        postable = True if postable_arg in {"1", "true", "yes", "si"} else (False if postable_arg in {"0", "false", "no"} else None)
         accounts = service.list(
             query=request.args.get("q", ""),
-            account_type=request.args.get("type", ""),
+            account_type=request.args.get("type", "") or request.args.get("account_type", ""),
             section=request.args.get("section", ""),
+            recurring=recurring,
+            postable=postable,
         )
         return {"ok": True, "accounts": accounts, "summary": service.summary()}
     except Exception as exc:

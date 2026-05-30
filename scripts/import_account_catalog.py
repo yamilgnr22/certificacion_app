@@ -5,7 +5,7 @@ import csv
 import json
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -44,6 +44,9 @@ class CatalogRecord:
     display_order: int = 0
     source: str = "niif_pyme"
     required_model_account: bool = False
+    is_recurring_expense: bool = False
+    legacy_payload_key: str = ""
+    is_postable: bool = False
 
 
 INTERNAL_ACCOUNTS: list[CatalogRecord] = [
@@ -70,21 +73,71 @@ INTERNAL_ACCOUNTS: list[CatalogRecord] = [
     CatalogRecord("revenue", "Ventas", "ingreso", "ingresos", "411", "acreedora", "niif_41", ("ingresos", "ventas"), 4110, "niif_pyme_enriched", True),
     CatalogRecord("cogs", "Costo de los Productos Vendidos", "costo", "costo_ventas", "511", "deudora", "niif_51", ("costo de venta", "costo de ventas"), 5110, "niif_pyme_enriched", True),
     CatalogRecord("operating_expenses", "Gastos Operativos", "gasto", "gastos_operativos", "61", "deudora", "niif_6", ("gastos operativos",), 6100, "niif_pyme_enriched", True),
-    CatalogRecord("exp_salaries", "Sueldos y Salarios", "gasto", "gastos_operativos", "611.01", "deudora", "operating_expenses", ("sueldos", "salarios", "sueldos y salarios"), 6111, "niif_pyme_enriched", False),
-    CatalogRecord("exp_services", "Servicios Publicos", "gasto", "gastos_operativos", "612.01", "deudora", "operating_expenses", ("servicios publicos", "servicios públicos"), 6121, "niif_pyme_enriched", False),
+    CatalogRecord("exp_salaries", "Sueldos y Salarios", "gasto", "gastos_operativos", "611.01", "deudora", "operating_expenses", ("sueldos", "salarios", "sueldos y salarios"), 6111, "niif_pyme_enriched", False, True, "Sueldos y Salarios"),
+    CatalogRecord("exp_services", "Servicios Publicos", "gasto", "gastos_operativos", "612.01", "deudora", "operating_expenses", ("servicios publicos", "servicios públicos"), 6121, "niif_pyme_enriched", False, True, "Servicios Publicos"),
     CatalogRecord("depreciation_expense", "Gasto por Depreciacion", "gasto", "gastos_operativos", "613.01", "deudora", "operating_expenses", ("depreciaciones", "gasto por depreciacion"), 6131, "niif_pyme_enriched", True),
     CatalogRecord("financial_expenses", "Gastos Financieros", "gasto", "gastos_financieros", "615", "deudora", "operating_expenses", ("gastos financieros",), 6150, "niif_pyme_enriched", True),
-    CatalogRecord("exp_alcaldia_dgi", "Alcaldia y DGI", "gasto", "gastos_operativos", "619.01", "deudora", "niif_619", ("alcaldia y dgi", "alcaldía y dgi"), 6191, "niif_pyme_enriched", False),
-    CatalogRecord("exp_fuel", "Combustible", "gasto", "gastos_operativos", "619.02", "deudora", "niif_619", ("combustibles",), 6192, "niif_pyme_enriched", False),
-    CatalogRecord("exp_advertising", "Publicidad", "gasto", "gastos_operativos", "619.03", "deudora", "niif_619", ("publicidad",), 6193, "niif_pyme_enriched", False),
-    CatalogRecord("exp_maintenance", "Mantenimientos", "gasto", "gastos_operativos", "619.04", "deudora", "niif_619", ("mantenimiento",), 6194, "niif_pyme_enriched", False),
-    CatalogRecord("exp_rent", "Renta", "gasto", "gastos_operativos", "619.05", "deudora", "niif_619", ("alquiler", "arrendamiento"), 6195, "niif_pyme_enriched", False),
-    CatalogRecord("exp_insurance", "Seguros", "gasto", "gastos_operativos", "619.06", "deudora", "niif_619", ("seguro",), 6196, "niif_pyme_enriched", False),
-    CatalogRecord("exp_other", "Otros Gastos", "gasto", "gastos_operativos", "619.99", "deudora", "niif_619", ("otros gastos", "otros"), 6199, "niif_pyme_enriched", False),
+    CatalogRecord("exp_alcaldia_dgi", "Alcaldia y DGI", "gasto", "gastos_operativos", "619.01", "deudora", "niif_619", ("alcaldia y dgi", "alcaldía y dgi"), 6191, "niif_pyme_enriched", False, True, "Alcaldia y DGI"),
+    CatalogRecord("exp_fuel", "Combustible", "gasto", "gastos_operativos", "619.02", "deudora", "niif_619", ("combustibles",), 6192, "niif_pyme_enriched", False, True, "Combustible"),
+    CatalogRecord("exp_advertising", "Publicidad", "gasto", "gastos_operativos", "619.03", "deudora", "niif_619", ("publicidad",), 6193, "niif_pyme_enriched", False, True, "Publicidad"),
+    CatalogRecord("exp_maintenance", "Mantenimientos", "gasto", "gastos_operativos", "619.04", "deudora", "niif_619", ("mantenimiento",), 6194, "niif_pyme_enriched", False, True, "Mantenimientos"),
+    CatalogRecord("exp_rent", "Renta", "gasto", "gastos_operativos", "619.05", "deudora", "niif_619", ("alquiler", "arrendamiento"), 6195, "niif_pyme_enriched", False, True, "Renta"),
+    CatalogRecord("exp_insurance", "Seguros", "gasto", "gastos_operativos", "619.06", "deudora", "niif_619", ("seguro",), 6196, "niif_pyme_enriched", False, True, "Seguros"),
+    CatalogRecord("exp_other", "Otros Gastos", "gasto", "gastos_operativos", "619.99", "deudora", "niif_619", ("otros gastos", "otros"), 6199, "niif_pyme_enriched", False, True, "Otros Gastos"),
 ]
 
 
-SKIP_NIIF_CODES = {record.niif_code for record in INTERNAL_ACCOUNTS if re.fullmatch(r"\d+", record.niif_code)}
+POSTABLE_ACCOUNT_CODES = {
+    "cash",
+    "accounts_receivable",
+    "inventory",
+    "ppe_real_estate",
+    "ppe_equipment",
+    "ppe_vehicles",
+    "accum_depreciation",
+    "suppliers",
+    "credit_cards",
+    "taxes_payable",
+    "accrued_expenses",
+    "loans_mortgage",
+    "loans_consumo",
+    "loans_personal",
+    "loans_pledge",
+    "loans_commercial",
+    "capital",
+    "retained_earnings",
+    "current_earnings",
+    "legal_reserve",
+    "revenue",
+    "cogs",
+    "exp_salaries",
+    "exp_services",
+    "depreciation_expense",
+    "financial_expenses",
+    "exp_alcaldia_dgi",
+    "exp_fuel",
+    "exp_advertising",
+    "exp_maintenance",
+    "exp_rent",
+    "exp_insurance",
+    "exp_other",
+}
+
+PARENT_OVERRIDES = {
+    "exp_salaries": "niif_611",
+    "exp_services": "niif_612",
+    "depreciation_expense": "niif_613",
+    "financial_expenses": "niif_615",
+    "exp_alcaldia_dgi": "niif_619",
+    "exp_fuel": "niif_619",
+    "exp_advertising": "niif_619",
+    "exp_maintenance": "niif_619",
+    "exp_rent": "niif_619",
+    "exp_insurance": "niif_619",
+    "exp_other": "niif_619",
+}
+
+SKIP_NIIF_CODES = {record.niif_code for record in INTERNAL_ACCOUNTS if re.fullmatch(r"\d+", record.niif_code)} - {"615"}
 
 
 def load_catalog_records(path: Path) -> list[CatalogRecord]:
@@ -114,6 +167,12 @@ def load_catalog_records(path: Path) -> list[CatalogRecord]:
             )
     for record in INTERNAL_ACCOUNTS:
         records[record.code] = record
+    for code, parent_code in PARENT_OVERRIDES.items():
+        if code in records:
+            records[code] = replace(records[code], parent_code=parent_code)
+    for code in POSTABLE_ACCOUNT_CODES:
+        if code in records:
+            records[code] = replace(records[code], is_postable=True)
     _validate_records(records.values())
     return sorted(records.values(), key=lambda record: (record.display_order, record.code))
 
@@ -268,6 +327,9 @@ def _record_dict(record: CatalogRecord) -> dict[str, Any]:
         "display_order": record.display_order,
         "source": record.source,
         "required_model_account": record.required_model_account,
+        "is_recurring_expense": record.is_recurring_expense,
+        "legacy_payload_key": record.legacy_payload_key,
+        "is_postable": record.is_postable,
     }
 
 
@@ -282,6 +344,9 @@ def _apply_record(account: AccountCatalog, record: CatalogRecord) -> None:
     account.aliases_json = json.dumps(list(record.aliases), ensure_ascii=False)
     account.display_order = int(record.display_order or 0)
     account.required_model_account = 1 if record.required_model_account else 0
+    account.is_recurring_expense = 1 if record.is_recurring_expense else 0
+    account.legacy_payload_key = record.legacy_payload_key or None
+    account.is_postable = 1 if record.is_postable else 0
     account.source = record.source
     account.active = 1
 

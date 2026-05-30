@@ -6,6 +6,7 @@ from pathlib import Path
 
 from docx import Document
 
+from accounting_model import get_account_ledger, get_trace
 from document_generator import generar_documento_completo
 from financial_model import build_financial_model, result_to_json
 from model_chat import heuristic_interpret_cash_instruction, solve_cash_target
@@ -121,6 +122,53 @@ class FinancialModelTest(unittest.TestCase):
         self.assertTrue(any(voucher["type"] == "cogs" for voucher in accounting["vouchers"]))
         self.assertTrue(any(voucher["type"] == "expenses" for voucher in accounting["vouchers"]))
         self.assertIn("Resultados Acumulados", accounting["accounts"])
+        expense_voucher = next(voucher for voucher in accounting["vouchers"] if voucher["type"] == "expenses")
+        expense_accounts = {line["account"] for line in expense_voucher["lines"]}
+        self.assertIn("Sueldos y Salarios", expense_accounts)
+        self.assertIn("Servicios Publicos", expense_accounts)
+        self.assertNotIn("Gastos Operativos", expense_accounts)
+        close_voucher = next(voucher for voucher in accounting["vouchers"] if voucher["type"] == "year_close")
+        close_accounts = {line["account"] for line in close_voucher["lines"]}
+        self.assertIn("Sueldos y Salarios", close_accounts)
+
+    def test_parent_expense_ledger_rolls_up_child_accounts(self):
+        result = build_financial_model(sample_payload())
+
+        child_rows = get_account_ledger(result.accounting, "Sueldos y Salarios")
+        parent_rows = get_account_ledger(result.accounting, "Sueldos")
+
+        self.assertTrue(child_rows)
+        self.assertTrue(parent_rows)
+        self.assertEqual(
+            sum(row["debit"] for row in child_rows),
+            sum(row["debit"] for row in parent_rows),
+        )
+        trace = get_trace(result.accounting, "Sueldos", result.summary["months"][0])
+        self.assertGreater(trace["debits"], 0)
+
+    def test_operating_expense_rollup_equals_sum_of_subcuentas(self):
+        """Invariante post voucher-por-subcuenta: el mayor del rubro
+        'Gastos Operativos' debe igualar la suma de mayores de todas las
+        subcuentas hijas declaradas en EXPENSE_ROLLUP_CHILDREN. Protege
+        contra que el motor pierda lineas en el cambio a generacion por
+        subcuenta, y garantiza que un periodo abierto despues del cambio
+        sigue produciendo el mismo total de ER."""
+        from accounting_model import EXPENSE_ROLLUP_CHILDREN
+
+        result = build_financial_model(sample_payload())
+        children = EXPENSE_ROLLUP_CHILDREN["Gastos Operativos"]
+        sub_total = 0.0
+        any_movement = False
+        for label in children:
+            rows = get_account_ledger(result.accounting, label)
+            sub_total += sum(row["debit"] for row in rows)
+            if rows:
+                any_movement = True
+        self.assertTrue(any_movement, "ninguna subcuenta hoja tiene movimientos")
+
+        rollup_rows = get_account_ledger(result.accounting, "Gastos Operativos")
+        rollup_total = sum(row["debit"] for row in rollup_rows)
+        self.assertAlmostEqual(rollup_total, sub_total, places=0)
 
     def test_accounting_trace_explains_retained_earnings_year_close(self):
         payload = sample_payload()

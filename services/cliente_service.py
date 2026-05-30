@@ -164,10 +164,9 @@ class ClienteService:
         cliente = self.clientes.get(cliente_id)
         if not cliente or not cliente.activo:
             return None
-        cleaned = self._clean_template(plantilla)
         before = cliente_to_dict(cliente, include_giro=False)
         try:
-            self.plantillas.set_cliente_template(cliente_id, cleaned)
+            result = self.plantillas.set_cliente_template(cliente_id, plantilla)
             self.session.flush()
             after = cliente_to_dict(cliente, include_giro=False)
             self.audit.log(
@@ -178,10 +177,19 @@ class ClienteService:
                 summary=f"Actualizo plantilla de gastos de {cliente.nombre_completo}",
                 before=before,
                 after=after,
-                metadata={"changed_fields": ["plantilla_gastos_json"], "template_keys": sorted(cleaned.keys())},
+                metadata={
+                    "changed_fields": ["plantilla_gastos_json"],
+                    "template_account_codes": [item["account_code"] for item in result.get("items", [])],
+                    "template_warnings": result.get("warnings", []),
+                },
             )
             self.session.commit()
-            return self.plantillas.effective_for_cliente(cliente_id)
+            effective = self.plantillas.effective_for_cliente(cliente_id)
+            effective["warnings"] = [*result.get("warnings", []), *effective.get("warnings", [])]
+            return effective
+        except ValueError as exc:
+            self.session.rollback()
+            raise ServiceValidationError(str(exc)) from exc
         except Exception:
             self.session.rollback()
             raise
@@ -228,20 +236,8 @@ class ClienteService:
         return out
 
     def _clean_template(self, plantilla: dict[str, Any]) -> dict[str, float]:
+        # Conservado para compatibilidad con tests/imports antiguos. La validacion
+        # real de plantillas vive en PlantillaService porque depende del catalogo.
         if not isinstance(plantilla, dict):
             raise ServiceValidationError("La plantilla debe ser un objeto JSON")
-        cleaned: dict[str, float] = {}
-        for key, value in plantilla.items():
-            name = str(key or "").strip()
-            if not name:
-                continue
-            try:
-                amount = float(value)
-            except (TypeError, ValueError) as exc:
-                raise ServiceValidationError(f"Monto invalido para {name}") from exc
-            if amount < 0:
-                raise ServiceValidationError(f"Monto negativo no permitido para {name}")
-            cleaned[name] = amount
-        if not cleaned:
-            raise ServiceValidationError("La plantilla no puede estar vacia")
-        return cleaned
+        return {}

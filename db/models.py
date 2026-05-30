@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import CheckConstraint, Date, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -180,6 +180,9 @@ class LegacyCallCounter(Base):
 
 class AccountCatalog(Base):
     __tablename__ = "account_catalog"
+    __table_args__ = (
+        CheckConstraint("is_postable IN (0, 1)", name="ck_account_catalog_is_postable"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     code: Mapped[str] = mapped_column(String(120), nullable=False, unique=True, index=True)
@@ -192,6 +195,9 @@ class AccountCatalog(Base):
     aliases_json: Mapped[str | None] = mapped_column(Text)
     display_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     required_model_account: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    is_recurring_expense: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    legacy_payload_key: Mapped[str | None] = mapped_column(String(120))
+    is_postable: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     source: Mapped[str] = mapped_column(String(40), nullable=False, default="system")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)

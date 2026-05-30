@@ -91,6 +91,15 @@ class AccountCatalogImportTest(unittest.TestCase):
         self.assertEqual(cash.required_model_account, 1)
         self.assertIsNotNone(rent)
         self.assertEqual(rent.parent_code, "niif_619")
+        self.assertEqual(rent.is_recurring_expense, 1)
+        self.assertEqual(rent.legacy_payload_key, "Renta")
+        self.assertEqual(rent.is_postable, 1)
+        salaries = session.get(AccountCatalog, "exp_salaries")
+        salaries_parent = session.get(AccountCatalog, "niif_611")
+        self.assertIsNotNone(salaries_parent)
+        self.assertEqual(salaries.parent_code, "niif_611")
+        self.assertEqual(salaries.is_postable, 1)
+        self.assertEqual(salaries_parent.is_postable, 0)
         self.assertIsNotNone(ppe_parent)
 
     def test_missing_columns_fail(self):

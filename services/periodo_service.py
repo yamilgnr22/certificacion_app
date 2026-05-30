@@ -183,7 +183,11 @@ class PeriodoService:
             data = dict(data)  # copia para no mutar el input del caller
             data["expenses_override"] = dict(plantilla_efectiva.get("plantilla") or {})
             plantilla_origen = plantilla_efectiva.get("origen", "default")
+            plantilla_warnings = list(plantilla_efectiva.get("warnings") or [])
         else:
+            expenses_override, plantilla_warnings = self.plantillas.engine_expenses_from_template(data.get("expenses_override") or {})
+            data = dict(data)
+            data["expenses_override"] = expenses_override
             plantilla_origen = "override_explicito"
 
         payload = self._build_payload(
@@ -230,6 +234,7 @@ class PeriodoService:
                     "rollforward": bool(rollforward_info and rollforward_info.get("has_anterior")),
                     "warning": (rollforward_info or {}).get("warning"),
                     "plantilla_origen": plantilla_origen,
+                    "plantilla_warnings": plantilla_warnings,
                 },
             )
             self.session.commit()

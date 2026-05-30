@@ -845,6 +845,9 @@ class AgentCommandService:
             if not label:
                 invalid_accounts.append(str(raw_account or "").strip() or "(sin cuenta)")
                 continue
+            postable_error = self._postable_account_error(account, label)
+            if postable_error:
+                raise AgentValidationError(postable_error)
             debit = round(float(_to_float(raw.get("debit") or raw.get("debe")) or 0), 2)
             credit = round(float(_to_float(raw.get("credit") or raw.get("haber")) or 0), 2)
             lines.append({
@@ -902,6 +905,18 @@ class AgentCommandService:
         found = self.accounts.get_by_code(account) or self.accounts.get_by_name(account)
         return found.name if found else ""
 
+    def _postable_account_error(self, account: str, label: str) -> str:
+        found = self.accounts.get_by_code(account) or self.accounts.get_by_name(account) or self.accounts.find_by_text(label)
+        if not found or int(getattr(found, "is_postable", 0) or 0) == 1:
+            return ""
+        children = [
+            f"{child.niif_code or child.code} {child.name}".strip()
+            for child in self.accounts.list_children(found.code)
+            if int(getattr(child, "is_postable", 0) or 0) == 1
+        ]
+        suffix = f" Subcuentas disponibles: {', '.join(children)}." if children else " No tiene subcuentas registrables activas."
+        return f"{found.niif_code or found.code} {found.name} es un rubro; use una subcuenta registrable.{suffix}"
+
     def _normalize_account(self, raw_account: Any) -> str:
         normalized = self.tools.normalize_account(str(raw_account or ""))
         if normalized in LEDGER_ACCOUNT_LABELS:
@@ -912,6 +927,8 @@ class AgentCommandService:
     def _valid_account_suggestions(self, payload: Mapping[str, Any]) -> list[str]:
         labels = _valid_account_suggestions(payload)
         for account in self.accounts.list_active():
+            if int(getattr(account, "is_postable", 0) or 0) != 1:
+                continue
             label = account.name.strip()
             if label and label not in labels:
                 labels.append(label)
@@ -987,6 +1004,7 @@ class AgentCommandService:
             "parent_code": str(args.get("parent_code") or "").strip(),
             "aliases": [str(alias).strip() for alias in (args.get("aliases") or []) if str(alias).strip()] if isinstance(args.get("aliases"), list) else [],
             "source": "chat_financiero",
+            "is_postable": bool(args.get("is_postable", True)),
             "instruction_id": command_id,
             "message": original_message,
         }
@@ -1041,6 +1059,7 @@ class AgentCommandService:
             parent_code=str(account.get("parent_code") or "") or None,
             aliases_json=json.dumps(list(account.get("aliases") or []), ensure_ascii=False),
             source=str(account.get("source") or "chat_financiero"),
+            is_postable=1 if bool(account.get("is_postable", True)) else 0,
         )
         AuditService(self.session).log(
             cpa_user=cpa_user,
@@ -1499,6 +1518,7 @@ def _append_dynamic_account(payload: Mapping[str, Any], account: Mapping[str, An
         "normal_balance": str(account.get("normal_balance") or "").strip(),
         "parent_code": str(account.get("parent_code") or "").strip(),
         "aliases": list(account.get("aliases") or []),
+        "is_postable": bool(account.get("is_postable", True)),
         "source": str(account.get("source") or "chat_financiero").strip(),
     }
     existing_codes = {str(item.get("code") or "").strip() for item in accounts if isinstance(item, Mapping)}
@@ -1538,6 +1558,7 @@ def _account_catalog_payload(account: Any) -> dict[str, Any]:
         "normal_balance": account.normal_balance,
         "parent_code": account.parent_code,
         "aliases": aliases if isinstance(aliases, list) else [],
+        "is_postable": bool(getattr(account, "is_postable", 1)),
         "source": account.source,
     }
 

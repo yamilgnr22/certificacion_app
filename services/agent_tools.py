@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
 from accounting_accounts import account_label, normalize_account
+from accounting_model import get_account_ledger, get_trace
 from financial_model import build_financial_model
 
 
@@ -128,14 +129,14 @@ class AgentToolRegistry:
         return result
 
     def _explain_balance(self, payload: Mapping[str, Any], args: Mapping[str, Any]) -> dict[str, Any]:
-        account = self.normalize_account(str(args.get("account") or ""))
+        account = _readonly_account(self.normalize_account(str(args.get("account") or "")))
         month = str(args.get("month") or "").strip()[:7]
         result = build_financial_model(payload)
         if not month:
             months = result.summary.get("all_months") or result.summary.get("months") or []
             month = str(months[-1]) if months else ""
         account_name = account_label(account)
-        trace = _find_trace(result.accounting.get("trace") or {}, account=account, account_name=account_name, month=month)
+        trace = get_trace(result.accounting, account_name or account, month)
         if not trace:
             return {
                 "response_type": "question",
@@ -174,16 +175,15 @@ class AgentToolRegistry:
         }
 
     def _show_ledger(self, payload: Mapping[str, Any], args: Mapping[str, Any]) -> dict[str, Any]:
-        account = self.normalize_account(str(args.get("account") or ""))
+        account = _readonly_account(self.normalize_account(str(args.get("account") or "")))
         account_name = account_label(account)
         start_month = str(args.get("start_month") or "").strip()[:7]
         end_month = str(args.get("end_month") or "").strip()[:7]
         result = build_financial_model(payload)
         rows = [
             _ledger_row(row)
-            for row in (result.accounting.get("ledger") or [])
-            if _same_account(row.get("account"), account, account_name)
-            and (not start_month or str(row.get("month") or "")[:7] >= start_month)
+            for row in get_account_ledger(result.accounting, account_name or account)
+            if (not start_month or str(row.get("month") or "")[:7] >= start_month)
             and (not end_month or str(row.get("month") or "")[:7] <= end_month)
         ]
         rows.sort(key=lambda row: (row["date"], row["voucher_id"], row["line_no"]))
@@ -290,6 +290,17 @@ def _find_trace(trace_map: Mapping[str, Any], *, account: str, account_name: str
         or trace_map.get(f"{account_name}|{month}")
         or {}
     )
+
+
+def _readonly_account(account: str) -> str:
+    aliases = {
+        "61": "Gastos Operativos",
+        "611": "Sueldos",
+        "612": "Servicios",
+        "613": "Depreciaciones",
+    }
+    raw = str(account or "").strip()
+    return aliases.get(raw, raw)
 
 
 def _same_account(value: Any, account: str, account_name: str) -> bool:

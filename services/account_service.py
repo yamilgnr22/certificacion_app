@@ -44,10 +44,18 @@ class AccountCatalogService:
         query: str = "",
         account_type: str = "",
         section: str = "",
+        recurring: bool | None = None,
+        postable: bool | None = None,
     ) -> list[dict]:
+        if recurring is True:
+            accounts = self.repo.list_recurring_expenses()
+            if query:
+                needle = query.strip().lower()
+                accounts = [account for account in accounts if needle in account.name.lower() or needle in account.code.lower()]
+            return [account_to_dict(account) for account in accounts]
         return [
             account_to_dict(account)
-            for account in self.repo.list_filtered(query=query, account_type=account_type, section=section)
+            for account in self.repo.list_filtered(query=query, account_type=account_type, section=section, postable=postable)
         ]
 
     def summary(self) -> dict:

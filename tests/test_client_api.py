@@ -3,16 +3,18 @@ from __future__ import annotations
 import io
 import json
 import unittest
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 import web_server
-from db.models import AuditLog, Base, Cliente
+from db.models import AccountCatalog, AuditLog, Base, Cliente
 from db.seed import seed_giros
 from repositories import PeriodoRepository
 from repositories.audit_repo import AuditRepository
+from scripts.import_account_catalog import INTERNAL_ACCOUNTS, POSTABLE_ACCOUNT_CODES
 
 
 def cliente_payload(**overrides):
@@ -35,6 +37,30 @@ class ClienteApiTest(unittest.TestCase):
         self.factory = sessionmaker(bind=self.engine, expire_on_commit=False, future=True)
         with self.factory() as session:
             seed_giros(session)
+            now = datetime.now(timezone.utc)
+            for record in INTERNAL_ACCOUNTS:
+                session.add(
+                    AccountCatalog(
+                        id=record.code,
+                        code=record.code,
+                        niif_code=record.niif_code or None,
+                        name=record.name,
+                        account_type=record.account_type,
+                        section=record.section,
+                        normal_balance=record.normal_balance or None,
+                        parent_code=record.parent_code or None,
+                        aliases_json=json.dumps(list(record.aliases), ensure_ascii=False),
+                        display_order=record.display_order,
+                        required_model_account=1 if record.required_model_account else 0,
+                        is_recurring_expense=1 if record.is_recurring_expense else 0,
+                        legacy_payload_key=record.legacy_payload_key or None,
+                        is_postable=1 if (record.is_postable or record.code in POSTABLE_ACCOUNT_CODES) else 0,
+                        source=record.source,
+                        created_at=now,
+                        updated_at=now,
+                        active=1,
+                    )
+                )
             session.commit()
         self.old_engine = web_server.app.config.get("DB_ENGINE")
         self.old_require = web_server.app.config.get("DB_REQUIRE_ALEMBIC")
@@ -118,7 +144,9 @@ class ClienteApiTest(unittest.TestCase):
         self.assertEqual(data["cliente"]["id"], created["id"])
         self.assertEqual(data["periodos"], [])
         self.assertEqual(data["plantilla_gastos"]["origen"], "giro")
+        self.assertEqual(data["plantilla_gastos"]["version"], 2)
         self.assertIn("Renta", data["plantilla_gastos"]["plantilla"])
+        self.assertIn("exp_rent", {item["account_code"] for item in data["plantilla_gastos"]["items"]})
 
     def test_update_cliente_audits_hashes_and_changed_fields(self):
         created = self.create_cliente()
@@ -170,14 +198,33 @@ class ClienteApiTest(unittest.TestCase):
     def test_set_plantilla_merges_with_giro_template(self):
         created = self.create_cliente()
 
-        resp = self.client.put(f"/api/clientes/{created['id']}/plantilla-gastos", json={"Renta": 999, "Nuevo gasto": 123})
+        resp = self.client.put(
+            f"/api/clientes/{created['id']}/plantilla-gastos",
+            json={"items": [{"account_code": "exp_rent", "amount_usd": 999}]},
+        )
         data = resp.get_json()["plantilla_gastos"]
 
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(data["origen"], "cliente")
         self.assertEqual(data["plantilla"]["Renta"], 999.0)
-        self.assertEqual(data["plantilla"]["Nuevo gasto"], 123.0)
         self.assertIn("Sueldos y Salarios", data["plantilla"])
+        self.assertIn("exp_rent", {item["account_code"] for item in data["items"]})
+
+    def test_legacy_template_duplicate_names_merge_by_catalog_account(self):
+        created = self.create_cliente()
+
+        resp = self.client.put(
+            f"/api/clientes/{created['id']}/plantilla-gastos",
+            json={"Servicios Publicos": 600, "Servicios Públicos": 160},
+        )
+        data = resp.get_json()["plantilla_gastos"]
+        services = [item for item in data["items"] if item["account_code"] == "exp_services"]
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(services), 1)
+        self.assertEqual(services[0]["amount_usd"], 760.0)
+        self.assertEqual(data["plantilla"]["Servicios Publicos"], 760.0)
+        self.assertTrue(data["warnings"])
 
     def test_audit_chain_for_real_cliente_operations(self):
         created = self.create_cliente()

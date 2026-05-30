@@ -20,6 +20,10 @@ class AccountRepository:
         stmt = select(AccountCatalog).where(AccountCatalog.code == str(code or "").strip(), AccountCatalog.active == 1)
         return self.session.scalar(stmt)
 
+    def get_by_code_any(self, code: str) -> AccountCatalog | None:
+        stmt = select(AccountCatalog).where(AccountCatalog.code == str(code or "").strip())
+        return self.session.scalar(stmt)
+
     def get_by_name(self, name: str) -> AccountCatalog | None:
         needle = str(name or "").strip().lower()
         if not needle:
@@ -35,6 +39,7 @@ class AccountRepository:
         if not needle:
             return None
         stmt = select(AccountCatalog).where(AccountCatalog.active == 1)
+        matches: list[AccountCatalog] = []
         for account in self.session.scalars(stmt):
             candidates = [
                 account.code,
@@ -48,8 +53,11 @@ class AccountRepository:
             except Exception:
                 pass
             if any(plain_account_text(candidate) == needle for candidate in candidates if candidate):
-                return account
-        return None
+                matches.append(account)
+        if not matches:
+            return None
+        matches.sort(key=lambda account: (0 if account.is_postable else 1, account.display_order, account.name))
+        return matches[0]
 
     def list_active(self) -> list[AccountCatalog]:
         stmt = (
@@ -59,12 +67,36 @@ class AccountRepository:
         )
         return list(self.session.scalars(stmt))
 
-    def list_filtered(self, *, query: str = "", account_type: str = "", section: str = "") -> list[AccountCatalog]:
+    def list_recurring_expenses(self) -> list[AccountCatalog]:
+        stmt = (
+            select(AccountCatalog)
+            .where(
+                AccountCatalog.active == 1,
+                AccountCatalog.account_type == "gasto",
+                AccountCatalog.section == "gastos_operativos",
+                AccountCatalog.is_recurring_expense == 1,
+                AccountCatalog.is_postable == 1,
+            )
+            .order_by(AccountCatalog.display_order, AccountCatalog.name)
+        )
+        return list(self.session.scalars(stmt))
+
+    def list_children(self, parent_code: str) -> list[AccountCatalog]:
+        stmt = (
+            select(AccountCatalog)
+            .where(AccountCatalog.active == 1, AccountCatalog.parent_code == str(parent_code or "").strip())
+            .order_by(AccountCatalog.display_order, AccountCatalog.name)
+        )
+        return list(self.session.scalars(stmt))
+
+    def list_filtered(self, *, query: str = "", account_type: str = "", section: str = "", postable: bool | None = None) -> list[AccountCatalog]:
         stmt = select(AccountCatalog).where(AccountCatalog.active == 1)
         if account_type:
             stmt = stmt.where(AccountCatalog.account_type == account_type)
         if section:
             stmt = stmt.where(AccountCatalog.section == section)
+        if postable is not None:
+            stmt = stmt.where(AccountCatalog.is_postable == (1 if postable else 0))
         records = list(self.session.scalars(stmt.order_by(AccountCatalog.display_order, AccountCatalog.name)))
         needle = plain_account_text(query)
         if not needle:

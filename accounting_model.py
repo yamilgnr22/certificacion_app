@@ -27,6 +27,18 @@ ACCOUNT_TYPES = {
     "Ingresos": "revenue",
     "Costo de Venta": "expense",
     "Gastos Operativos": "expense",
+    "Sueldos": "expense",
+    "Sueldos y Salarios": "expense",
+    "Servicios": "expense",
+    "Servicios Publicos": "expense",
+    "Depreciaciones": "expense",
+    "Alcaldia y DGI": "expense",
+    "Combustible": "expense",
+    "Publicidad": "expense",
+    "Mantenimientos": "expense",
+    "Renta": "expense",
+    "Seguros": "expense",
+    "Otros Gastos": "expense",
     "Gastos Financieros": "expense",
     "Gasto por Depreciacion": "expense",
 }
@@ -62,6 +74,26 @@ LOAN_ACCOUNTS = {
 }
 
 
+OPERATING_EXPENSE_LABELS = [
+    "Sueldos y Salarios",
+    "Servicios Publicos",
+    "Alcaldia y DGI",
+    "Combustible",
+    "Publicidad",
+    "Mantenimientos",
+    "Renta",
+    "Seguros",
+    "Otros Gastos",
+]
+
+EXPENSE_ROLLUP_CHILDREN = {
+    "Gastos Operativos": [*OPERATING_EXPENSE_LABELS, "Gasto por Depreciacion"],
+    "Sueldos": ["Sueldos y Salarios"],
+    "Servicios": ["Servicios Publicos"],
+    "Depreciaciones": ["Gasto por Depreciacion"],
+}
+
+
 def build_accounting(
     payload: Mapping[str, Any],
     monthly: list[Mapping[str, Any]],
@@ -79,7 +111,7 @@ def build_accounting(
         "saved_vouchers": saved_vouchers,
         "ledger": ledger,
         "trace": traces,
-        "accounts": sorted({line["account"] for line in ledger}),
+        "accounts": sorted({line["account"] for line in ledger} | set(EXPENSE_ROLLUP_CHILDREN)),
         "summary": {
             "voucher_count": len(vouchers),
             "ledger_line_count": len(ledger),
@@ -90,10 +122,13 @@ def build_accounting(
 
 def get_account_ledger(accounting: Mapping[str, Any], account: str) -> list[Dict[str, Any]]:
     account = str(account or "")
-    return [line for line in accounting.get("ledger", []) if line.get("account") == account]
+    return _ledger_for_account(accounting.get("ledger", []), account)
 
 
 def get_trace(accounting: Mapping[str, Any], account: str, month: str) -> Dict[str, Any]:
+    account = str(account or "")
+    if _rollup_children(account):
+        return _trace_from_ledger(_ledger_for_account(accounting.get("ledger", []), account), account, str(month or "")[:7])
     key = f"{account}|{str(month or '')[:7]}"
     return dict((accounting.get("trace") or {}).get(key) or {
         "account": account,
@@ -217,10 +252,10 @@ def _monthly_vouchers(item: Mapping[str, Any], month: str) -> Iterable[Dict[str,
 
     cash_expenses = _round(item.get("cash_operating_expenses"))
     if cash_expenses:
-        yield _voucher("", month, "expenses", "Gastos operativos desembolsables", [
-            _line("Gastos Operativos", debit=cash_expenses),
-            _line("Efectivo y Equivalentes de Efectivo", credit=cash_expenses),
-        ])
+        lines = _expense_lines(item, include_depreciation=False)
+        if lines:
+            lines.append(_line("Efectivo y Equivalentes de Efectivo", credit=sum(line["debit"] for line in lines)))
+            yield _voucher("", month, "expenses", "Gastos operativos desembolsables", lines)
 
     depreciation = _round(item.get("depreciation"))
     if depreciation:
@@ -275,6 +310,29 @@ def _monthly_vouchers(item: Mapping[str, Any], month: str) -> Iterable[Dict[str,
     closing = _income_close_voucher(item, month)
     if closing:
         yield closing
+
+
+def _expense_lines(
+    item: Mapping[str, Any],
+    *,
+    include_depreciation: bool,
+    side: str = "debit",
+    reference: str = "",
+) -> list[Dict[str, Any]]:
+    expenses = dict(item.get("expenses") or {})
+    labels = [*OPERATING_EXPENSE_LABELS, "Gastos Financieros"]
+    if include_depreciation:
+        labels.append("Gasto por Depreciacion")
+    out: list[Dict[str, Any]] = []
+    for label in labels:
+        amount = _round(expenses.get(label))
+        if not amount:
+            continue
+        if side == "credit":
+            out.append(_line(label, credit=amount, reference=reference))
+        else:
+            out.append(_line(label, debit=amount, reference=reference))
+    return out
 
 
 def _equity_vouchers(item: Mapping[str, Any], month: str) -> Iterable[Dict[str, Any]]:
@@ -357,8 +415,8 @@ def _income_close_voucher(item: Mapping[str, Any], month: str) -> Dict[str, Any]
     lines = [
         _line("Ingresos", debit=revenue, reference="Cierre mensual de ingresos"),
         _line("Costo de Venta", credit=cogs, reference="Cierre mensual de costos"),
-        _line("Gastos Operativos", credit=max(total_expenses, 0), reference="Cierre mensual de gastos"),
     ]
+    lines.extend(_expense_lines(item, include_depreciation=True, side="credit", reference="Cierre mensual de gastos"))
     if net_income >= 0:
         lines.append(_line("Resultados del Ejercicio", credit=net_income, reference="Utilidad del mes"))
     else:
@@ -422,6 +480,55 @@ def _build_traces(ledger: list[Mapping[str, Any]]) -> Dict[str, Dict[str, Any]]:
             traces[f"{account}|{month}"] = trace
             opening = _round(closing)
     return traces
+
+
+def _rollup_children(account: str) -> list[str]:
+    return list(EXPENSE_ROLLUP_CHILDREN.get(str(account or ""), []))
+
+
+def _ledger_for_account(ledger: Iterable[Mapping[str, Any]], account: str) -> list[Dict[str, Any]]:
+    account = str(account or "")
+    children = set(_rollup_children(account))
+    if not children:
+        return [dict(line) for line in ledger if line.get("account") == account]
+    rows: list[Dict[str, Any]] = []
+    for line in ledger:
+        line_account = str(line.get("account") or "")
+        if line_account != account and line_account not in children:
+            continue
+        row = dict(line)
+        row["source_account"] = line_account
+        row["account"] = account
+        rows.append(row)
+    rows.sort(key=lambda row: (str(row.get("date") or ""), str(row.get("voucher_id") or ""), int(row.get("line_no") or 0)))
+    running = 0.0
+    for row in rows:
+        running = _round(running + _normal_delta(account, float(row.get("debit") or 0), float(row.get("credit") or 0)))
+        row["running_balance"] = running
+    return rows
+
+
+def _trace_from_ledger(ledger: list[Mapping[str, Any]], account: str, month: str) -> Dict[str, Any]:
+    opening = 0.0
+    entries: list[Mapping[str, Any]] = []
+    for row in ledger:
+        row_month = str(row.get("month") or "")[:7]
+        if row_month < month:
+            opening = _round(row.get("running_balance"))
+        elif row_month == month:
+            entries.append(row)
+    debits = _round(sum(float(line.get("debit") or 0) for line in entries))
+    credits = _round(sum(float(line.get("credit") or 0) for line in entries))
+    closing = entries[-1].get("running_balance") if entries else opening
+    return {
+        "account": account,
+        "month": month,
+        "opening_balance": _round(opening),
+        "debits": debits,
+        "credits": credits,
+        "closing_balance": _round(closing),
+        "entries": [dict(line) for line in entries],
+    }
 
 
 def _saved_vouchers(payload: Mapping[str, Any]) -> list[Dict[str, Any]]:
@@ -537,6 +644,19 @@ def _account_label(account_key: Any) -> str:
         "capital": "Capital",
         "retained_earnings": "Resultados Acumulados",
         "current_earnings": "Resultados del Ejercicio",
+        "revenue": "Ingresos",
+        "cogs": "Costo de Venta",
+        "exp_salaries": "Sueldos y Salarios",
+        "exp_services": "Servicios Publicos",
+        "depreciation_expense": "Gasto por Depreciacion",
+        "financial_expenses": "Gastos Financieros",
+        "exp_alcaldia_dgi": "Alcaldia y DGI",
+        "exp_fuel": "Combustible",
+        "exp_advertising": "Publicidad",
+        "exp_maintenance": "Mantenimientos",
+        "exp_rent": "Renta",
+        "exp_insurance": "Seguros",
+        "exp_other": "Otros Gastos",
     }
     return mapping.get(str(account_key or ""), str(account_key or ""))
 
