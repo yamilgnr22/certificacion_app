@@ -32,11 +32,11 @@
   --muted: rgba(255, 255, 255, 0.60);
   --muted-strong: rgba(255, 255, 255, 0.38);
 
-  /* Primary - Material Indigo A200 */
-  --primary: #7c4dff;
-  --primary-700: #651fff;
-  --primary-soft: rgba(124, 77, 255, 0.16);
-  --primary-on: #ffffff;
+  /* Primary - Razer-inspired neon green */
+  --primary: #00e676;
+  --primary-700: #00c853;
+  --primary-soft: rgba(0, 230, 118, 0.14);
+  --primary-on: #0a1a0e;
 
   /* Estados */
   --success: #69f0ae;
