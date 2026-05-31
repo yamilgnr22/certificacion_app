@@ -1785,6 +1785,55 @@ class AgentApiTest(unittest.TestCase):
         self.assertEqual(limited.status_code, 400)
         self.assertIn("hasta 4", limited.get_json()["error"])
 
+    def test_plan_variability_pct_oscillates_around_average(self):
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "plan_multi_target_balance",
+                "args": {
+                    "account": "inventory",
+                    "currency": "USD",
+                    "months": ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05"],
+                    "average": 200000,
+                    "variability_pct": 10,
+                },
+            }
+        )
+        data = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "promedio inventario oscilando"},
+        ).get_json()
+        targets = [step["target_amount"] for step in data["plan"]["steps"]]
+        # Promedio exacto (normalizado a 200000)
+        self.assertEqual(round(sum(targets) / len(targets)), 200000)
+        # Todos dentro de +/- 10% del promedio
+        for value in targets:
+            self.assertGreaterEqual(value, 200000 * 0.85)
+            self.assertLessEqual(value, 200000 * 1.15)
+        # Al menos 3 valores distintos (no es plano)
+        self.assertGreaterEqual(len(set(round(v, 0) for v in targets)), 3)
+
+    def test_plan_variability_pct_zero_is_flat_distribution(self):
+        # Regresion: sin variability_pct (o ==0), comportamiento anterior intacto
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "plan_multi_target_balance",
+                "args": {
+                    "account": "inventory",
+                    "currency": "USD",
+                    "months": ["2026-01", "2026-02", "2026-03"],
+                    "average": 200000,
+                    "variability_pct": 0,
+                },
+            }
+        )
+        data = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "promedio plano"},
+        ).get_json()
+        targets = [step["target_amount"] for step in data["plan"]["steps"]]
+        self.assertEqual(len(set(targets)), 1)
+        self.assertEqual(targets[0], 200000)
+
     def test_plan_expired_and_finalized_period_guards(self):
         web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
             {

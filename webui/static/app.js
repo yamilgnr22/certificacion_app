@@ -3287,11 +3287,13 @@
     groups.reverse().forEach(group => {
       const item = document.createElement('div');
       item.className = 'history-item';
+      item.title = 'Click para ver detalle';
       const strong = document.createElement('strong');
       strong.textContent = group.message;
       const meta = document.createElement('span');
       const journalCount = (group.journalEntries || []).length;
-      meta.textContent = `${group.created_at || 'sin fecha'} | ${group.events.length} evento(s), ${journalCount} partida(s) | ${group.id}`;
+      const dateLabel = group.created_at ? new Date(group.created_at).toLocaleString('es-NI', { dateStyle: 'short', timeStyle: 'short' }) : 'sin fecha';
+      meta.textContent = `${dateLabel} · ${group.events.length} evento(s), ${journalCount} partida(s)`;
       const lines = document.createElement('div');
       lines.className = 'history-events';
       lines.textContent = [
@@ -3299,6 +3301,7 @@
         ...(group.journalEntries || []).map(formatJournalLine),
       ].join('\n');
       item.append(strong, meta, lines);
+      item.addEventListener('click', () => item.classList.toggle('expanded'));
       wrap.appendChild(item);
     });
   }

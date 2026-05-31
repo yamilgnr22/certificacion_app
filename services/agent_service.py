@@ -2170,10 +2170,11 @@ class AgentCommandService:
         overrides = args.get("overrides") if isinstance(args.get("overrides"), Mapping) else {}
         exceptions = args.get("exceptions") if isinstance(args.get("exceptions"), Mapping) else {}
         merged_overrides = {**overrides, **exceptions}
+        variability_pct = _to_float(args.get("variability_pct") or args.get("variabilidad_pct") or 0.0)
         distribution = self.tools.run(
             "compute_target_distribution",
             payload,
-            {"months": months, "average": average, "overrides": merged_overrides},
+            {"months": months, "average": average, "overrides": merged_overrides, "variability_pct": variability_pct},
         )
         targets = distribution.get("data", {}).get("targets") if isinstance(distribution.get("data"), Mapping) else []
         return [dict(item) for item in targets if isinstance(item, Mapping)]

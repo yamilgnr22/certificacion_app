@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import random
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
@@ -102,9 +104,9 @@ class AgentToolRegistry:
             ),
             "compute_target_distribution": AgentTool(
                 "compute_target_distribution",
-                "1.0.0",
+                "1.1.0",
                 False,
-                {"months": "YYYY-MM[]", "average": "number", "overrides": "object"},
+                {"months": "YYYY-MM[]", "average": "number", "overrides": "object", "variability_pct": "number"},
                 {"response_type": "answer", "data": "target_distribution"},
                 self._compute_target_distribution,
             ),
@@ -407,6 +409,7 @@ class AgentToolRegistry:
         months = [str(m).strip()[:7] for m in (args.get("months") or []) if str(m or "").strip()]
         average = _number(args.get("average") or args.get("target_average") or args.get("promedio"))
         overrides = args.get("overrides") if isinstance(args.get("overrides"), Mapping) else {}
+        variability_pct = _number(args.get("variability_pct") or args.get("variabilidad_pct") or 0)
         if not months or average <= 0:
             return {
                 "response_type": "question",
@@ -414,14 +417,33 @@ class AgentToolRegistry:
                 "ui_actions": [],
                 "data": {},
             }
+        # Clamp variabilidad razonable (0-50%); valores fuera de eso son casi seguro un error
+        variability_pct = max(0.0, min(50.0, variability_pct))
+        variability_frac = variability_pct / 100.0
+
         override_values = {str(k).strip()[:7]: _number(v) for k, v in overrides.items()}
         fixed_total = sum(v for v in override_values.values() if v > 0)
         free_months = [m for m in months if override_values.get(m, 0) <= 0]
-        free_value = (average * len(months) - fixed_total) / len(free_months) if free_months else average
+        free_avg = (average * len(months) - fixed_total) / len(free_months) if free_months else average
+
+        free_values: dict[str, float] = {}
+        if free_months:
+            if variability_frac > 0:
+                # Seed deterministico: misma combinacion (meses + promedio + variabilidad) => mismos valores
+                seed_source = f"{','.join(months)}|{average}|{variability_pct}|{','.join(sorted(override_values))}"
+                rng = random.Random(hashlib.sha256(seed_source.encode("utf-8")).hexdigest())
+                raw = [free_avg * (1.0 + rng.uniform(-variability_frac, variability_frac)) for _ in free_months]
+                # Normalizar para que el promedio efectivo de los meses libres caiga exacto en free_avg
+                actual_avg = sum(raw) / len(raw)
+                scale = (free_avg / actual_avg) if actual_avg else 1.0
+                free_values = {m: max(0.0, raw[i] * scale) for i, m in enumerate(free_months)}
+            else:
+                free_values = {m: free_avg for m in free_months}
+
         targets = [
             {
                 "month": month,
-                "target_amount": round(override_values[month], 2) if override_values.get(month, 0) > 0 else round(free_value, 2),
+                "target_amount": round(override_values[month], 2) if override_values.get(month, 0) > 0 else round(free_values.get(month, free_avg), 2),
             }
             for month in months
         ]
@@ -429,7 +451,7 @@ class AgentToolRegistry:
             "response_type": "answer",
             "assistant_message": "Distribucion calculada.",
             "ui_actions": [],
-            "data": {"kind": "target_distribution", "targets": targets},
+            "data": {"kind": "target_distribution", "targets": targets, "variability_pct": variability_pct},
         }
 
     def _navigate(self, payload: Mapping[str, Any], args: Mapping[str, Any]) -> dict[str, Any]:
