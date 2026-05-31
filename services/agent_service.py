@@ -15,6 +15,59 @@ from financial_model import build_financial_model
 from llm import LLMProvider, LLMProviderError, get_llm_provider
 from repositories import AccountRepository, AgentRepository, PeriodoRepository
 from services.audit_service import AuditService, stable_hash
+from services.agent_errors import (
+    AgentCatalogChangedError,
+    AgentConfigError,
+    AgentNotFoundError,
+    AgentProposalConflictError,
+    AgentServiceError,
+    AgentValidationError,
+)
+from services.agent_helpers import (
+    ASSUMPTION_FIELD_MAP,
+    _account_catalog_payload,
+    _account_code,
+    _append_dynamic_account,
+    _append_journal_entry,
+    _append_saved_voucher,
+    _apply_assumption_change,
+    _apply_cost_assumption,
+    _as_aware,
+    _dynamic_account_lookup,
+    _elapsed_seconds,
+    _er_value,
+    _extract_target_month,
+    _find_reversal_for,
+    _has_correction_payload,
+    _impact_deltas,
+    _income_overrides_by_month,
+    _income_overrides_list,
+    _journal_entry_from_reversal_voucher,
+    _journal_pair,
+    _journal_title,
+    _journal_totals,
+    _last_payload_month,
+    _months_between,
+    _normalize_account_section,
+    _normalize_account_type,
+    _normalize_assumption_field,
+    _normalize_assumption_value,
+    _payload_months,
+    _periodo_snapshot,
+    _previous_year_end,
+    _proposal_payload,
+    _resolve_correctable_voucher,
+    _saved_vouchers,
+    _statement_value,
+    _sync_period_fields,
+    _system_prompt,
+    _to_float,
+    _unique_reversal_id,
+    _user_prompt,
+    _valid_account_suggestions,
+    _valid_type_section,
+    _voucher_rows,
+)
 from services.agent_tools import AgentToolRegistry
 from services.agent_planner import AgentPlanError, AgentPlanner
 from services.periodo_service import PeriodoService
@@ -25,30 +78,6 @@ from services.serializers import parse_json_object
 PROMPT_VERSION = "agent-command-v1.0.0"
 MAX_TOOL_CALLS_PER_TURN = 3
 MAX_TURN_DURATION_S = 30.0
-
-
-class AgentServiceError(ValueError):
-    pass
-
-
-class AgentConfigError(AgentServiceError):
-    pass
-
-
-class AgentValidationError(AgentServiceError):
-    pass
-
-
-class AgentNotFoundError(AgentServiceError):
-    pass
-
-
-class AgentProposalConflictError(AgentServiceError):
-    pass
-
-
-class AgentCatalogChangedError(AgentServiceError):
-    pass
 
 
 class AgentCommandService:
@@ -1347,609 +1376,3 @@ MUTATION_INTENTS = {"reverse_voucher", "correct_voucher", "journal_entry", "acco
 
 SYSTEM_INTENTS = {"guardar_payload", "generar_documento"}
 
-
-def _system_prompt() -> str:
-    return (
-        "Sos un asistente contable dentro de una app de certificaciones. "
-        "Interpretas instrucciones contables y devuelves una accion estructurada; no calcules saldos finales. "
-        "Respondé exclusivamente JSON valido con intent y args. "
-        "Intents permitidos: explain_balance(account, month), show_ledger(account), "
-        "show_voucher(voucher_id), navigate(target), reverse_voucher(voucher_id), "
-        "correct_voucher(voucher_id, correction={month,description,lines}), "
-        "journal_entry(month, description, lines=[{account,debit,credit,reference}]), "
-        "account_transfer(month, source_account, destination_account, amount), "
-        "year_close_transfer(target_month, source_month, amount opcional), "
-        "assumption_change(field, new_value, scope=period), "
-        "create_account(name, account_type, section), "
-        "compound_plan(steps=[{tool,args}]) para instrucciones autocontenidas que requieren crear una cuenta y registrar un asiento; "
-        "recalcular_preview(), guardar_payload(), finalizar_periodo(), generar_documento(), "
-        "question. "
-        "Si falta cuenta, mes o monto, usa question. Si el usuario pide crear una cuenta nueva y tambien registrar una partida en la misma instruccion, usa compound_plan. Si solo pide crear cuenta, usa create_account. "
-        "Si el usuario dice 'lo mismo' o 'igual que antes', usa journal_entry con repeat_last=true y el nuevo month o amount indicado. "
-        "Si pide guardar o recalcular, usa guardar_payload o recalcular_preview. "
-        "Si pide finalizar el periodo, usa finalizar_periodo. Si pide generar el documento, usa generar_documento."
-    )
-
-
-def _user_prompt(*, message: str, ui_context: Mapping[str, Any]) -> str:
-    return (
-        "Mensaje del usuario:\n"
-        f"{message}\n\n"
-        "Contexto UI disponible:\n"
-        f"{dict(ui_context or {})}\n\n"
-        "Ejemplos de cuentas validas: Efectivo y Equivalentes de Efectivo, "
-        "Resultados Acumulados, Resultados del Ejercicio, Inventarios, Proveedores."
-    )
-
-
-def _proposal_payload(
-    *,
-    kind: str,
-    title: str,
-    assistant_message: str,
-    month: str | None,
-    rows: list[dict[str, Any]],
-    technical_records: list[dict[str, Any]],
-    original_message: str,
-    extra: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    data = {
-        "kind": kind,
-        "title": title,
-        "assistant_message": assistant_message,
-        "month": month,
-        "journal_rows": rows,
-        "technical_records": technical_records,
-        "original_message": original_message,
-    }
-    if extra:
-        data.update(extra)
-    return data
-
-
-def _append_saved_voucher(payload: Mapping[str, Any], voucher: Mapping[str, Any]) -> dict[str, Any]:
-    projected = deepcopy(dict(payload or {}))
-    accounting = dict(projected.get("accounting") or {})
-    vouchers = list(accounting.get("vouchers") or [])
-    vouchers.append(dict(voucher))
-    accounting["vouchers"] = vouchers
-    projected["accounting"] = accounting
-    return projected
-
-
-def _saved_vouchers(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
-    accounting = dict((payload or {}).get("accounting") or {})
-    return [dict(voucher) for voucher in accounting.get("vouchers") or [] if isinstance(voucher, Mapping)]
-
-
-def _has_correction_payload(args: Mapping[str, Any]) -> bool:
-    correction = args.get("correction") if isinstance(args.get("correction"), Mapping) else args
-    lines = correction.get("lines") if isinstance(correction, Mapping) else None
-    return bool(isinstance(lines, list) and lines)
-
-
-def _resolve_correctable_voucher(
-    payload: Mapping[str, Any],
-    all_vouchers: list[Mapping[str, Any]],
-    persisted_vouchers: list[Mapping[str, Any]],
-    voucher_id: str,
-) -> tuple[dict[str, Any], str]:
-    target = str(voucher_id or "").upper()
-    persisted = next((dict(voucher) for voucher in persisted_vouchers if str(voucher.get("voucher_id") or "").upper() == target), None)
-    if persisted:
-        return persisted, "persisted"
-    generated = next((dict(voucher) for voucher in all_vouchers if str(voucher.get("voucher_id") or "").upper() == target), None)
-    if not generated:
-        raise AgentValidationError(f"No encontre el comprobante {voucher_id}.")
-    instruction_id = str(generated.get("instruction_id") or "").strip()
-    entries = dict((payload or {}).get("movements") or {}).get("journal_entries") or []
-    if instruction_id and any(str(entry.get("instruction_id") or "").strip() == instruction_id for entry in entries if isinstance(entry, Mapping)):
-        return generated, "journal_entry"
-    raise AgentValidationError("Ese comprobante es generado automaticamente; en esta fase solo puedo corregir comprobantes guardados o partidas del chat.")
-
-
-def _find_reversal_for(vouchers: list[Mapping[str, Any]], original_voucher_id: str) -> str:
-    original = str(original_voucher_id or "").upper()
-    for voucher in vouchers:
-        if str(voucher.get("type") or "").lower() != "reversal":
-            continue
-        if str(voucher.get("reference_voucher_id") or "").upper() == original:
-            return str(voucher.get("voucher_id") or "")
-    return ""
-
-
-def _unique_reversal_id(original_voucher_id: str, vouchers: list[Mapping[str, Any]]) -> str:
-    existing = {str(voucher.get("voucher_id") or "").upper() for voucher in vouchers}
-    original = str(original_voucher_id or "").upper()
-    for _ in range(20):
-        candidate = f"REV-{original}-{uuid.uuid4().hex[:6].upper()}"
-        if candidate.upper() not in existing:
-            return candidate
-    return f"REV-{original}-{uuid.uuid4().hex[:12].upper()}"
-
-
-def _journal_entry_from_reversal_voucher(voucher: Mapping[str, Any], *, command_id: str, original_message: str) -> dict[str, Any]:
-    return {
-        "entry_id": f"JE-{uuid.uuid4().hex[:8].upper()}",
-        "voucher_id": str(voucher.get("voucher_id") or ""),
-        "reference_voucher_id": str(voucher.get("reference_voucher_id") or ""),
-        "month": str(voucher.get("month") or "")[:7],
-        "description": str(voucher.get("description") or ""),
-        "lines": [
-            {
-                "account": line.get("account"),
-                "debit": line.get("debit") or 0,
-                "credit": line.get("credit") or 0,
-                "reference": line.get("reference") or "",
-            }
-            for line in voucher.get("lines") or []
-            if isinstance(line, Mapping)
-        ],
-        "currency": "nio",
-        "entry_type": "voucher_reversal",
-        "source": "chat_financiero",
-        "instruction_id": command_id,
-        "locked": True,
-        "message": original_message,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-
-
-def _append_journal_entry(payload: Mapping[str, Any], entry: Mapping[str, Any]) -> dict[str, Any]:
-    projected = deepcopy(dict(payload or {}))
-    movements = dict(projected.get("movements") or {})
-    entries = list(movements.get("journal_entries") or [])
-    entries.append(dict(entry))
-    movements["journal_entries"] = entries
-    projected["movements"] = movements
-    return projected
-
-
-def _append_dynamic_account(payload: Mapping[str, Any], account: Mapping[str, Any]) -> dict[str, Any]:
-    projected = deepcopy(dict(payload or {}))
-    accounting = dict(projected.get("accounting") or {})
-    accounts = list(accounting.get("dynamic_accounts") or [])
-    clean = {
-        "code": str(account.get("code") or "").strip(),
-        "niif_code": str(account.get("niif_code") or "").strip(),
-        "name": str(account.get("name") or "").strip(),
-        "account_type": _normalize_account_type(account.get("account_type")),
-        "section": _normalize_account_section(account.get("section")),
-        "normal_balance": str(account.get("normal_balance") or "").strip(),
-        "parent_code": str(account.get("parent_code") or "").strip(),
-        "aliases": list(account.get("aliases") or []),
-        "is_postable": bool(account.get("is_postable", True)),
-        "source": str(account.get("source") or "chat_financiero").strip(),
-    }
-    existing_codes = {str(item.get("code") or "").strip() for item in accounts if isinstance(item, Mapping)}
-    existing_names = {str(item.get("name") or "").strip().lower() for item in accounts if isinstance(item, Mapping)}
-    if clean["code"] and clean["name"].lower() not in existing_names and clean["code"] not in existing_codes:
-        accounts.append(clean)
-    accounting["dynamic_accounts"] = accounts
-    projected["accounting"] = accounting
-    return projected
-
-
-def _dynamic_account_lookup(payload: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
-    accounting = dict((payload or {}).get("accounting") or {})
-    lookup: dict[str, dict[str, Any]] = {}
-    for item in accounting.get("dynamic_accounts") or []:
-        if not isinstance(item, Mapping):
-            continue
-        account = dict(item)
-        for value in [account.get("code"), account.get("name")]:
-            key = str(value or "").strip()
-            if key:
-                lookup[key] = account
-    return lookup
-
-
-def _account_catalog_payload(account: Any) -> dict[str, Any]:
-    try:
-        aliases = json.loads(account.aliases_json or "[]")
-    except Exception:
-        aliases = []
-    return {
-        "code": account.code,
-        "niif_code": account.niif_code,
-        "name": account.name,
-        "account_type": account.account_type,
-        "section": account.section,
-        "normal_balance": account.normal_balance,
-        "parent_code": account.parent_code,
-        "aliases": aliases if isinstance(aliases, list) else [],
-        "is_postable": bool(getattr(account, "is_postable", 1)),
-        "source": account.source,
-    }
-
-
-def _voucher_rows(voucher: Mapping[str, Any]) -> list[dict[str, Any]]:
-    return [
-        {
-            "account": line.get("account"),
-            "debit": line.get("debit") or 0,
-            "credit": line.get("credit") or 0,
-            "reference": line.get("reference") or line.get("ref") or "",
-        }
-        for line in voucher.get("lines") or []
-    ]
-
-
-def _journal_totals(lines: list[Mapping[str, Any]]) -> dict[str, Any]:
-    debit = round(sum(float(line.get("debit") or 0) for line in lines), 2)
-    credit = round(sum(float(line.get("credit") or 0) for line in lines), 2)
-    return {"debit": debit, "credit": credit, "balanced": abs(debit - credit) <= 0.01}
-
-
-def _journal_pair(lines: list[Mapping[str, Any]]) -> dict[str, Any] | None:
-    debit_lines = [line for line in lines if float(line.get("debit") or 0) > 0]
-    credit_lines = [line for line in lines if float(line.get("credit") or 0) > 0]
-    if len(debit_lines) != 1 or len(credit_lines) != 1:
-        return None
-    debit_amount = round(float(debit_lines[0].get("debit") or 0), 2)
-    credit_amount = round(float(credit_lines[0].get("credit") or 0), 2)
-    if abs(debit_amount - credit_amount) > 0.01:
-        return None
-    return {
-        "debit_account": debit_lines[0].get("account"),
-        "credit_account": credit_lines[0].get("account"),
-        "amount": debit_amount,
-    }
-
-
-def _valid_account_suggestions(payload: Mapping[str, Any]) -> list[str]:
-    labels = list(LEDGER_ACCOUNT_LABELS.values())
-    dynamic = _dynamic_account_lookup(payload)
-    for account in dynamic.values():
-        name = str(account.get("name") or "").strip()
-        if name and name not in labels:
-            labels.append(name)
-    return sorted(labels)
-
-
-def _to_float(value: Any) -> float | None:
-    try:
-        if value in {None, ""}:
-            return None
-        return float(str(value).replace(",", ""))
-    except Exception:
-        return None
-
-
-def _account_code(value: Any) -> str:
-    import re
-    import unicodedata
-
-    raw = unicodedata.normalize("NFKD", str(value or ""))
-    plain = "".join(ch for ch in raw if not unicodedata.combining(ch)).lower()
-    code = re.sub(r"[^a-z0-9]+", "_", plain).strip("_")
-    return code[:100] or f"cuenta_{uuid.uuid4().hex[:8]}"
-
-
-def _normalize_account_type(value: Any) -> str:
-    raw = str(value or "").strip().lower()
-    aliases = {
-        "asset": "activo",
-        "activo": "activo",
-        "liability": "pasivo",
-        "pasivo": "pasivo",
-        "equity": "patrimonio",
-        "patrimonio": "patrimonio",
-        "revenue": "ingreso",
-        "ingreso": "ingreso",
-        "income": "ingreso",
-        "expense": "gasto",
-        "gasto": "gasto",
-        "cost": "costo",
-        "costo": "costo",
-    }
-    return aliases.get(raw, raw)
-
-
-def _normalize_account_section(value: Any) -> str:
-    raw = str(value or "").strip().lower().replace(" ", "_").replace("-", "_")
-    aliases = {
-        "current": "corriente",
-        "corriente": "corriente",
-        "non_current": "no_corriente",
-        "nocorriente": "no_corriente",
-        "no_corriente": "no_corriente",
-        "patrimonio": "patrimonio",
-        "equity": "patrimonio",
-        "ingresos": "ingresos",
-        "revenue": "ingresos",
-        "costo_ventas": "costo_ventas",
-        "costo_de_ventas": "costo_ventas",
-        "gastos_operativos": "gastos_operativos",
-        "gasto_operativo": "gastos_operativos",
-        "gastos_financieros": "gastos_financieros",
-        "gasto_financiero": "gastos_financieros",
-    }
-    return aliases.get(raw, raw)
-
-
-def _valid_type_section(account_type: str, section: str) -> bool:
-    allowed = {
-        "activo": {"corriente", "no_corriente"},
-        "pasivo": {"corriente", "no_corriente"},
-        "patrimonio": {"patrimonio"},
-        "ingreso": {"ingresos"},
-        "costo": {"costo_ventas"},
-        "gasto": {"gastos_operativos", "gastos_financieros"},
-    }
-    return section in allowed.get(account_type, set())
-
-
-def _last_payload_month(payload: Mapping[str, Any]) -> str:
-    period = dict(payload.get("period") or {})
-    return str(period.get("end_month") or "")[:7]
-
-
-def _payload_months(payload: Mapping[str, Any]) -> list[str]:
-    period = dict(payload.get("period") or {})
-    start = str(period.get("start_month") or "")[:7]
-    end = str(period.get("end_month") or "")[:7]
-    if start and end:
-        return _months_between(start, end)
-    try:
-        result = build_financial_model(payload)
-        return [str(m) for m in (result.summary.get("all_months") or result.summary.get("months") or [])]
-    except Exception:
-        return []
-
-
-def _previous_year_end(month: str) -> str:
-    year = int(str(month or "0000-01")[:4] or 0)
-    return f"{year - 1}-12"
-
-
-def _statement_value(result, description: str, month: str) -> float:
-    df = result.df_esf_mensual_full
-    if not month or month not in df.columns:
-        return 0.0
-    rows = df[df["Descripcion"] == description]
-    if rows.empty:
-        return 0.0
-    try:
-        return float(rows.iloc[0][month] or 0)
-    except Exception:
-        return 0.0
-
-
-def _er_value(result, description: str) -> float:
-    df = result.df_er_full
-    if df is None or df.empty:
-        return 0.0
-    rows = df[df["Descripcion"] == description]
-    if rows.empty:
-        return 0.0
-    accum_cols = [col for col in df.columns if str(col).startswith("Acumulado")]
-    col = accum_cols[0] if accum_cols else df.columns[-2]
-    try:
-        return float(rows.iloc[0][col] or 0)
-    except Exception:
-        return 0.0
-
-
-def _impact_deltas(impact: Mapping[str, Any]) -> dict[str, float]:
-    out = {"cash_delta": 0.0, "assets_delta": 0.0, "liabilities_delta": 0.0, "equity_delta": 0.0, "income_delta": 0.0}
-    mapping = {
-        "caja": "cash_delta",
-        "activos": "assets_delta",
-        "pasivos": "liabilities_delta",
-        "patrimonio": "equity_delta",
-        "resultado": "income_delta",
-    }
-    for item in impact.get("items") or []:
-        key = mapping.get(str(item.get("key") or ""))
-        if key:
-            out[key] = round(float(item.get("delta") or 0), 2)
-    return out
-
-
-def _journal_title(intent: str) -> str:
-    if intent == "year_close_transfer":
-        return "Cierre de resultados a acumulados"
-    if intent == "account_transfer":
-        return "Reclasificacion contable"
-    return "Partida doble"
-
-
-def _apply_cost_assumption(
-    payload: Mapping[str, Any],
-    *,
-    months: list[str],
-    cost_pct: float,
-    cost_variability_pct: float | None,
-    global_scope: bool,
-) -> dict[str, Any]:
-    projected = deepcopy(dict(payload or {}))
-    income = dict(projected.get("income") or {})
-    if global_scope:
-        income["cost_pct"] = cost_pct
-        if cost_variability_pct is not None:
-            income["cost_variability_pct"] = cost_variability_pct
-        overrides = _income_overrides_by_month(income.get("monthly_overrides") or [])
-        for month in months:
-            if month in overrides:
-                overrides[month].pop("cost_pct", None)
-                overrides[month].pop("cost_variability_pct", None)
-        income["monthly_overrides"] = _income_overrides_list(overrides)
-    else:
-        overrides = _income_overrides_by_month(income.get("monthly_overrides") or [])
-        for month in months:
-            record = dict(overrides.get(month) or {})
-            record["month"] = month
-            record["cost_pct"] = cost_pct
-            if cost_variability_pct is not None:
-                record["cost_variability_pct"] = cost_variability_pct
-            overrides[month] = record
-        income["monthly_overrides"] = _income_overrides_list(overrides)
-    projected["income"] = income
-    return projected
-
-
-ASSUMPTION_FIELD_MAP = {
-    "cost_pct": ("income", "cost_pct", "pct"),
-    "porcentaje_costo": ("income", "cost_pct", "pct"),
-    "ingresos_base_usd": ("income", "base_income_usd", "positive"),
-    "base_income_usd": ("income", "base_income_usd", "positive"),
-    "income_base_usd": ("income", "base_income_usd", "positive"),
-    "variabilidad_ingresos_pct": ("income", "income_variability_pct", "pct"),
-    "income_variability_pct": ("income", "income_variability_pct", "pct"),
-    "variabilidad_costos_pct": ("income", "cost_variability_pct", "pct"),
-    "cost_variability_pct": ("income", "cost_variability_pct", "pct"),
-    "cash_sales_pct": ("income", "cash_sales_pct", "pct"),
-    "porcentaje_contado": ("income", "cash_sales_pct", "pct"),
-    "seed": ("period", "seed", "string"),
-}
-
-
-def _normalize_assumption_field(value: Any) -> str:
-    raw = str(value or "").strip().lower()
-    raw = raw.replace(" ", "_").replace("-", "_")
-    aliases = {
-        "costo": "cost_pct",
-        "costo_venta": "cost_pct",
-        "costo_de_venta": "cost_pct",
-        "ventas_contado": "cash_sales_pct",
-        "contado": "cash_sales_pct",
-        "ingresos": "ingresos_base_usd",
-        "ingreso_base": "ingresos_base_usd",
-        "variabilidad_ingresos": "variabilidad_ingresos_pct",
-        "variabilidad_costos": "variabilidad_costos_pct",
-        "semilla": "seed",
-    }
-    raw = aliases.get(raw, raw)
-    if raw not in ASSUMPTION_FIELD_MAP:
-        allowed = ", ".join(sorted({"cost_pct", "ingresos_base_usd", "variabilidad_ingresos_pct", "variabilidad_costos_pct", "cash_sales_pct", "seed"}))
-        raise AgentValidationError(f"Supuesto no permitido. Campos permitidos: {allowed}.")
-    # Use public Spanish key for ingreso base so proposal text matches app language.
-    if raw == "base_income_usd":
-        return "ingresos_base_usd"
-    if raw == "income_variability_pct":
-        return "variabilidad_ingresos_pct"
-    if raw == "cost_variability_pct":
-        return "variabilidad_costos_pct"
-    return raw
-
-
-def _normalize_assumption_value(kind: str, value: Any) -> Any:
-    if kind == "string":
-        out = str(value or "").strip()
-        if not out:
-            raise AgentValidationError("El valor de seed no puede estar vacio.")
-        return out
-    number = _to_float(value)
-    if number is None:
-        raise AgentValidationError("Indique un valor valido para el supuesto.")
-    if kind == "positive":
-        if number <= 0:
-            raise AgentValidationError("El ingreso base USD debe ser mayor que cero.")
-        return float(number)
-    if kind == "pct":
-        if 0 <= number <= 1:
-            number *= 100.0
-        if number < 0 or number > 100:
-            raise AgentValidationError("El porcentaje debe estar entre 0 y 100%.")
-        return float(number)
-    return number
-
-
-def _apply_assumption_change(payload: Mapping[str, Any], *, field: str, value: Any) -> tuple[dict[str, Any], Any, Any]:
-    target, key, kind = ASSUMPTION_FIELD_MAP[field]
-    after_value = _normalize_assumption_value(kind, value)
-    projected = deepcopy(dict(payload or {}))
-    section = dict(projected.get(target) or {})
-    before_value = section.get(key)
-    section[key] = after_value
-    projected[target] = section
-    return projected, before_value, after_value
-
-
-def _income_overrides_by_month(raw: Any) -> dict[str, dict[str, Any]]:
-    out: dict[str, dict[str, Any]] = {}
-    if isinstance(raw, Mapping):
-        raw = [dict({"month": k}, **dict(v or {})) for k, v in raw.items()]
-    for item in raw or []:
-        if isinstance(item, Mapping) and item.get("month"):
-            out[str(item["month"])[:7]] = dict(item)
-    return out
-
-
-def _income_overrides_list(overrides: Mapping[str, Mapping[str, Any]]) -> list[dict[str, Any]]:
-    out = []
-    for month in sorted(overrides):
-        record = dict(overrides[month])
-        record["month"] = month
-        if any(k != "month" for k in record):
-            out.append(record)
-    return out
-
-
-def _months_between(start: str, end: str) -> list[str]:
-    import pandas as pd
-
-    try:
-        return [d.strftime("%Y-%m") for d in pd.period_range(start=start[:7], end=end[:7], freq="M")]
-    except Exception:
-        return []
-
-
-def _sync_period_fields(periodo, payload: Mapping[str, Any]) -> None:
-    period = dict(payload.get("period") or {})
-    income = dict(payload.get("income") or {})
-    if period.get("start_month"):
-        periodo.mes_inicial = str(period["start_month"])[:7]
-    if period.get("end_month"):
-        periodo.mes_final = str(period["end_month"])[:7]
-    if period.get("exchange_rate") is not None:
-        periodo.tasa_cambio = float(period["exchange_rate"])
-    periodo.seed = str(period.get("seed") or periodo.seed or "")
-    for attr, key in [
-        ("ingresos_base_usd", "base_income_usd"),
-        ("variabilidad_ingresos_pct", "income_variability_pct"),
-        ("cost_pct", "cost_pct"),
-        ("variabilidad_costos_pct", "cost_variability_pct"),
-        ("cash_sales_pct", "cash_sales_pct"),
-    ]:
-        if income.get(key) is not None:
-            setattr(periodo, attr, float(income[key]))
-
-
-def _periodo_snapshot(periodo) -> dict[str, Any]:
-    return {
-        "id": periodo.id,
-        "estado": periodo.estado,
-        "mes_inicial": periodo.mes_inicial,
-        "mes_final": periodo.mes_final,
-        "payload_hash": stable_hash(parse_json_object(periodo.payload_json)),
-    }
-
-
-def _elapsed_seconds(started_at: float) -> float:
-    return max(0.0, time.monotonic() - started_at)
-
-
-def _as_aware(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value
-
-
-def _extract_target_month(proposal_payload: Mapping[str, Any], args: Mapping[str, Any]) -> str | None:
-    import re
-    pattern = re.compile(r"^\d{4}-\d{2}$")
-    month_field = str(proposal_payload.get("month") or "").strip()[:7]
-    if pattern.match(month_field):
-        return month_field
-    for key in ("target_month", "month", "source_month"):
-        val = str((args or {}).get(key) or "").strip()[:7]
-        if pattern.match(val):
-            return val
-    records = proposal_payload.get("technical_records") or []
-    if records and isinstance(records[0], Mapping):
-        record_month = str(records[0].get("month") or "").strip()[:7]
-        if pattern.match(record_month):
-            return record_month
-    return None
