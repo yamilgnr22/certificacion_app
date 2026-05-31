@@ -723,7 +723,14 @@
     wrap.className = 'client-list';
     records.forEach(cliente => {
       const item = document.createElement('div');
-      item.className = 'client-item';
+      item.className = 'client-item client-item-clickable';
+      item.title = 'Click para trabajar con este cliente (carga periodo + JSON)';
+      // Click en cualquier lado de la fila => seleccionar cliente y cargar todo
+      item.addEventListener('click', (ev) => {
+        // Evitar disparar cuando el click fue sobre un boton de accion
+        if (ev.target.closest('.client-actions')) return;
+        loadClienteDetail(cliente.id, { useInModel: true });
+      });
       const info = document.createElement('div');
       const title = document.createElement('strong');
       title.textContent = cliente.nombre_completo || 'Cliente sin nombre';
@@ -738,22 +745,15 @@
       info.append(title, meta);
       const actions = document.createElement('div');
       actions.className = 'client-actions';
-      const open = document.createElement('button');
-      open.className = 'btn';
-      open.type = 'button';
-      open.textContent = 'Abrir';
-      open.addEventListener('click', () => loadClienteDetail(cliente.id, { openForm: true, readonly: true }));
       const edit = document.createElement('button');
       edit.className = 'btn';
       edit.type = 'button';
-      edit.textContent = 'Editar';
-      edit.addEventListener('click', () => loadClienteDetail(cliente.id, { openForm: true }));
-      const use = document.createElement('button');
-      use.className = 'btn primary';
-      use.type = 'button';
-      use.textContent = 'Usar en modelo';
-      use.addEventListener('click', () => loadClienteDetail(cliente.id, { useInModel: true }));
-      actions.append(open, edit, use);
+      edit.textContent = 'Editar datos del cliente';
+      edit.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        loadClienteDetail(cliente.id, { openForm: true });
+      });
+      actions.append(edit);
       item.append(info, actions);
       wrap.appendChild(item);
     });
@@ -1615,7 +1615,7 @@
     return unmatched;
   }
 
-  function useClienteInModel(detail = currentClienteDetail) {
+  async function useClienteInModel(detail = currentClienteDetail) {
     if (!detail?.cliente) return;
     const cliente = detail.cliente;
     selectedClienteId = cliente.id || '';
@@ -1644,6 +1644,21 @@
       setModelMessage(`Cliente cargado. Revise categorias de plantilla no aplicadas al formulario: ${unmatched.join(', ')}.`, 'warning');
     } else {
       setModelMessage('Cliente cargado al modelo como snapshot.', 'info');
+    }
+    // Si el usuario abrio un cliente y no hay periodo activo, auto-cargar el ultimo periodo editable.
+    if (!activePeriodoId) {
+      // Asegurar que el cache de periodos este poblado (puede no estarlo justo despues de un refresh)
+      if (!cachedEditablePeriodos.length) {
+        await loadEditablePeriodos();
+      }
+      const latest = findLatestPeriodoForCliente(selectedClienteId);
+      if (latest) {
+        const select = qs('#editableSelector');
+        if (select) select.value = latest.id;
+        await selectEditablePeriodo(latest.id);
+      } else {
+        setModelMessage(`No hay periodos editables para ${selectedClienteName}. Cre uno desde Clientes.`, 'warning');
+      }
     }
   }
 
@@ -2094,6 +2109,34 @@
   let activePeriodoDetail = null;
   let editorDirty = false;
   let suppressEditorDirty = false;
+  let cachedEditablePeriodos = [];
+
+  const LAST_PERIODO_STORAGE_KEY = 'certApp.lastEditorPeriodoId';
+
+  function rememberLastPeriodoId(periodoId) {
+    try {
+      if (periodoId) localStorage.setItem(LAST_PERIODO_STORAGE_KEY, String(periodoId));
+      else localStorage.removeItem(LAST_PERIODO_STORAGE_KEY);
+    } catch (e) {
+      // localStorage puede fallar en modo privado; ignorar silenciosamente
+    }
+  }
+
+  function readLastPeriodoId() {
+    try {
+      return localStorage.getItem(LAST_PERIODO_STORAGE_KEY) || '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function findLatestPeriodoForCliente(clienteId) {
+    if (!clienteId || !cachedEditablePeriodos.length) return null;
+    const matches = cachedEditablePeriodos.filter(p => String(p.cliente_id || '') === String(clienteId));
+    if (!matches.length) return null;
+    matches.sort((a, b) => String(b.mes_final || '').localeCompare(String(a.mes_final || '')));
+    return matches[0];
+  }
 
   function setEditorMessage(text, type = 'info') {
     setScopedMessage('#editorMessages', text, type);
@@ -2222,9 +2265,10 @@
     }
   }
 
-  async function loadEditablePeriodos() {
+  async function loadEditablePeriodos({ restoreLast = false } = {}) {
     try {
       const data = await fetchJson('/api/periodos/editables');
+      cachedEditablePeriodos = data.periodos || [];
       const select = qs('#editableSelector');
       if (!select) return;
       const current = activePeriodoId || '';
@@ -2233,14 +2277,24 @@
       placeholder.value = '';
       placeholder.textContent = 'Seleccione un periodo...';
       select.appendChild(placeholder);
-      (data.periodos || []).forEach(p => {
+      cachedEditablePeriodos.forEach(p => {
         const opt = document.createElement('option');
         opt.value = p.id;
         const dirty = p.recompute_required ? ' ⟳' : '';
         opt.textContent = `${p.cliente_nombre} · ${p.mes_inicial}..${p.mes_final} · ${p.estado}${dirty}`;
         select.appendChild(opt);
       });
-      if (current) select.value = current;
+      if (current) {
+        select.value = current;
+        return;
+      }
+      if (restoreLast) {
+        const lastId = readLastPeriodoId();
+        if (lastId && cachedEditablePeriodos.some(p => String(p.id) === String(lastId))) {
+          select.value = lastId;
+          await selectEditablePeriodo(lastId);
+        }
+      }
     } catch (e) {
       setEditorMessage(`No se pudieron cargar los periodos editables: ${e.message || e}`, 'error');
     }
@@ -2250,6 +2304,7 @@
     if (!periodoId) {
       activePeriodoId = null;
       activePeriodoDetail = null;
+      rememberLastPeriodoId('');
       updateEditorHeader();
       markEditorDirty(false);
       setModelModeReadonly(false);
@@ -2266,10 +2321,22 @@
       activePeriodoId = periodoId;
       activePeriodoDetail = data;
       editorDirty = false;
+      rememberLastPeriodoId(periodoId);
+      // Restaurar estado del cliente (badge, selectedClienteId) para que la UI no se vea "huerfana".
+      if (data.cliente) {
+        selectedClienteId = data.cliente.id || '';
+        selectedClienteName = data.cliente.nombre_completo || '';
+        const badge = qs('#selectedClienteBadge');
+        if (badge && selectedClienteName) {
+          badge.textContent = `Usando cliente: ${selectedClienteName} (snapshot)`;
+          badge.classList.remove('hidden');
+        }
+      }
       // Aplicar el payload del periodo a los inputs del modelo
       if (data.periodo?.payload) {
         runWithoutEditorDirty(() => applyModelPayload(data.periodo.payload, { draftId: null }));
       }
+      activateMode('modelMode');
       updateEditorHeader();
       markEditorDirty(false);
       setEditorMessage(`Periodo cargado: ${data.cliente?.nombre_completo} ${data.periodo.mes_inicial}..${data.periodo.mes_final}`, 'success');
@@ -4224,8 +4291,8 @@
     el.addEventListener('input', () => markEditorDirty(true));
     el.addEventListener('change', () => markEditorDirty(true));
   });
-  // Cargar periodos editables al inicio
-  loadEditablePeriodos();
+  // Cargar periodos editables al inicio y restaurar la ultima seleccion (si hay)
+  loadEditablePeriodos({ restoreLast: true });
   qs('#btnUndoLastChatAdjustment')?.addEventListener('click', onUndoLastChatAdjustment);
   qsa('.chat-chip').forEach(chip => {
     chip.addEventListener('click', () => {

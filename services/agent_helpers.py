@@ -66,7 +66,13 @@ def _system_prompt() -> str:
         "Si el usuario pide fijar ingresos o costos exactos de un mes, usa monthly_override. Si pide que una cuenta cierre en un monto, usa target_balance_adjustment. Si falta cuenta, mes o monto, usa question. Si el usuario pide crear una cuenta nueva y tambien registrar una partida en la misma instruccion, usa compound_plan. Si solo pide crear cuenta, usa create_account. "
         "Si el usuario dice 'lo mismo' o 'igual que antes', usa journal_entry con repeat_last=true y el nuevo month o amount indicado. "
         "Si pide guardar o recalcular, usa guardar_payload o recalcular_preview. "
-        "Si pide finalizar el periodo, usa finalizar_periodo. Si pide generar el documento, usa generar_documento."
+        "Si pide finalizar el periodo, usa finalizar_periodo. Si pide generar el documento, usa generar_documento. "
+        "Todos los meses deben devolverse en formato YYYY-MM (ejemplo: 2026-05). Convierte 'mayo 2026', 'May 2026' o 'mayo' a YYYY-MM antes de responder. "
+        "Reglas para instrucciones que NO podes ejecutar tal cual:\n"
+        "A) MULTI-OBJETIVO REAL: el usuario combina 2+ objetivos distintos en una sola instruccion (ej: 'cuenta A en X y cuenta B en Y', o 'promedio 200k Y mayo 205k'). Devolve EXACTAMENTE: {\"intent\": \"question\", \"assistant_message\": \"Detecte mas de un objetivo en tu instruccion: 1) <primer objetivo>; 2) <segundo objetivo>. Hoy puedo procesar uno por vez. Reescribi eligiendo solo uno (por ejemplo: 'ajusta inventario a USD 205k en mayo 2026').\"}.\n"
+        "B) OBJETIVO UNICO PERO NO SOPORTADO: el usuario pide algo coherente pero que no es un ajuste puntual de UN mes. Ejemplos tipicos: 'promedio mensual X', 'oscile alrededor de X', 'no quede negativa', 'no exceda X%', 'que cierre el ano en X', 'baja X% en cada mes', 'hazlo mes a mes', 'aplicalo a todos los meses'. Hoy solo soportamos target_balance_adjustment de UN mes especifico. NO podes iterar automaticamente ni mantener restricciones. Para estos casos devolve EXACTAMENTE: {\"intent\": \"question\", \"assistant_message\": \"Entendi que queres <intencion del usuario>. LIMITACION: hoy proceso solo ajustes puntuales (UN mes, UNA cuenta, UN monto). NO puedo iterar sobre varios meses ni aplicar restricciones automaticas; eso requiere planificador multi-paso que todavia no esta. Si queres avanzar, vas a tener que enviar UNA instruccion completa por cada mes que queres ajustar (yo proceso una a la vez). Ejemplo: 'ajusta inventario a USD 200k en enero 2026'. Empezamos por un mes especifico?\"}. NO listes objetivos numerados en este caso (es uno solo).\n"
+        "C) REFERENCIAL: el usuario responde con frases cortas como 'el primero', 'ese', 'uno', '1', '2', 'si', 'no', 'hazlo', 'aplica el primer ajuste', 'dale'. Son respuestas a preguntas previas, no instrucciones nuevas. Devolve {\"intent\": \"question\", \"assistant_message\": \"Reescribi la instruccion completa con cuenta, mes y monto (ej: 'ajusta inventario a USD 205k en mayo 2026').\"}.\n"
+        "Antes de elegir A/B/C: si la instruccion ES un ajuste puntual de UN mes con cuenta y monto, usa target_balance_adjustment normalmente, no estas reglas."
     )
 
 
@@ -688,6 +694,54 @@ def _as_aware(value: datetime) -> datetime:
 
 
 _MONTH_PATTERN = re.compile(r"^\d{4}-\d{2}$")
+
+_SPANISH_MONTH_NAMES = {
+    "enero": 1, "ene": 1,
+    "febrero": 2, "feb": 2,
+    "marzo": 3, "mar": 3,
+    "abril": 4, "abr": 4,
+    "mayo": 5, "may": 5,
+    "junio": 6, "jun": 6,
+    "julio": 7, "jul": 7,
+    "agosto": 8, "ago": 8,
+    "septiembre": 9, "setiembre": 9, "sep": 9, "set": 9,
+    "octubre": 10, "oct": 10,
+    "noviembre": 11, "nov": 11,
+    "diciembre": 12, "dic": 12,
+}
+
+_SPANISH_MONTH_RE = re.compile(
+    r"\b(" + "|".join(_SPANISH_MONTH_NAMES.keys()) + r")\b[^\d]{0,4}(\d{4})",
+    re.IGNORECASE,
+)
+
+
+def _normalize_month_value(value: Any) -> str:
+    """Normaliza meses a formato YYYY-MM aceptando entrada natural en espanol.
+
+    Acepta: '2026-05', '2026-5', '2026-05-15', 'mayo 2026', 'May 2026',
+    '2026/05', etc. Devuelve '' si no se puede interpretar.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if _MONTH_PATTERN.match(text[:7]):
+        return text[:7]
+    candidate = text.replace("/", "-").replace(".", "-")
+    if _MONTH_PATTERN.match(candidate[:7]):
+        return candidate[:7]
+    parts = candidate.split("-")
+    if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+        year = int(parts[0])
+        month = int(parts[1])
+        if 1900 <= year <= 2200 and 1 <= month <= 12:
+            return f"{year:04d}-{month:02d}"
+    match = _SPANISH_MONTH_RE.search(text.lower())
+    if match:
+        month = _SPANISH_MONTH_NAMES[match.group(1)]
+        year = int(match.group(2))
+        return f"{year:04d}-{month:02d}"
+    return ""
 
 
 def _extract_target_month(proposal_payload: Mapping[str, Any], args: Mapping[str, Any]) -> str | None:

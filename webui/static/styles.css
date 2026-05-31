@@ -876,6 +876,8 @@ input[type="checkbox"] {
 }
 .client-item > div:first-child { flex: 1 1 200px; min-width: 0; }
 .client-item:hover { background: var(--surface-3); }
+.client-item-clickable { cursor: pointer; transition: border-color 120ms ease, background-color 120ms ease; }
+.client-item-clickable:hover { background: var(--surface-3); border-color: var(--primary); }
 .client-item .meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
 .client-actions {
   display: inline-flex;

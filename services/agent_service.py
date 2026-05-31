@@ -52,6 +52,7 @@ from services.agent_helpers import (
     _normalize_account_type,
     _normalize_assumption_field,
     _normalize_assumption_value,
+    _normalize_month_value,
     _payload_months,
     _periodo_snapshot,
     _previous_year_end,
@@ -189,10 +190,17 @@ class AgentCommandService:
         args = interpreted.get("args") if isinstance(interpreted.get("args"), dict) else {}
         args = self._apply_short_memory(intent, args, periodo_id=periodo.id, cpa_user=cpa_user)
         if intent in {"", "clarification", "question"}:
+            llm_message = str(interpreted.get("assistant_message") or interpreted.get("question") or "").strip()
+            if not llm_message:
+                llm_message = (
+                    "No pude interpretar la instruccion sin perder informacion. "
+                    "Probá con un solo objetivo por mensaje, por ejemplo: "
+                    "'ajustá inventario a USD 205k en mayo 2026' o 'mostrame el saldo de caja en abril 2026'."
+                )
             response = self._question_response(
                 command_id=command_id,
                 intent=intent or "question",
-                message=str(interpreted.get("assistant_message") or interpreted.get("question") or "Necesito un poco mas de detalle para ayudarte."),
+                message=llm_message,
             )
         elif intent in MUTATION_INTENTS:
             if used_dirty_payload:
@@ -910,7 +918,8 @@ class AgentCommandService:
         command_id: str,
         original_message: str,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        target_month = str(args.get("month") or args.get("target_month") or _last_payload_month(payload))[:7]
+        raw_month = args.get("month") or args.get("target_month") or _last_payload_month(payload)
+        target_month = _normalize_month_value(raw_month) or str(raw_month or "")[:7]
         description = str(args.get("description") or args.get("message") or original_message or "").strip()
         raw_lines = args.get("lines")
         amount = _to_float(args.get("amount"))
@@ -1232,7 +1241,8 @@ class AgentCommandService:
         original_message: str,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         target_account = self._normalize_account(args.get("account") or args.get("target_account") or args.get("cuenta"))
-        target_month = str(args.get("month") or args.get("target_month") or args.get("mes") or _last_payload_month(payload))[:7]
+        raw_month = args.get("month") or args.get("target_month") or args.get("mes") or _last_payload_month(payload)
+        target_month = _normalize_month_value(raw_month) or str(raw_month or "")[:7]
         target_amount = _target_amount_value(args)
         currency = str(args.get("currency") or args.get("moneda") or "nio").strip().upper()
         if currency in {"DOLAR", "DOLARES"}:
@@ -1302,12 +1312,15 @@ class AgentCommandService:
         warnings: list[str] = []
         if _is_past_month(target_month):
             warnings.append("Estas ajustando un mes pasado. Verifica que no este certificado antes de aplicar.")
+        delta_sign = "+" if delta_nio >= 0 else "-"
         return projected, _proposal_payload(
             kind="target_balance_adjustment_proposal",
-            title=f"Ajustar {target_label} a objetivo",
+            title=f"Ajuste por objetivo: {target_label} {target_month} a {target_amount:,.2f} {currency}",
             assistant_message=(
-                f"Prepare un asiento para llevar {target_label} en {target_month} "
-                f"a {target_amount:,.2f} {currency}."
+                f"Interprete tu pedido como un unico ajuste: llevar {target_label} en {target_month} "
+                f"a {target_amount:,.2f} {currency} (delta C${delta_sign}{abs(delta_nio):,.2f}). "
+                f"Si tu instruccion incluia otros objetivos (promedio de varios meses, otros meses, "
+                f"otras cuentas), procesalos por separado."
             ),
             month=target_month,
             rows=rows,
