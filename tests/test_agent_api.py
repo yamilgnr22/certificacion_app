@@ -5,6 +5,7 @@ import os
 import unittest
 
 from sqlalchemy import create_engine, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 import web_server
@@ -12,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 
 import services.agent_service as agent_service_module
 from services.agent_tools import AgentTool
-from db.models import AccountCatalog, AgentMessage, AgentProposal, AgentSessionContext, AuditLog, Base, PeriodoCertificacion
+from db.models import AccountCatalog, AgentMessage, AgentPlan, AgentProposal, AgentSessionContext, AuditLog, Base, PeriodoCertificacion
 from db.seed import seed_giros
 from financial_model import build_financial_model
 from llm import LLMProviderError
@@ -1631,6 +1632,241 @@ class AgentApiTest(unittest.TestCase):
         self.assertIn("Reservas Legales", set(result.df_esf_mensual_full["Descripcion"]))
         self.assertIn("Reservas Legales", result.accounting["accounts"])
         self.assertTrue(result.validations["balance"]["ok"])
+
+    def test_plan_multi_target_balance_applies_in_memory_and_audits(self):
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "plan_multi_target_balance",
+                "args": {
+                    "account": "inventory",
+                    "currency": "USD",
+                    "targets": [
+                        {"month": "2026-01", "target_amount": 150000},
+                        {"month": "2026-02", "target_amount": 151000},
+                    ],
+                },
+            }
+        )
+
+        response = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "inventario objetivo enero y febrero"},
+        )
+        data = response.get_json()
+
+        self.assertEqual(response.status_code, 200, data)
+        self.assertEqual(data["response_type"], "plan")
+        self.assertEqual(data["plan"]["status"], "pending")
+        self.assertEqual(data["plan"]["step_count"], 2)
+        apply_resp = self.client.post(f"/api/agent/plans/{data['plan']['id']}/apply")
+        self.assertEqual(apply_resp.status_code, 200, apply_resp.get_json())
+        with self.db_session() as session:
+            plan = session.get(AgentPlan, data["plan"]["id"])
+            audit = session.scalars(select(AuditLog).where(AuditLog.action == "agent_apply_plan")).first()
+            metadata = json.loads(audit.metadata_json)
+        self.assertEqual(plan.status, "applied")
+        self.assertEqual(metadata["kind"], "plan_applied")
+        self.assertEqual(metadata["step_count"], 2)
+        payload_after = self._payload()
+        result = build_financial_model(payload_after)
+        self.assertAlmostEqual(
+            self._esf_value(payload_after, "Inventarios", "2026-02"),
+            151000 * 36.6243,
+            delta=1.0,
+        )
+        self.assertTrue(result.validations["balance"]["ok"])
+
+    def test_plan_hash_goes_stale_after_phase3_proposal_changes_payload(self):
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "plan_multi_target_balance",
+                "args": {
+                    "account": "inventory",
+                    "currency": "USD",
+                    "targets": [{"month": "2026-01", "target_amount": 150000}],
+                },
+            }
+        )
+        plan_id = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "plan inventario"},
+        ).get_json()["plan"]["id"]
+
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {"intent": "assumption_change", "args": {"assumption": "cost_pct", "value": 71}}
+        )
+        proposal = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "cambia costo"},
+        ).get_json()["proposal"]
+        self.client.post(f"/api/agent/proposals/{proposal['id']}/apply")
+
+        stale = self.client.post(f"/api/agent/plans/{plan_id}/apply")
+        self.assertEqual(stale.status_code, 409)
+        with self.db_session() as session:
+            self.assertEqual(session.get(AgentPlan, plan_id).status, "stale")
+
+    def test_plan_failure_does_not_persist_partial_payload(self):
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "plan_multi_target_balance",
+                "args": {
+                    "account": "inventory",
+                    "currency": "USD",
+                    "targets": [
+                        {"month": "2026-01", "target_amount": 150000},
+                        {"month": "2026-02", "target_amount": 151000},
+                    ],
+                },
+            }
+        )
+        before = self._payload()
+        plan_id = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "plan inventario falla"},
+        ).get_json()["plan"]["id"]
+        with self.db_session() as session:
+            plan = session.get(AgentPlan, plan_id)
+            steps = json.loads(plan.steps_json)
+            steps[1]["target_amount_nio"] = 1
+            plan.steps_json = json.dumps(steps, ensure_ascii=False, sort_keys=True)
+            session.commit()
+
+        failed = self.client.post(f"/api/agent/plans/{plan_id}/apply")
+
+        self.assertEqual(failed.status_code, 400)
+        self.assertEqual(self._payload(), before)
+        with self.db_session() as session:
+            plan = session.get(AgentPlan, plan_id)
+            audit = session.scalars(select(AuditLog).where(AuditLog.action == "agent_plan_failed")).first()
+        self.assertEqual(plan.status, "failed")
+        self.assertEqual(plan.failed_step_order, 2)
+        self.assertIsNotNone(audit)
+
+    def test_plan_distribution_and_multi_account_limits(self):
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "plan_multi_target_balance",
+                "args": {
+                    "account": "inventory",
+                    "currency": "USD",
+                    "months": ["2026-01", "2026-02", "2026-03"],
+                    "average": 200000,
+                    "overrides": {"2026-02": 205000},
+                },
+            }
+        )
+        data = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "promedio inventario con excepcion"},
+        ).get_json()
+        targets = [step["target_amount"] for step in data["plan"]["steps"]]
+        self.assertIn(205000, targets)
+        self.assertEqual(round(sum(targets) / len(targets)), 200000)
+
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "plan_multi_account_target_balance",
+                "args": {
+                    "targets": [
+                        {"account": "inventory", "month": "2026-01", "target_amount": 1, "counter_account": "cash"},
+                        {"account": "cash", "month": "2026-01", "target_amount": 1, "counter_account": "loans_personal"},
+                        {"account": "accounts_receivable", "month": "2026-01", "target_amount": 1, "counter_account": "cash"},
+                        {"account": "suppliers", "month": "2026-01", "target_amount": 1, "counter_account": "cash"},
+                        {"account": "ppe_equipment", "month": "2026-01", "target_amount": 1, "counter_account": "cash"},
+                    ]
+                },
+            }
+        )
+        limited = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "demasiadas cuentas"},
+        )
+        self.assertEqual(limited.status_code, 400)
+        self.assertIn("hasta 4", limited.get_json()["error"])
+
+    def test_plan_expired_and_finalized_period_guards(self):
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "plan_multi_target_balance",
+                "args": {
+                    "account": "inventory",
+                    "currency": "USD",
+                    "targets": [{"month": "2026-01", "target_amount": 150000}],
+                },
+            }
+        )
+        plan_id = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "plan expirable"},
+        ).get_json()["plan"]["id"]
+        with self.db_session() as session:
+            plan = session.get(AgentPlan, plan_id)
+            plan.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+            session.commit()
+        expired = self.client.post(f"/api/agent/plans/{plan_id}/apply")
+        self.assertEqual(expired.status_code, 409)
+
+        plan_id = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "plan finalizado"},
+        ).get_json()["plan"]["id"]
+        self.client.post(f"/api/periodos/{self.periodo['id']}/finalizar")
+        blocked = self.client.post(f"/api/agent/plans/{plan_id}/apply")
+        self.assertEqual(blocked.status_code, 409)
+
+    def test_pending_plan_partial_unique_index_rejects_concurrent_second_insert(self):
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+        with self.db_session() as first, self.db_session() as second:
+            first.add(
+                AgentPlan(
+                    periodo_id=self.periodo["id"],
+                    cpa_user="system",
+                    kind="multi_target_balance",
+                    user_message="primero",
+                    plan_summary="primero",
+                    steps_json="[]",
+                    aggregate_impact_json="{}",
+                    status="pending",
+                    payload_hash="hash-1",
+                    expires_at=expires_at,
+                )
+            )
+            first.commit()
+            second.add(
+                AgentPlan(
+                    periodo_id=self.periodo["id"],
+                    cpa_user="system",
+                    kind="multi_target_balance",
+                    user_message="segundo",
+                    plan_summary="segundo",
+                    steps_json="[]",
+                    aggregate_impact_json="{}",
+                    status="pending",
+                    payload_hash="hash-2",
+                    expires_at=expires_at,
+                )
+            )
+            with self.assertRaises(IntegrityError):
+                second.commit()
+
+    def test_plan_target_utility_generates_monthly_override_plan(self):
+        current = build_financial_model(self._payload())
+        target_usd = current.summary["net_income_total"] / 36.6243 + 1000
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "plan_target_utility",
+                "args": {"target_net_income_usd": target_usd, "lever": "cogs"},
+            }
+        )
+        response = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "utilidad objetivo con cogs"},
+        )
+        data = response.get_json()
+        self.assertEqual(response.status_code, 200, data)
+        self.assertEqual(data["plan"]["kind"], "target_utility")
+        self.assertTrue(all(step["kind"] == "monthly_override" for step in data["plan"]["steps"]))
 
 
 if __name__ == "__main__":

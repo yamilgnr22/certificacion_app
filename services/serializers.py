@@ -4,7 +4,7 @@ import json
 from datetime import date, datetime
 from typing import Any
 
-from db.models import AccountCatalog, Cliente, GiroNegocio, PeriodoCertificacion
+from db.models import AccountCatalog, AgentPlan, Cliente, GiroNegocio, PeriodoCertificacion
 
 
 def parse_json_object(value: str | None, fallback: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -115,4 +115,32 @@ def account_to_dict(account: AccountCatalog) -> dict[str, Any]:
         "active": bool(account.active),
         "created_at": iso(account.created_at),
         "updated_at": iso(account.updated_at),
+    }
+
+
+def agent_plan_to_dict(plan: AgentPlan) -> dict[str, Any]:
+    try:
+        steps = json.loads(plan.steps_json or "[]")
+    except Exception:
+        steps = []
+    if not isinstance(steps, list):
+        steps = []
+    aggregate = parse_json_object(plan.aggregate_impact_json)
+    return {
+        "id": plan.id,
+        "periodo_id": plan.periodo_id,
+        "cpa_user": plan.cpa_user,
+        "kind": plan.kind,
+        "user_message": plan.user_message,
+        "plan_summary": plan.plan_summary,
+        "steps": steps,
+        "step_count": len(steps),
+        "aggregate_impact": aggregate,
+        "status": plan.status,
+        "payload_hash": plan.payload_hash,
+        "created_at": iso(plan.created_at),
+        "expires_at": iso(plan.expires_at),
+        "applied_at": iso(plan.applied_at),
+        "failed_step_order": plan.failed_step_order,
+        "failure_reason": plan.failure_reason,
     }

@@ -100,6 +100,14 @@ class AgentToolRegistry:
                 {"response_type": "answer", "data": "target_delta"},
                 self._compute_target_delta,
             ),
+            "compute_target_distribution": AgentTool(
+                "compute_target_distribution",
+                "1.0.0",
+                False,
+                {"months": "YYYY-MM[]", "average": "number", "overrides": "object"},
+                {"response_type": "answer", "data": "target_distribution"},
+                self._compute_target_distribution,
+            ),
             "navigate": AgentTool(
                 "navigate",
                 "1.0.0",
@@ -129,6 +137,10 @@ class AgentToolRegistry:
             "guardar_payload": self._mutating_tool("guardar_payload"),
             "finalizar_periodo": self._mutating_tool("finalizar_periodo"),
             "generar_documento": self._mutating_tool("generar_documento"),
+            "plan_multi_target_balance": self._mutating_tool("plan_multi_target_balance"),
+            "plan_non_negative_account": self._mutating_tool("plan_non_negative_account"),
+            "plan_target_utility": self._mutating_tool("plan_target_utility"),
+            "plan_multi_account_target_balance": self._mutating_tool("plan_multi_account_target_balance"),
         }
 
     @staticmethod
@@ -389,6 +401,35 @@ class AgentToolRegistry:
                 "delta_nio": delta,
                 "exchange_rate": rate,
             },
+        }
+
+    def _compute_target_distribution(self, payload: Mapping[str, Any], args: Mapping[str, Any]) -> dict[str, Any]:
+        months = [str(m).strip()[:7] for m in (args.get("months") or []) if str(m or "").strip()]
+        average = _number(args.get("average") or args.get("target_average") or args.get("promedio"))
+        overrides = args.get("overrides") if isinstance(args.get("overrides"), Mapping) else {}
+        if not months or average <= 0:
+            return {
+                "response_type": "question",
+                "assistant_message": "Necesito meses y promedio positivo para distribuir objetivos.",
+                "ui_actions": [],
+                "data": {},
+            }
+        override_values = {str(k).strip()[:7]: _number(v) for k, v in overrides.items()}
+        fixed_total = sum(v for v in override_values.values() if v > 0)
+        free_months = [m for m in months if override_values.get(m, 0) <= 0]
+        free_value = (average * len(months) - fixed_total) / len(free_months) if free_months else average
+        targets = [
+            {
+                "month": month,
+                "target_amount": round(override_values[month], 2) if override_values.get(month, 0) > 0 else round(free_value, 2),
+            }
+            for month in months
+        ]
+        return {
+            "response_type": "answer",
+            "assistant_message": "Distribucion calculada.",
+            "ui_actions": [],
+            "data": {"kind": "target_distribution", "targets": targets},
         }
 
     def _navigate(self, payload: Mapping[str, Any], args: Mapping[str, Any]) -> dict[str, Any]:

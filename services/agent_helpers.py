@@ -60,28 +60,44 @@ def _system_prompt() -> str:
         "monthly_override(updates=[{month,revenue_usd,cogs_usd,note}], remove=[{month,fields}]), "
         "create_account(name, account_type, section), "
         "compound_plan(steps=[{tool,args}]) para instrucciones autocontenidas que requieren crear una cuenta y registrar un asiento; "
-        "target_balance_adjustment(account, month, target_amount, currency, counter_account opcional) para ajustar caja, inventario, cuentas por cobrar o proveedores a un saldo objetivo; "
+        "target_balance_adjustment(account, month, target_amount, currency, counter_account opcional) para ajustar caja, inventario, cuentas por cobrar o proveedores a un saldo objetivo en UN solo mes; "
+        "plan_multi_target_balance(account, currency, average opcional, overrides opcional, targets opcional, counter_account opcional) para objetivos multi-mes de UNA cuenta. IMPORTANTE: para PROMEDIOS usa SIEMPRE el parametro 'average' (un solo numero) y dejá que el backend calcule los meses; NO inventes una lista 'targets'. Si el usuario define excepciones por mes, pasalas en 'overrides={\"2026-05\": 205000}'. Solo usá 'targets=[{month,target_amount}]' si el usuario enumera EXPLICITAMENTE cada mes con su valor distinto. "
+        "plan_non_negative_account(account, target_floor opcional, buffer_nio opcional, counter_account opcional) para garantizar que una cuenta no baje de un piso a lo largo del periodo; "
+        "plan_target_utility(target_net_income_usd, lever='cogs'|'revenue') para objetivos de utilidad anual; lever default 'cogs', preguntar si el usuario no la aclara; "
+        "plan_multi_account_target_balance(targets=[{account, month, target_amount, currency, counter_account}]) para ajustar HASTA 4 cuentas distintas en una misma instruccion; "
         "recalcular_preview(), guardar_payload(), finalizar_periodo(), generar_documento(), "
         "question. "
-        "Si el usuario pide fijar ingresos o costos exactos de un mes, usa monthly_override. Si pide que una cuenta cierre en un monto, usa target_balance_adjustment. Si falta cuenta, mes o monto, usa question. Si el usuario pide crear una cuenta nueva y tambien registrar una partida en la misma instruccion, usa compound_plan. Si solo pide crear cuenta, usa create_account. "
+        "Si el usuario pide fijar ingresos o costos exactos de un mes, usa monthly_override. Si pide que una cuenta cierre en un monto en UN solo mes, usa target_balance_adjustment. Si falta cuenta, mes o monto, usa question. Si el usuario pide crear una cuenta nueva y tambien registrar una partida en la misma instruccion, usa compound_plan. Si solo pide crear cuenta, usa create_account. "
+        "RUTEO A PLANES MULTI-PASO: Si el usuario pide promedio mensual, oscilar alrededor de un valor, un valor recurrente cada mes, o lista varios meses con sus targets, usa plan_multi_target_balance. Si pide que caja u otra cuenta no quede negativa o respete un piso a lo largo del periodo, usa plan_non_negative_account. Si pide objetivo de utilidad anual, usa plan_target_utility (lever='cogs' por defecto). Si pide ajustar 2-4 cuentas distintas en una sola instruccion, usa plan_multi_account_target_balance (maximo 4 cuentas; si pide mas, devolve question pidiendo dividir). "
         "Si el usuario dice 'lo mismo' o 'igual que antes', usa journal_entry con repeat_last=true y el nuevo month o amount indicado. "
         "Si pide guardar o recalcular, usa guardar_payload o recalcular_preview. "
         "Si pide finalizar el periodo, usa finalizar_periodo. Si pide generar el documento, usa generar_documento. "
         "Todos los meses deben devolverse en formato YYYY-MM (ejemplo: 2026-05). Convierte 'mayo 2026', 'May 2026' o 'mayo' a YYYY-MM antes de responder. "
         "Reglas para instrucciones que NO podes ejecutar tal cual:\n"
         "A) MULTI-OBJETIVO REAL: el usuario combina 2+ objetivos distintos en una sola instruccion (ej: 'cuenta A en X y cuenta B en Y', o 'promedio 200k Y mayo 205k'). Devolve EXACTAMENTE: {\"intent\": \"question\", \"assistant_message\": \"Detecte mas de un objetivo en tu instruccion: 1) <primer objetivo>; 2) <segundo objetivo>. Hoy puedo procesar uno por vez. Reescribi eligiendo solo uno (por ejemplo: 'ajusta inventario a USD 205k en mayo 2026').\"}.\n"
-        "B) OBJETIVO UNICO PERO NO SOPORTADO: el usuario pide algo coherente pero que no es un ajuste puntual de UN mes. Ejemplos tipicos: 'promedio mensual X', 'oscile alrededor de X', 'no quede negativa', 'no exceda X%', 'que cierre el ano en X', 'baja X% en cada mes', 'hazlo mes a mes', 'aplicalo a todos los meses'. Hoy solo soportamos target_balance_adjustment de UN mes especifico. NO podes iterar automaticamente ni mantener restricciones. Para estos casos devolve EXACTAMENTE: {\"intent\": \"question\", \"assistant_message\": \"Entendi que queres <intencion del usuario>. LIMITACION: hoy proceso solo ajustes puntuales (UN mes, UNA cuenta, UN monto). NO puedo iterar sobre varios meses ni aplicar restricciones automaticas; eso requiere planificador multi-paso que todavia no esta. Si queres avanzar, vas a tener que enviar UNA instruccion completa por cada mes que queres ajustar (yo proceso una a la vez). Ejemplo: 'ajusta inventario a USD 200k en enero 2026'. Empezamos por un mes especifico?\"}. NO listes objetivos numerados en este caso (es uno solo).\n"
+        "B) OBJETIVO GENUINAMENTE NO SOPORTADO: solo si el pedido no encaja en ningun intent ni plan listado arriba. Ejemplos: optimizar multiples variables simultaneas (revenue + cogs + gastos juntos), mezclar restricciones con targets en una sola instruccion ('no negativa Y promedio 200k Y total anual X'), mas de 4 cuentas en un mismo plan, planes que cruzan periodos. ANTES de usar B verifica que ningun intent ni plan aplica; en duda elegi un plan_*. Para casos verdaderamente no soportados devolve {\"intent\": \"question\", \"assistant_message\": \"Entendi que queres <intencion>. LIMITACION: ese pedido combina restricciones que hoy no resuelvo en una sola operacion. Sugerencia: dividilo en pedidos mas chicos (ej: primero 'ajusta inventario para que promedio sea USD 200k', despues 'que caja no quede negativa').\"}. NO listes objetivos numerados (es uno solo).\n"
         "C) REFERENCIAL: el usuario responde con frases cortas como 'el primero', 'ese', 'uno', '1', '2', 'si', 'no', 'hazlo', 'aplica el primer ajuste', 'dale'. Son respuestas a preguntas previas, no instrucciones nuevas. Devolve {\"intent\": \"question\", \"assistant_message\": \"Reescribi la instruccion completa con cuenta, mes y monto (ej: 'ajusta inventario a USD 205k en mayo 2026').\"}.\n"
         "Antes de elegir A/B/C: si la instruccion ES un ajuste puntual de UN mes con cuenta y monto, usa target_balance_adjustment normalmente, no estas reglas."
     )
 
 
 def _user_prompt(*, message: str, ui_context: Mapping[str, Any]) -> str:
+    ctx = dict(ui_context or {})
+    period_hint = ""
+    period_meta = ctx.get("period") if isinstance(ctx.get("period"), Mapping) else {}
+    start = str(period_meta.get("start_month") or period_meta.get("mes_inicial") or "").strip()
+    end = str(period_meta.get("end_month") or period_meta.get("mes_final") or "").strip()
+    if start and end:
+        period_hint = (
+            f"\nRango del periodo activo: {start} a {end} (formato YYYY-MM). "
+            "Cualquier mes fuera de ese rango es invalido y debe rechazarse.\n"
+        )
     return (
         "Mensaje del usuario:\n"
         f"{message}\n\n"
         "Contexto UI disponible:\n"
-        f"{dict(ui_context or {})}\n\n"
+        f"{ctx}\n"
+        f"{period_hint}\n"
         "Ejemplos de cuentas validas: Efectivo y Equivalentes de Efectivo, "
         "Resultados Acumulados, Resultados del Ejercicio, Inventarios, Proveedores."
     )

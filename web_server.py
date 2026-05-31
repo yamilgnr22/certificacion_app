@@ -576,6 +576,33 @@ def api_agent_discard_proposal(proposal_id: str):
         return _service_error_response(exc)
 
 
+@app.get("/api/agent/plans/<plan_id>")
+def api_agent_get_plan(plan_id: str):
+    try:
+        data = AgentCommandService(_db_session()).get_plan(plan_id, cpa_user=_cpa_user())
+        return data, 200
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.post("/api/agent/plans/<plan_id>/apply")
+def api_agent_apply_plan(plan_id: str):
+    try:
+        data = AgentCommandService(_db_session()).apply_plan(plan_id, cpa_user=_cpa_user())
+        return data, 200
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.post("/api/agent/plans/<plan_id>/discard")
+def api_agent_discard_plan(plan_id: str):
+    try:
+        data = AgentCommandService(_db_session()).discard_plan(plan_id, cpa_user=_cpa_user())
+        return data, 200
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
 @app.get("/api/audit")
 def api_list_audit():
     try:

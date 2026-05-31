@@ -28,5 +28,9 @@ class AgentProposalConflictError(AgentServiceError):
     pass
 
 
+class AgentPlanFailureError(AgentServiceError):
+    pass
+
+
 class AgentCatalogChangedError(AgentServiceError):
     pass

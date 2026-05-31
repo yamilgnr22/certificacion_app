@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import CheckConstraint, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -168,6 +168,36 @@ class AgentProposal(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     discarded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AgentPlan(Base):
+    __tablename__ = "agent_plans"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    periodo_id: Mapped[str] = mapped_column(ForeignKey("periodos_certificacion.id"), nullable=False, index=True)
+    cpa_user: Mapped[str] = mapped_column(String(120), nullable=False, default="system")
+    kind: Mapped[str] = mapped_column(String(80), nullable=False)
+    user_message: Mapped[str] = mapped_column(Text, nullable=False)
+    plan_summary: Mapped[str] = mapped_column(Text, nullable=False)
+    steps_json: Mapped[str] = mapped_column(Text, nullable=False)
+    aggregate_impact_json: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending", index=True)
+    payload_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failed_step_order: Mapped[int | None] = mapped_column(Integer)
+    failure_reason: Mapped[str | None] = mapped_column(Text)
+    __table_args__ = (
+        Index(
+            "uq_agent_plans_one_pending_per_period",
+            "periodo_id",
+            "cpa_user",
+            unique=True,
+            sqlite_where=(status == "pending"),
+        ),
+        Index("ix_agent_plans_periodo_id_status", "periodo_id", "status"),
+    )
 
 
 class AgentSessionContext(Base):

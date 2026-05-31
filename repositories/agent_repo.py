@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 
-from db.models import AgentMessage, AgentProposal, AgentSessionContext, LegacyCallCounter
+from db.models import AgentMessage, AgentPlan, AgentProposal, AgentSessionContext, LegacyCallCounter
 
 
 class AgentRepository:
@@ -73,6 +73,69 @@ class AgentRepository:
 
     def get_proposal(self, proposal_id: str) -> AgentProposal | None:
         return self.session.get(AgentProposal, proposal_id)
+
+    def add_plan(
+        self,
+        *,
+        periodo_id: str,
+        cpa_user: str,
+        kind: str,
+        user_message: str,
+        plan_summary: str,
+        steps_json: str,
+        aggregate_impact_json: str | None,
+        payload_hash: str,
+        expires_at,
+    ) -> AgentPlan:
+        plan = AgentPlan(
+            periodo_id=periodo_id,
+            cpa_user=cpa_user or "system",
+            kind=kind,
+            user_message=user_message,
+            plan_summary=plan_summary,
+            steps_json=steps_json,
+            aggregate_impact_json=aggregate_impact_json,
+            status="pending",
+            payload_hash=payload_hash,
+            created_at=datetime.now(timezone.utc),
+            expires_at=expires_at,
+        )
+        self.session.add(plan)
+        self.session.flush()
+        return plan
+
+    def get_plan(self, plan_id: str) -> AgentPlan | None:
+        return self.session.get(AgentPlan, plan_id)
+
+    def discard_pending_plans_for_periodo(self, *, periodo_id: str, cpa_user: str) -> int:
+        records = list(
+            self.session.scalars(
+                select(AgentPlan).where(
+                    AgentPlan.periodo_id == periodo_id,
+                    AgentPlan.cpa_user == (cpa_user or "system"),
+                    AgentPlan.status == "pending",
+                )
+            )
+        )
+        for plan in records:
+            plan.status = "discarded"
+            plan.failure_reason = "Descartado automaticamente por un plan nuevo."
+            plan.applied_at = None
+        if records:
+            self.session.flush()
+        return len(records)
+
+    def recent_plans(self, *, periodo_id: str, cpa_user: str, limit: int = 5) -> list[AgentPlan]:
+        stmt = (
+            select(AgentPlan)
+            .where(
+                AgentPlan.periodo_id == periodo_id,
+                AgentPlan.cpa_user == (cpa_user or "system"),
+            )
+            .order_by(AgentPlan.created_at.desc())
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt))
 
     def supersede_pending_for_command(self, command_id: str) -> int:
         command_id = str(command_id or "").strip()

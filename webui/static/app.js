@@ -2750,6 +2750,102 @@
     return labels[account] || account || '';
   }
 
+  function renderChatPlan(data) {
+    const plan = data.plan || {};
+    const wrap = document.createElement('div');
+    wrap.className = 'chat-bubble app proposal-card plan-card';
+    data.proposalElement = wrap;
+    const messages = qs('#modelChatMessages');
+    if (messages) messages.appendChild(wrap);
+
+    const title = document.createElement('h3');
+    title.textContent = 'Plan propuesto';
+    wrap.appendChild(title);
+
+    const message = document.createElement('p');
+    message.className = 'proposal-message';
+    message.textContent = data.assistant_message || plan.plan_summary || 'Revise el plan antes de aplicarlo.';
+    wrap.appendChild(message);
+
+    const steps = Array.isArray(plan.steps) ? plan.steps : [];
+    const impact = plan.aggregate_impact || {};
+    const grid = document.createElement('div');
+    grid.className = 'proposal-grid';
+    [
+      ['Tipo', plan.kind || 'plan'],
+      ['Pasos', formatMoney(steps.length || plan.step_count || 0)],
+      ['Estado', plan.status || 'pending'],
+      ['Vence', plan.expires_at ? new Date(plan.expires_at).toLocaleTimeString() : ''],
+      ['Delta ingresos', formatSignedMoney(impact.revenue_total_delta || 0)],
+      ['Delta COGS', formatSignedMoney(impact.cogs_total_delta || 0)],
+      ['Delta utilidad', formatSignedMoney(impact.net_income_total_delta || 0)],
+      ['Delta caja final', formatSignedMoney(impact.cash_end_delta || 0)],
+    ].forEach(([label, value]) => {
+      const box = document.createElement('div');
+      box.className = 'proposal-item';
+      const span = document.createElement('span');
+      span.textContent = label;
+      const strong = document.createElement('strong');
+      strong.textContent = value;
+      box.append(span, strong);
+      grid.appendChild(box);
+    });
+    wrap.appendChild(grid);
+
+    const details = document.createElement('details');
+    details.className = 'proposal-technical';
+    details.open = steps.length <= 6;
+    const summary = document.createElement('summary');
+    summary.textContent = `Ver pasos (${steps.length})`;
+    details.appendChild(summary);
+    const table = document.createElement('table');
+    table.className = 'journal-proposal-table';
+    table.innerHTML = '<thead><tr><th>#</th><th>Tipo</th><th>Cuenta/Campo</th><th>Mes</th><th>Objetivo</th><th>Delta</th><th>Contrapartida</th></tr></thead>';
+    const tbody = document.createElement('tbody');
+    steps.forEach(step => {
+      const tr = document.createElement('tr');
+      const target = step.kind === 'monthly_override'
+        ? (step.field === 'revenue_usd' ? step.after_revenue_usd : step.after_cogs_usd)
+        : step.target_amount;
+      [
+        step.step_order || '',
+        step.kind || '',
+        step.account_label || step.account || step.field || '',
+        step.month || '',
+        target === undefined || target === null ? '' : `${formatMoney(target)} ${step.currency || 'USD'}`,
+        formatSignedMoney(step.expected_delta_nio || 0),
+        step.counter_account_label || step.counter_account || '',
+      ].forEach(value => {
+        const td = document.createElement('td');
+        td.textContent = value;
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    details.appendChild(table);
+    wrap.appendChild(details);
+
+    const actions = document.createElement('div');
+    actions.className = 'proposal-actions';
+    const apply = document.createElement('button');
+    apply.id = 'btnModelChatApply';
+    apply.className = 'btn primary';
+    apply.type = 'button';
+    apply.textContent = 'Aplicar plan entero';
+    const discard = document.createElement('button');
+    discard.id = 'btnModelChatDiscard';
+    discard.className = 'btn';
+    discard.type = 'button';
+    discard.textContent = 'Descartar';
+    actions.append(apply, discard);
+    wrap.appendChild(actions);
+
+    apply.addEventListener('click', onModelChatApply);
+    discard.addEventListener('click', onModelChatDiscard);
+    wrap.scrollIntoView({ block: 'nearest' });
+  }
+
   function renderChatProposal(data) {
     const thread = qs('#modelChatMessages');
     if (!thread) return;
@@ -3419,6 +3515,7 @@
   function buildModelChatUiContext() {
     const block = lastModelPreviewData ? getModelBlock(lastModelPreviewData) : null;
     const months = block?.meta?.months || lastModelPreviewData?.summary?.months || [];
+    const periodoMeta = activePeriodoDetail?.periodo || {};
     return {
       scope: buildModelChatScope(),
       selected_block_id: block?.meta?.id || block?.blockId || '',
@@ -3427,6 +3524,10 @@
       selected_month: months[months.length - 1] || '',
       selected_voucher_type: selectedAccountingType(),
       selected_voucher: selectedChatVoucherId,
+      period: {
+        start_month: periodoMeta.mes_inicial || '',
+        end_month: periodoMeta.mes_final || '',
+      },
     };
   }
 
@@ -3821,6 +3922,8 @@
         scrollToChatTarget(action.target || '');
       } else if (action.type === 'select_voucher') {
         highlightVoucher(action.voucher_id || '');
+      } else if (action.type === 'show_plan') {
+        // La card del plan se renderiza con la respuesta principal.
       }
     });
   }
@@ -3947,6 +4050,13 @@
         setModelMessage(assistantText, 'error');
         return;
       }
+      if (data.response_type === 'plan') {
+        pendingChatPayload = null;
+        pendingChatData = data;
+        renderChatPlan(data);
+        setModelMessage('Plan creado en SQLite. Revise los pasos y confirme si desea aplicarlo.', 'info');
+        return;
+      }
       pendingChatPayload = data.adjusted_payload || null;
       pendingChatData = data;
       renderChatProposal(data);
@@ -3983,6 +4093,45 @@
     if (!pendingChatData) return;
     const activeBubble = pendingChatData.proposalElement;
     if (pendingChatData.agent_mode) {
+      if (pendingChatData.response_type === 'plan') {
+        const planId = pendingChatData.plan?.id;
+        if (!planId) {
+          appendChatMessage('El plan no tiene identificador para aplicar.', 'error');
+          return;
+        }
+        try {
+          markProposalCardStatus(activeBubble, 'applying', 'Aplicando plan... paso a paso en memoria.');
+          const poll = setInterval(async () => {
+            try {
+              const current = await fetchJson(`/api/agent/plans/${encodeURIComponent(planId)}`);
+              const status = current.plan?.status || '';
+              if (status && status !== 'applying') clearInterval(poll);
+            } catch {
+              clearInterval(poll);
+            }
+          }, 1000);
+          const applied = await fetchJson(`/api/agent/plans/${encodeURIComponent(planId)}/apply`, { method: 'POST' });
+          clearInterval(poll);
+          markProposalCardStatus(activeBubble, 'applied', `Plan aplicado — ${applied.assistant_message || 'Listo.'}`);
+          pendingChatPayload = null;
+          pendingChatData = null;
+          if (activePeriodoId) {
+            const data = await fetchJson(`/api/periodos/${encodeURIComponent(activePeriodoId)}`);
+            activePeriodoDetail = data;
+            if (data.periodo?.payload) {
+              runWithoutEditorDirty(() => applyModelPayload(data.periodo.payload, { draftId: null }));
+            }
+            updateEditorHeader();
+            markEditorDirty(false);
+            await onModelPreview();
+          }
+        } catch (e) {
+          markProposalCardStatus(activeBubble, 'failed', `Plan fallido. El periodo quedo sin cambios. ${String(e.message || e)}`);
+          appendChatMessage(String(e.message || e), 'error');
+          setModelMessage(String(e.message || e), 'error');
+        }
+        return;
+      }
       const proposalId = pendingChatData.proposal?.id;
       if (!proposalId) {
         appendChatMessage('La propuesta no tiene identificador para aplicar.', 'error');
@@ -4075,6 +4224,14 @@
   function onModelChatDiscard() {
     if (!pendingChatData) return;
     const activeBubble = pendingChatData.proposalElement;
+    if (pendingChatData?.agent_mode && pendingChatData?.response_type === 'plan' && pendingChatData?.plan?.id) {
+      fetchJson(`/api/agent/plans/${encodeURIComponent(pendingChatData.plan.id)}/discard`, { method: 'POST' })
+        .catch(() => {});
+      markProposalCardStatus(activeBubble, 'discarded', 'Plan descartado.');
+      pendingChatPayload = null;
+      pendingChatData = null;
+      return;
+    }
     if (pendingChatData?.agent_mode && pendingChatData?.proposal?.id) {
       fetchJson(`/api/agent/proposals/${encodeURIComponent(pendingChatData.proposal.id)}/discard`, { method: 'POST' })
         .catch(() => {});
