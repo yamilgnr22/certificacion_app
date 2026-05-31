@@ -1714,7 +1714,7 @@
     const wrap = qs('#modelChatMessages');
     if (!wrap || !data || typeof data !== 'object') return;
     const kind = data.kind || '';
-    if (!['balance_explanation', 'ledger', 'voucher'].includes(kind)) return;
+    if (!['balance_explanation', 'ledger', 'voucher', 'account_balance', 'target_delta', 'period_summary'].includes(kind)) return;
     const bubble = document.createElement('div');
     bubble.className = 'chat-bubble app chat-tool-data';
     if (kind === 'balance_explanation') {
@@ -1743,6 +1743,24 @@
           formatMoney(row.running_balance || 0),
         ]),
         `Mayor de ${data.account_label || data.account || ''}`
+      ));
+    } else if (kind === 'account_balance') {
+      bubble.appendChild(compactTable(
+        ['Cuenta', 'Mes', 'Saldo final'],
+        [[data.account_label || data.account || '', data.month || '', formatMoney(data.closing_balance || 0)]],
+        'Saldo'
+      ));
+    } else if (kind === 'target_delta') {
+      bubble.appendChild(compactTable(
+        ['Cuenta', 'Mes', 'Actual C$', 'Objetivo C$', 'Diferencia C$'],
+        [[data.account_label || data.account || '', data.month || '', formatMoney(data.current_balance_nio || 0), formatMoney(data.target_amount_nio || 0), formatSignedMoney(data.delta_nio || 0)]],
+        'Diferencia al objetivo'
+      ));
+    } else if (kind === 'period_summary') {
+      bubble.appendChild(compactTable(
+        ['Mes', 'Caja', 'Inventario', 'CxC', 'Proveedores'],
+        [[data.month || '', formatMoney(data.cash || 0), formatMoney(data.inventory || 0), formatMoney(data.accounts_receivable || 0), formatMoney(data.suppliers || 0)]],
+        'Resumen del periodo'
       ));
     } else if (kind === 'voucher' && data.voucher) {
       const voucher = data.voucher;
@@ -1829,6 +1847,131 @@
     return Number.isFinite(n) ? n : fallback;
   }
 
+  function compactMonthlyOverride(item) {
+    const out = {};
+    Object.entries(item || {}).forEach(([key, value]) => {
+      if (value === undefined || value === null || value === '') return;
+      out[key] = value;
+    });
+    return out;
+  }
+
+  function hasMonthlyOverrideData(item) {
+    return Object.keys(compactMonthlyOverride(item)).some(key => key !== 'month');
+  }
+
+  function renderMonthlyOverridesTable() {
+    const tbody = qs('#monthlyOverridesRows');
+    if (!tbody) return;
+    const rows = Array.isArray(modelMonthlyOverrides) ? modelMonthlyOverrides : [];
+    tbody.innerHTML = rows.map((item, index) => `
+      <tr data-index="${index}">
+        <td><input class="monthly-override-month" type="month" value="${escapeHtml(String(item.month || ''))}"></td>
+        <td><input class="monthly-override-revenue" type="number" step="0.01" min="0" value="${item.revenue_usd ?? item.ingreso_usd ?? ''}"></td>
+        <td><input class="monthly-override-cogs" type="number" step="0.01" min="0" value="${item.cogs_usd ?? item.costo_usd ?? ''}"></td>
+        <td><input class="monthly-override-note" type="text" value="${escapeHtml(String(item.note || item.notes || item.nota || ''))}"></td>
+        <td><button class="btn danger small monthly-override-remove" type="button">Quitar</button></td>
+      </tr>
+    `).join('');
+    if (!rows.length) {
+      tbody.innerHTML = '<tr class="muted-row"><td colspan="5">Sin valores exactos.</td></tr>';
+    }
+    updateMonthlyOverrideWarnings();
+  }
+
+  function readMonthlyOverridesFromTable({ strict = false } = {}) {
+    const tbody = qs('#monthlyOverridesRows');
+    if (!tbody) return modelMonthlyOverrides;
+    const rows = qsa('#monthlyOverridesRows tr[data-index]');
+    const existingByMonth = new Map();
+    (Array.isArray(modelMonthlyOverrides) ? modelMonthlyOverrides : []).forEach(item => {
+      const month = String(item.month || '').slice(0, 7);
+      if (month) existingByMonth.set(month, { ...item });
+    });
+    const seen = new Set();
+    const warnings = [];
+    rows.forEach(row => {
+      const month = row.querySelector('.monthly-override-month')?.value || '';
+      const revenueRaw = row.querySelector('.monthly-override-revenue')?.value || '';
+      const cogsRaw = row.querySelector('.monthly-override-cogs')?.value || '';
+      const note = row.querySelector('.monthly-override-note')?.value?.trim() || '';
+      if (!month && !revenueRaw && !cogsRaw && !note) return;
+      if (!/^\d{4}-\d{2}$/.test(month)) {
+        warnings.push('Mes invalido en valores exactos.');
+        return;
+      }
+      if (seen.has(month)) warnings.push(`Mes duplicado: ${month}.`);
+      seen.add(month);
+      const revenue = revenueRaw === '' ? null : Number(revenueRaw);
+      const cogs = cogsRaw === '' ? null : Number(cogsRaw);
+      if ((revenue !== null && (!Number.isFinite(revenue) || revenue < 0)) || (cogs !== null && (!Number.isFinite(cogs) || cogs < 0))) {
+        warnings.push(`Monto invalido en ${month}.`);
+        return;
+      }
+      if (revenue !== null && cogs !== null && cogs > revenue) {
+        warnings.push(`Costo mayor que ingreso en ${month}.`);
+      }
+      const item = existingByMonth.get(month) || { month };
+      delete item.ingreso_usd;
+      delete item.costo_usd;
+      if (revenue === null) delete item.revenue_usd;
+      else item.revenue_usd = revenue;
+      if (cogs === null) delete item.cogs_usd;
+      else item.cogs_usd = cogs;
+      if (note) item.note = note;
+      else delete item.note;
+      existingByMonth.set(month, item);
+    });
+    if (strict && warnings.some(text => /duplicado|invalido/i.test(text))) {
+      throw new Error(warnings[0]);
+    }
+    return Array.from(existingByMonth.values()).map(compactMonthlyOverride).filter(item => item.month && hasMonthlyOverrideData(item));
+  }
+
+  function syncMonthlyOverridesFromTable({ strict = false } = {}) {
+    modelMonthlyOverrides = readMonthlyOverridesFromTable({ strict });
+    return modelMonthlyOverrides;
+  }
+
+  function updateMonthlyOverrideWarnings() {
+    let warnings = [];
+    try {
+      readMonthlyOverridesFromTable();
+      const months = new Set();
+      qsa('#monthlyOverridesRows tr[data-index]').forEach(row => {
+        const month = row.querySelector('.monthly-override-month')?.value || '';
+        const revenueRaw = row.querySelector('.monthly-override-revenue')?.value || '';
+        const cogsRaw = row.querySelector('.monthly-override-cogs')?.value || '';
+        if (month && months.has(month)) warnings.push(`Mes duplicado: ${month}.`);
+        if (month) months.add(month);
+        const revenue = revenueRaw === '' ? null : Number(revenueRaw);
+        const cogs = cogsRaw === '' ? null : Number(cogsRaw);
+        if ((revenue !== null && revenue < 0) || (cogs !== null && cogs < 0)) warnings.push('No use montos negativos.');
+        if (revenue !== null && cogs !== null && cogs > revenue) warnings.push(`Costo mayor que ingreso en ${month}.`);
+      });
+    } catch (e) {
+      warnings = [e.message || String(e)];
+    }
+    const box = qs('#monthlyOverridesWarnings');
+    if (!box) return;
+    box.textContent = warnings.join(' ');
+    box.classList.toggle('hidden', warnings.length === 0);
+  }
+
+  function clearCostAssumptionOverridesOnly() {
+    modelMonthlyOverrides = (Array.isArray(modelMonthlyOverrides) ? modelMonthlyOverrides : [])
+      .map(item => {
+        const next = { ...item };
+        delete next.cost_pct;
+        delete next.porcentaje_costo;
+        delete next.cost_variability_pct;
+        delete next.variabilidad_costo_pct;
+        return compactMonthlyOverride(next);
+      })
+      .filter(item => item.month && hasMonthlyOverrideData(item));
+    renderMonthlyOverridesTable();
+  }
+
   function parseModelEvents() {
     const raw = inputValue('m_eventos');
     if (!raw) return [];
@@ -1858,6 +2001,7 @@
   }
 
   function buildModelPayload() {
+    syncMonthlyOverridesFromTable({ strict: true });
     return {
       client: {
         cliente_id: selectedClienteId || undefined,
@@ -2159,6 +2303,9 @@
       setEditorMessage(`Cambios guardados. Bloques: ${(data.changed_blocks || []).join(', ') || 'sin cambios detectados'}.${warn}`, 'success');
       // Recargar el detail
       activePeriodoDetail = await fetchJson(`/api/periodos/${activePeriodoId}`);
+      if (activePeriodoDetail?.periodo?.payload) {
+        runWithoutEditorDirty(() => applyModelPayload(activePeriodoDetail.periodo.payload, { draftId: null }));
+      }
       markEditorDirty(false);
       updateEditorHeader();
       await loadEditablePeriodos();
@@ -2197,6 +2344,7 @@
     modelAccountingVouchers = Array.isArray(accounting.vouchers) ? accounting.vouchers.map(item => ({ ...item })) : [];
     modelDynamicAccounts = Array.isArray(accounting.dynamic_accounts) ? accounting.dynamic_accounts.map(item => ({ ...item })) : [];
     modelChatCommands = Array.isArray(chat.commands) ? chat.commands.map(item => ({ ...item })) : [];
+    renderMonthlyOverridesTable();
 
     const mapping = {
       m_nombre_completo: client.nombre_completo,
@@ -2586,6 +2734,22 @@
         ['Despues', proposal.after !== undefined ? String(proposal.after) : (proposal.assumption_value !== undefined ? `${formatMoney(proposal.assumption_value)}%` : `${formatMoney(proposal.technical_records?.[0]?.value)}%`)],
         ['Alcance', proposal.scope || proposal.scope_label || 'periodo completo'],
       ];
+    } else if (proposalKind === 'monthly_override_proposal') {
+      items = [
+        ['Alcance', 'valores exactos por mes'],
+        ['Meses', formatMoney((proposal.override_rows || proposal.rows || []).length)],
+      ];
+    } else if (proposalKind === 'target_balance_adjustment_proposal') {
+      const target = proposal.target || {};
+      items = [
+        ['Cuenta', target.account_label || target.account || ''],
+        ['Mes', target.month || proposal.month || ''],
+        ['Saldo actual C$', formatMoney(target.current_balance_nio_before || 0)],
+        ['Objetivo', `${formatMoney(target.target_amount_original || 0)} ${target.target_currency || ''}`],
+        ['Objetivo C$', formatMoney(target.target_amount_nio || 0)],
+        ['Diferencia C$', formatSignedMoney(target.delta_applied_nio || 0)],
+        ['Contrapartida', proposal.counter_account_label || proposal.counter_account || ''],
+      ];
     } else if (proposalKind === 'create_account') {
       const account = proposal.account || proposal.technical_records?.[0] || {};
       items = [
@@ -2640,18 +2804,18 @@
         ['Palanca', leverLabel(proposal.lever)],
       ];
     }
-    if (!['journal_entry', 'journal_entry_proposal', 'compound_events', 'compound_voucher_correction', 'compound_agent_proposal'].includes(proposalKind) && proposal.cash_variability_pct !== undefined && proposal.cash_variability_pct !== null) {
+    if (!['journal_entry', 'journal_entry_proposal', 'compound_events', 'compound_voucher_correction', 'compound_agent_proposal', 'target_balance_adjustment_proposal'].includes(proposalKind) && proposal.cash_variability_pct !== undefined && proposal.cash_variability_pct !== null) {
       items.push(['Variabilidad caja', `+/- ${formatMoney(proposal.cash_variability_pct)}%`]);
     }
-    if (!['journal_entry', 'journal_entry_proposal', 'compound_events', 'compound_voucher_correction', 'compound_agent_proposal'].includes(proposalKind) && proposal.target_min_cash !== undefined && proposal.target_max_cash !== undefined) {
+    if (!['journal_entry', 'journal_entry_proposal', 'compound_events', 'compound_voucher_correction', 'compound_agent_proposal', 'target_balance_adjustment_proposal'].includes(proposalKind) && proposal.target_min_cash !== undefined && proposal.target_max_cash !== undefined) {
       items.push(['Rango objetivo', `${formatMoney(proposal.target_min_cash)} - ${formatMoney(proposal.target_max_cash)}`]);
     }
-    if (!['journal_entry', 'journal_entry_proposal', 'compound_events', 'compound_voucher_correction', 'compound_agent_proposal'].includes(proposalKind) && proposal.purchase_average_nio !== undefined) items.push(['Compras promedio C$', formatMoney(proposal.purchase_average_nio)]);
-    if (!['journal_entry', 'journal_entry_proposal', 'compound_events', 'compound_voucher_correction', 'compound_agent_proposal'].includes(proposalKind) && proposal.purchase_average_usd !== undefined) items.push(['Compras promedio USD', formatMoney(proposal.purchase_average_usd)]);
+    if (!['journal_entry', 'journal_entry_proposal', 'compound_events', 'compound_voucher_correction', 'compound_agent_proposal', 'target_balance_adjustment_proposal'].includes(proposalKind) && proposal.purchase_average_nio !== undefined) items.push(['Compras promedio C$', formatMoney(proposal.purchase_average_nio)]);
+    if (!['journal_entry', 'journal_entry_proposal', 'compound_events', 'compound_voucher_correction', 'compound_agent_proposal', 'target_balance_adjustment_proposal'].includes(proposalKind) && proposal.purchase_average_usd !== undefined) items.push(['Compras promedio USD', formatMoney(proposal.purchase_average_usd)]);
     if (proposal.adjusted_min_cash !== undefined) items.push(['Caja mínima ajustada', formatMoney(proposal.adjusted_min_cash)]);
     if (proposal.adjusted_max_cash !== undefined) items.push(['Caja máxima ajustada', formatMoney(proposal.adjusted_max_cash)]);
-    if (!['journal_entry', 'journal_entry_proposal', 'compound_events', 'compound_voucher_correction', 'compound_agent_proposal'].includes(proposalKind) && events.length) items.push(['Eventos nuevos', formatMoney(events.length)]);
-    if (!['journal_entry', 'journal_entry_proposal', 'compound_events', 'compound_voucher_correction', 'compound_agent_proposal'].includes(proposalKind) && removedEvents.length) items.push(['Eventos removidos', formatMoney(removedEvents.length)]);
+    if (!['journal_entry', 'journal_entry_proposal', 'compound_events', 'compound_voucher_correction', 'compound_agent_proposal', 'target_balance_adjustment_proposal'].includes(proposalKind) && events.length) items.push(['Eventos nuevos', formatMoney(events.length)]);
+    if (!['journal_entry', 'journal_entry_proposal', 'compound_events', 'compound_voucher_correction', 'compound_agent_proposal', 'target_balance_adjustment_proposal'].includes(proposalKind) && removedEvents.length) items.push(['Eventos removidos', formatMoney(removedEvents.length)]);
     items.forEach(([label, value]) => {
       const box = document.createElement('div');
       box.className = 'proposal-item';
@@ -2692,6 +2856,25 @@
       journalTable.appendChild(tbody);
       wrap.appendChild(journalTable);
     };
+    const appendMonthlyOverrideTable = (rows) => {
+      if (!Array.isArray(rows) || !rows.length) return;
+      const table = document.createElement('table');
+      table.className = 'journal-proposal-table';
+      table.innerHTML = '<thead><tr><th>Mes</th><th>Ingreso antes</th><th>Ingreso despues</th><th>Costo antes</th><th>Costo despues</th></tr></thead>';
+      const tbody = document.createElement('tbody');
+      rows.forEach(row => {
+        const tr = document.createElement('tr');
+        ['month', 'before_revenue_usd', 'after_revenue_usd', 'before_cogs_usd', 'after_cogs_usd'].forEach(key => {
+          const td = document.createElement('td');
+          const value = row[key];
+          td.textContent = key === 'month' ? (value || '') : (value === undefined || value === null ? '-' : formatMoney(value));
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      wrap.appendChild(table);
+    };
     if (proposalKind === 'compound_agent_proposal') {
       (proposal.user_visible_steps || []).forEach((step, index) => {
         if (!step || typeof step !== 'object') return;
@@ -2709,8 +2892,10 @@
     } else if (proposalKind === 'compound_voucher_correction') {
       appendJournalTable(`1. Reverso de ${proposal.original_voucher_id || ''}`, proposal.reversal_rows);
       appendJournalTable('2. Nuevo asiento corregido', proposal.correction_rows);
-    } else if ((proposalKind === 'journal_entry' || proposalKind === 'journal_entry_proposal' || proposalKind === 'compound_events' || proposalKind === 'voucher_reversal' || proposalKind === 'create_account') && Array.isArray(proposal.journal_rows)) {
+    } else if ((proposalKind === 'journal_entry' || proposalKind === 'journal_entry_proposal' || proposalKind === 'compound_events' || proposalKind === 'voucher_reversal' || proposalKind === 'create_account' || proposalKind === 'target_balance_adjustment_proposal') && Array.isArray(proposal.journal_rows)) {
       appendJournalTable('', proposal.journal_rows);
+    } else if (proposalKind === 'monthly_override_proposal') {
+      appendMonthlyOverrideTable(proposal.override_rows || proposal.rows);
     }
     if (proposalKind === 'compound_events' && Array.isArray(proposal.event_labels)) {
       const list = document.createElement('ul');
@@ -2870,6 +3055,8 @@
     if (kind === 'compound_voucher_correction') return 'Correccion contable propuesta';
     if (kind === 'journal_entry' || kind === 'journal_entry_proposal' || kind === 'compound_events' || kind === 'voucher_reversal') return 'Propuesta contable';
     if (kind === 'create_account') return 'Cuenta contable propuesta';
+    if (kind === 'target_balance_adjustment_proposal') return 'Ajuste por objetivo propuesto';
+    if (kind === 'monthly_override_proposal') return 'Valores exactos propuestos';
     if (kind === 'assumption_change' || kind === 'assumption_change_proposal') return 'Propuesta de supuesto';
     if (kind === 'workflow') return 'Accion propuesta';
     if (kind === 'period_change') return 'Cambio de periodo propuesto';
@@ -3557,6 +3744,8 @@
       if (!action || !action.type) return;
       if (action.type === 'select_account') {
         selectAccountEverywhere(action.account || '');
+      } else if (action.type === 'save_and_retry') {
+        renderSaveAndRetryAction(action);
       } else if (action.type === 'open_saved_models') {
         showSavedModelsPanel();
         if (action.filter) setFieldValue('savedModelsFilter', action.filter);
@@ -3567,6 +3756,32 @@
         highlightVoucher(action.voucher_id || '');
       }
     });
+  }
+
+  function renderSaveAndRetryAction(action) {
+    const wrap = qs('#modelChatMessages');
+    if (!wrap) return;
+    const box = document.createElement('div');
+    box.className = 'chat-bubble app chat-action-bubble';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'primary';
+    btn.textContent = 'Guardar y continuar';
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      try {
+        await saveActivePeriodoChanges();
+        appendChatMessage('Guardar y continuar', 'user');
+        await requestModelChatProposal(action.retry_message || '');
+      } catch (e) {
+        btn.disabled = false;
+        appendChatMessage(String(e.message || e), 'error');
+        setModelMessage(String(e.message || e), 'error');
+      }
+    });
+    box.appendChild(btn);
+    wrap.appendChild(box);
+    box.scrollIntoView({ block: 'nearest' });
   }
 
   function selectAccountEverywhere(account) {
@@ -3890,7 +4105,7 @@
     if (!el.id || !el.id.startsWith('m_')) return;
     el.addEventListener('input', () => {
       clearPendingChatProposal();
-      if (el.id === 'm_costo_pct' || el.id === 'm_var_costo') modelMonthlyOverrides = [];
+      if (el.id === 'm_costo_pct' || el.id === 'm_var_costo') clearCostAssumptionOverridesOnly();
       if (el.id === 'm_eventos') renderAdjustmentHistory();
       setGenerateEnabled(false);
     });
@@ -3902,6 +4117,36 @@
   });
 
   qs('#btnModeloER')?.addEventListener('click', onModelErPreview);
+  qs('#btnAddMonthlyOverride')?.addEventListener('click', () => {
+    modelMonthlyOverrides = readMonthlyOverridesFromTable().concat([{ month: '', revenue_usd: '', cogs_usd: '', note: '' }]);
+    renderMonthlyOverridesTable();
+    setGenerateEnabled(false);
+  });
+  qs('#monthlyOverridesRows')?.addEventListener('input', () => {
+    syncMonthlyOverridesFromTable();
+    updateMonthlyOverrideWarnings();
+    clearPendingChatProposal();
+    setGenerateEnabled(false);
+  });
+  qs('#monthlyOverridesRows')?.addEventListener('change', () => {
+    syncMonthlyOverridesFromTable();
+    updateMonthlyOverrideWarnings();
+    clearPendingChatProposal();
+    setGenerateEnabled(false);
+  });
+  qs('#monthlyOverridesRows')?.addEventListener('click', (event) => {
+    const btn = event.target.closest('.monthly-override-remove');
+    if (!btn) return;
+    const row = btn.closest('tr[data-index]');
+    if (!row) return;
+    const index = Number(row.dataset.index);
+    const rows = readMonthlyOverridesFromTable();
+    rows.splice(index, 1);
+    modelMonthlyOverrides = rows;
+    renderMonthlyOverridesTable();
+    clearPendingChatProposal();
+    setGenerateEnabled(false);
+  });
   qs('#btnModeloESF')?.addEventListener('click', onModelEsfPreview);
   qs('#btnModeloPreview')?.addEventListener('click', onModelPreview);
   qs('#btnModeloGenerar')?.addEventListener('click', onModelGenerate);

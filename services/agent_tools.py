@@ -60,6 +60,46 @@ class AgentToolRegistry:
                 {"response_type": "answer", "data": "voucher"},
                 self._show_voucher,
             ),
+            "get_account_balance": AgentTool(
+                "get_account_balance",
+                "1.0.0",
+                False,
+                {"account": "string", "month": "YYYY-MM"},
+                {"response_type": "answer", "data": "account_balance"},
+                self._get_account_balance,
+            ),
+            "get_ledger": AgentTool(
+                "get_ledger",
+                "1.0.0",
+                False,
+                {"account": "string", "start_month": "YYYY-MM?", "end_month": "YYYY-MM?"},
+                {"response_type": "answer", "data": "ledger_rows"},
+                self._show_ledger,
+            ),
+            "get_period_summary": AgentTool(
+                "get_period_summary",
+                "1.0.0",
+                False,
+                {"month": "YYYY-MM?"},
+                {"response_type": "answer", "data": "period_summary"},
+                self._get_period_summary,
+            ),
+            "convert_currency": AgentTool(
+                "convert_currency",
+                "1.0.0",
+                False,
+                {"amount": "number", "from_currency": "USD|NIO", "to_currency": "USD|NIO"},
+                {"response_type": "answer", "data": "currency_conversion"},
+                self._convert_currency,
+            ),
+            "compute_target_delta": AgentTool(
+                "compute_target_delta",
+                "1.0.0",
+                False,
+                {"account": "string", "month": "YYYY-MM", "target_amount": "number", "currency": "USD|NIO"},
+                {"response_type": "answer", "data": "target_delta"},
+                self._compute_target_delta,
+            ),
             "navigate": AgentTool(
                 "navigate",
                 "1.0.0",
@@ -82,8 +122,10 @@ class AgentToolRegistry:
             "account_transfer": self._mutating_tool("account_transfer"),
             "year_close_transfer": self._mutating_tool("year_close_transfer"),
             "assumption_change": self._mutating_tool("assumption_change"),
+            "monthly_override": self._mutating_tool("monthly_override"),
             "create_account": self._mutating_tool("create_account"),
             "compound_plan": self._mutating_tool("compound_plan"),
+            "target_balance_adjustment": self._mutating_tool("target_balance_adjustment"),
             "guardar_payload": self._mutating_tool("guardar_payload"),
             "finalizar_periodo": self._mutating_tool("finalizar_periodo"),
             "generar_documento": self._mutating_tool("generar_documento"),
@@ -254,6 +296,101 @@ class AgentToolRegistry:
             },
         }
 
+    def _get_account_balance(self, payload: Mapping[str, Any], args: Mapping[str, Any]) -> dict[str, Any]:
+        account = _readonly_account(self.normalize_account(str(args.get("account") or "")))
+        month = str(args.get("month") or "").strip()[:7]
+        result = build_financial_model(payload)
+        if not month:
+            months = result.summary.get("all_months") or result.summary.get("months") or []
+            month = str(months[-1]) if months else ""
+        account_name = account_label(account)
+        trace = get_trace(result.accounting, account_name or account, month) or {}
+        balance = trace.get("closing_balance") if trace else _statement_value_from_result(result, account_name, month)
+        return {
+            "response_type": "answer",
+            "assistant_message": f"{account_name} en {month}: saldo final {_money(balance)}.",
+            "ui_actions": [{"type": "select_account", "account": account}, {"type": "scroll_to", "target": "ledger"}],
+            "data": {
+                "kind": "account_balance",
+                "account": account,
+                "account_label": account_name,
+                "month": month,
+                "closing_balance": balance or 0,
+            },
+        }
+
+    def _get_period_summary(self, payload: Mapping[str, Any], args: Mapping[str, Any]) -> dict[str, Any]:
+        month = str(args.get("month") or "").strip()[:7]
+        result = build_financial_model(payload)
+        months = result.summary.get("all_months") or result.summary.get("months") or []
+        if not month:
+            month = str(months[-1]) if months else ""
+        summary = {
+            "month": month,
+            "cash": _statement_value_from_result(result, "Efectivo y Equivalentes de Efectivo", month),
+            "inventory": _statement_value_from_result(result, "Inventarios", month),
+            "accounts_receivable": _statement_value_from_result(result, "Cuentas por Cobrar Clientes", month),
+            "suppliers": _statement_value_from_result(result, "Proveedores", month),
+        }
+        return {
+            "response_type": "answer",
+            "assistant_message": (
+                f"Resumen {month}: caja {_money(summary['cash'])}, inventario {_money(summary['inventory'])}, "
+                f"CxC {_money(summary['accounts_receivable'])}, proveedores {_money(summary['suppliers'])}."
+            ),
+            "ui_actions": [{"type": "scroll_to", "target": "accounting"}],
+            "data": {"kind": "period_summary", **summary},
+        }
+
+    def _convert_currency(self, payload: Mapping[str, Any], args: Mapping[str, Any]) -> dict[str, Any]:
+        amount = _number(args.get("amount"))
+        from_currency = str(args.get("from_currency") or args.get("from") or "nio").upper()
+        to_currency = str(args.get("to_currency") or args.get("to") or "nio").upper()
+        rate = _exchange_rate(payload)
+        converted = amount
+        if from_currency in {"USD", "DOLAR", "DOLARES"} and to_currency in {"NIO", "CORDOBA", "CORDOBAS", "C$"}:
+            converted = amount * rate
+        elif from_currency in {"NIO", "CORDOBA", "CORDOBAS", "C$"} and to_currency in {"USD", "DOLAR", "DOLARES"}:
+            converted = amount / rate if rate else 0.0
+        return {
+            "response_type": "answer",
+            "assistant_message": f"{_money(amount)} {from_currency} equivalen a {_money(converted)} {to_currency} con tasa {rate}.",
+            "ui_actions": [],
+            "data": {"kind": "currency_conversion", "amount": amount, "from_currency": from_currency, "to_currency": to_currency, "converted_amount": converted, "exchange_rate": rate},
+        }
+
+    def _compute_target_delta(self, payload: Mapping[str, Any], args: Mapping[str, Any]) -> dict[str, Any]:
+        account = _readonly_account(self.normalize_account(str(args.get("account") or args.get("target_account") or "")))
+        month = str(args.get("month") or args.get("target_month") or "").strip()[:7]
+        target_amount = _number(args.get("target_amount") or args.get("amount"))
+        currency = str(args.get("currency") or "nio").upper()
+        rate = _exchange_rate(payload)
+        result = build_financial_model(payload)
+        account_name = account_label(account)
+        current = _statement_value_from_result(result, account_name, month)
+        target_nio = target_amount * rate if currency in {"USD", "DOLAR", "DOLARES"} else target_amount
+        delta = target_nio - current
+        return {
+            "response_type": "answer",
+            "assistant_message": (
+                f"{account_name} en {month}: saldo actual {_money(current)}, objetivo {_money(target_nio)}, "
+                f"diferencia {_money(delta)}."
+            ),
+            "ui_actions": [{"type": "select_account", "account": account}],
+            "data": {
+                "kind": "target_delta",
+                "account": account,
+                "account_label": account_name,
+                "month": month,
+                "current_balance_nio": current,
+                "target_amount_original": target_amount,
+                "target_currency": currency,
+                "target_amount_nio": target_nio,
+                "delta_nio": delta,
+                "exchange_rate": rate,
+            },
+        }
+
     def _navigate(self, payload: Mapping[str, Any], args: Mapping[str, Any]) -> dict[str, Any]:
         target = str(args.get("target") or "accounting").strip()
         return {
@@ -356,3 +493,37 @@ def _money(value: Any) -> str:
         return f"{float(value or 0):,.0f}"
     except Exception:
         return "0"
+
+
+def _number(value: Any) -> float:
+    try:
+        if isinstance(value, str):
+            cleaned = value.replace(",", "").replace("USD", "").replace("C$", "").strip()
+            if cleaned.lower().endswith("k"):
+                return float(cleaned[:-1]) * 1000
+            return float(cleaned)
+        return float(value or 0)
+    except Exception:
+        return 0.0
+
+
+def _exchange_rate(payload: Mapping[str, Any]) -> float:
+    period = dict((payload or {}).get("period") or {})
+    value = period.get("exchange_rate") or period.get("tasa_cambio") or (payload or {}).get("tasa_cambio")
+    return _number(value) or 1.0
+
+
+def _statement_value_from_result(result: Any, description: str, month: str) -> float:
+    df = getattr(result, "df_esf_mensual_full", None)
+    if df is None or not month:
+        return 0.0
+    try:
+        col = month if month in df.columns else next((item for item in df.columns if str(item).startswith(month)), None)
+        if col is None:
+            return 0.0
+        rows = df[df["Descripcion"] == description]
+        if rows.empty:
+            return 0.0
+        return float(rows.iloc[0][col] or 0)
+    except Exception:
+        return 0.0

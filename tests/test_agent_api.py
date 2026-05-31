@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 
 import services.agent_service as agent_service_module
 from services.agent_tools import AgentTool
-from db.models import AccountCatalog, AgentMessage, AgentProposal, AuditLog, Base, PeriodoCertificacion
+from db.models import AccountCatalog, AgentMessage, AgentProposal, AgentSessionContext, AuditLog, Base, PeriodoCertificacion
 from db.seed import seed_giros
 from financial_model import build_financial_model
 from llm import LLMProviderError
@@ -109,6 +109,14 @@ class AgentApiTest(unittest.TestCase):
             periodo = session.get(PeriodoCertificacion, self.periodo["id"])
             periodo.payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
             session.commit()
+
+    def _esf_value(self, payload, description, month):
+        result = build_financial_model(payload)
+        rows = result.df_esf_mensual_full[result.df_esf_mensual_full["Descripcion"] == description]
+        col = month if month in result.df_esf_mensual_full.columns else next(
+            item for item in result.df_esf_mensual_full.columns if str(item).startswith(month)
+        )
+        return float(rows.iloc[0][col])
 
     def _add_saved_voucher(self, voucher_id="MAN-2026-0001", *, voucher_type="manual", reference_voucher_id="", amount=1000):
         payload = self._payload()
@@ -356,6 +364,62 @@ class AgentApiTest(unittest.TestCase):
         self.assertEqual(detail["payload"]["movements"]["journal_entries"][-1]["description"], "Partida previa")
         self.assertEqual(proposal["kind"], "assumption_change_proposal")
         self.assertIn("assumption_impact", proposal)
+
+    def test_monthly_override_proposal_applies_and_recalculates(self):
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "monthly_override",
+                "args": {
+                    "updates": [
+                        {"month": "2026-02", "revenue_usd": 123000, "cogs_usd": 81000, "note": "ventas reales"}
+                    ]
+                },
+            }
+        )
+
+        resp = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "fija febrero con ingresos y costo reales"},
+        )
+        data = resp.get_json()
+
+        self.assertEqual(resp.status_code, 200, data)
+        proposal = data["proposal"]
+        self.assertEqual(proposal["kind"], "monthly_override_proposal")
+        self.assertEqual(proposal["override_rows"][0]["after_revenue_usd"], 123000.0)
+        apply_resp = self.client.post(f"/api/agent/proposals/{proposal['id']}/apply")
+        self.assertEqual(apply_resp.status_code, 200, apply_resp.get_json())
+        payload_after = self._payload()
+        overrides = {item["month"]: item for item in payload_after["income"]["monthly_overrides"]}
+        self.assertEqual(overrides["2026-02"]["revenue_usd"], 123000.0)
+        self.assertEqual(overrides["2026-02"]["cogs_usd"], 81000.0)
+        result = build_financial_model(payload_after)
+        self.assertEqual(result.summary["exact_revenue_months"], ["2026-02"])
+        self.assertEqual(result.summary["exact_cogs_months"], ["2026-02"])
+
+    def test_monthly_override_dirty_payload_does_not_create_proposal(self):
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {"intent": "monthly_override", "args": {"month": "2026-02", "revenue_usd": 123000}}
+        )
+        payload = self._payload()
+        payload["balances"]["cash"] = 999999
+
+        resp = self.client.post(
+            "/api/agent/command",
+            json={
+                "periodo_id": self.periodo["id"],
+                "message": "cambia febrero a ingreso exacto",
+                "current_payload": payload,
+                "is_dirty": True,
+            },
+        )
+        data = resp.get_json()
+
+        self.assertEqual(resp.status_code, 200, data)
+        self.assertEqual(data["response_type"], "question")
+        self.assertIn("Guarda los cambios", data["assistant_message"])
+        with self.db_session() as session:
+            self.assertEqual(len(list(session.scalars(select(AgentProposal)))), 0)
 
     def test_assumption_change_rejects_unknown_field_and_out_of_range_value(self):
         web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
@@ -745,8 +809,100 @@ class AgentApiTest(unittest.TestCase):
         self.assertEqual(resp.status_code, 200, data)
         self.assertEqual(data["response_type"], "question")
         self.assertIn("Guarda los cambios", data["assistant_message"])
+        self.assertEqual(data["ui_actions"][0]["type"], "save_and_retry")
         with self.db_session() as session:
             self.assertEqual(session.query(AgentProposal).count(), 0)
+            context = session.scalars(select(AgentSessionContext)).one()
+            self.assertEqual(context.pending_goal_message, "registra una partida")
+            self.assertEqual(context.pending_goal_kind, "journal_entry")
+
+    def test_save_confirmation_retries_pending_goal(self):
+        payload = self.client.get(f"/api/periodos/{self.periodo['id']}").get_json()["periodo"]["payload"]
+        payload["income"]["cost_pct"] = 71
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "target_balance_adjustment",
+                "args": {"account": "inventory", "month": "2026-04", "target_amount": 190000, "currency": "USD"},
+            }
+        )
+
+        dirty = self.client.post(
+            "/api/agent/command",
+            json={
+                "periodo_id": self.periodo["id"],
+                "message": "ajusta inventario a USD 190k abril",
+                "current_payload": payload,
+                "is_dirty": True,
+            },
+        )
+        self.assertEqual(dirty.status_code, 200, dirty.get_json())
+
+        retried = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "ya guarde", "is_dirty": False},
+        )
+        data = retried.get_json()
+
+        self.assertEqual(retried.status_code, 200, data)
+        self.assertEqual(data["response_type"], "proposal")
+        self.assertEqual(data["proposal"]["kind"], "target_balance_adjustment_proposal")
+        with self.db_session() as session:
+            context = session.scalars(select(AgentSessionContext)).one()
+            self.assertIsNone(context.pending_goal_message)
+
+    def test_target_balance_adjustment_reaches_inventory_target_and_audits_intent(self):
+        payload = self._payload()
+        month = "2026-04"
+        current = self._esf_value(payload, "Inventarios", month)
+        rate = payload["period"]["exchange_rate"]
+        target_nio = current - 100000
+        target_usd = round(target_nio / rate, 2)
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "target_balance_adjustment",
+                "args": {"account": "inventory", "month": month, "target_amount": target_usd, "currency": "USD"},
+            }
+        )
+
+        resp = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "ajusta inventario a objetivo"},
+        )
+        data = resp.get_json()
+
+        self.assertEqual(resp.status_code, 200, data)
+        proposal = data["proposal"]
+        self.assertEqual(proposal["kind"], "target_balance_adjustment_proposal")
+        self.assertAlmostEqual(proposal["target"]["target_amount_nio"], target_nio, delta=1)
+
+        applied = self.client.post(f"/api/agent/proposals/{proposal['id']}/apply", json={})
+        self.assertEqual(applied.status_code, 200, applied.get_json())
+        payload_after = self._payload()
+        final_inventory = self._esf_value(payload_after, "Inventarios", month)
+        self.assertAlmostEqual(final_inventory, target_nio, delta=1)
+        with self.db_session() as session:
+            audit = session.scalars(select(AuditLog).where(AuditLog.action == "agent_apply_proposal")).all()[-1]
+            metadata = json.loads(audit.metadata_json)
+        self.assertEqual(metadata["kind"], "target_balance_adjustment")
+        self.assertEqual(metadata["target_account"], "inventory")
+        self.assertEqual(metadata["target_month"], month)
+        self.assertIn("journal_entry_id", metadata)
+
+    def test_target_balance_out_of_scope_fails_honestly(self):
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
+            {
+                "intent": "target_balance_adjustment",
+                "args": {"account": "retained_earnings", "month": "2026-04", "target_amount": 100000, "currency": "USD"},
+            }
+        )
+
+        resp = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "ajusta resultados acumulados"},
+        )
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("solo puedo hacerlo", resp.get_json()["error"])
 
     def test_reverse_voucher_proposal_adds_saved_reversal(self):
         self._add_saved_voucher("MAN-2026-0001", amount=1500)

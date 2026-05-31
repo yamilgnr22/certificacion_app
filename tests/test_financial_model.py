@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from copy import deepcopy
 from pathlib import Path
 
 from docx import Document
@@ -108,6 +109,69 @@ class FinancialModelTest(unittest.TestCase):
         self.assertEqual(one.summary, two.summary)
         self.assertTrue(one.df_er.equals(two.df_er))
         self.assertTrue(one.df_esf_mensual.equals(two.df_esf_mensual))
+
+    def test_monthly_revenue_override_used_when_present(self):
+        payload = sample_payload()
+        baseline = build_financial_model(payload)
+        payload["income"]["monthly_overrides"] = [{"month": "2026-02", "revenue_usd": 123456}]
+
+        result = build_financial_model(payload)
+
+        col = month_column(result.df_er, "2026-02")
+        self.assertEqual(round(float(result.df_er[result.df_er["Descripcion"] == "Ingresos"].iloc[0][col])), round(123456 * 36.6243))
+        self.assertEqual(result.summary["exact_revenue_months"], ["2026-02"])
+        self.assertEqual(result.metadata["exact_revenue_months"], ["2026-02"])
+        self.assertEqual(result.statement_blocks[0]["summary"]["exact_revenue_months"], ["2026-02"])
+        baseline_col = month_column(baseline.df_er, "2026-03")
+        result_col = month_column(result.df_er, "2026-03")
+        self.assertEqual(
+            round(float(baseline.df_er[baseline.df_er["Descripcion"] == "Ingresos"].iloc[0][baseline_col])),
+            round(float(result.df_er[result.df_er["Descripcion"] == "Ingresos"].iloc[0][result_col])),
+        )
+
+    def test_monthly_cogs_override_independent_from_revenue(self):
+        payload = sample_payload()
+        baseline = build_financial_model(payload)
+        payload["income"]["monthly_overrides"] = [{"month": "2026-01", "cogs_usd": 64000}]
+
+        result = build_financial_model(payload)
+
+        col = month_column(result.df_er, "2026-01")
+        self.assertEqual(round(float(result.df_er[result.df_er["Descripcion"] == "(-) Costo de ventas"].iloc[0][col])), round(64000 * 36.6243))
+        self.assertEqual(result.summary["exact_cogs_months"], ["2026-01"])
+        self.assertEqual(result.summary["exact_revenue_months"], [])
+        self.assertEqual(
+            round(float(baseline.df_er[baseline.df_er["Descripcion"] == "Ingresos"].iloc[0][col])),
+            round(float(result.df_er[result.df_er["Descripcion"] == "Ingresos"].iloc[0][col])),
+        )
+
+    def test_payload_without_overrides_identical_to_baseline(self):
+        payload = sample_payload()
+        baseline = build_financial_model(payload)
+        with_empty_overrides = deepcopy(payload)
+        with_empty_overrides["income"]["monthly_overrides"] = []
+
+        result = build_financial_model(with_empty_overrides)
+
+        self.assertEqual(baseline.summary, result.summary)
+        self.assertTrue(baseline.df_er.equals(result.df_er))
+        self.assertTrue(baseline.df_esf_mensual.equals(result.df_esf_mensual))
+        self.assertTrue(baseline.df_movimientos.equals(result.df_movimientos))
+
+    def test_negative_income_override_ignored_with_warning(self):
+        payload = sample_payload()
+        baseline = build_financial_model(payload)
+        payload["income"]["monthly_overrides"] = [{"month": "2026-01", "revenue_usd": -100, "cogs_usd": -50}]
+
+        result = build_financial_model(payload)
+
+        self.assertEqual(result.summary["exact_revenue_months"], [])
+        self.assertEqual(result.summary["exact_cogs_months"], [])
+        self.assertTrue(any(w["type"] == "negative_amount" for w in result.metadata["income_override_warnings"]))
+        self.assertEqual(
+            round(float(baseline.df_er[baseline.df_er["Descripcion"] == "Ingresos"].iloc[0][month_column(baseline.df_er, "2026-01")])),
+            round(float(result.df_er[result.df_er["Descripcion"] == "Ingresos"].iloc[0][month_column(result.df_er, "2026-01")])),
+        )
 
     def test_accounting_layer_generates_balanced_opening_and_monthly_vouchers(self):
         result = build_financial_model(sample_payload())

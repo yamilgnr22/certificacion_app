@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import CheckConstraint, Date, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import CheckConstraint, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -168,6 +168,25 @@ class AgentProposal(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     discarded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AgentSessionContext(Base):
+    __tablename__ = "agent_session_context"
+    __table_args__ = (
+        UniqueConstraint("periodo_id", "cpa_user", name="uq_agent_session_context_periodo_user"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    periodo_id: Mapped[str] = mapped_column(ForeignKey("periodos_certificacion.id"), nullable=False, index=True)
+    cpa_user: Mapped[str] = mapped_column(String(120), nullable=False, default="system")
+    last_account: Mapped[str | None] = mapped_column(String(120))
+    last_month: Mapped[str | None] = mapped_column(String(7))
+    last_proposal_id: Mapped[str | None] = mapped_column(String(36))
+    pending_goal_message: Mapped[str | None] = mapped_column(Text)
+    pending_goal_kind: Mapped[str | None] = mapped_column(String(80))
+    last_query_kind: Mapped[str | None] = mapped_column(String(80))
+    last_query_payload: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
 
 class LegacyCallCounter(Base):

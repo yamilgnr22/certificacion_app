@@ -1251,6 +1251,50 @@ input[type="checkbox"] {
   font-weight: 500;
 }
 .workbench-inputs h3:first-child { margin-top: 0; }
+.exact-values-panel {
+  margin: 18px 0 6px;
+  padding: 12px;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+.exact-values-panel summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--text);
+}
+.inline-warning {
+  margin: 10px 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 213, 79, 0.10);
+  color: var(--warn);
+  font-size: 12px;
+}
+.mini-table-wrap {
+  overflow-x: auto;
+  margin: 10px 0;
+}
+.mini-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.mini-table th,
+.mini-table td {
+  padding: 8px;
+  border-bottom: 1px solid var(--divider);
+  text-align: left;
+}
+.mini-table input {
+  width: 100%;
+  min-width: 120px;
+}
+.exact-values-table td:last-child,
+.exact-values-table th:last-child {
+  width: 80px;
+  text-align: right;
+}
 .workbench-output { background: var(--surface-3); padding: 16px; border-radius: var(--radius-md); }
 .workbench-output h3 {
   font-size: 12px;

@@ -49,16 +49,21 @@ def _system_prompt() -> str:
         "Respondé exclusivamente JSON valido con intent y args. "
         "Intents permitidos: explain_balance(account, month), show_ledger(account), "
         "show_voucher(voucher_id), navigate(target), reverse_voucher(voucher_id), "
+        "get_account_balance(account, month), get_ledger(account, start_month, end_month), "
+        "get_period_summary(month), convert_currency(amount, from_currency, to_currency), "
+        "compute_target_delta(account, month, target_amount, currency), "
         "correct_voucher(voucher_id, correction={month,description,lines}), "
         "journal_entry(month, description, lines=[{account,debit,credit,reference}]), "
         "account_transfer(month, source_account, destination_account, amount), "
         "year_close_transfer(target_month, source_month, amount opcional), "
         "assumption_change(field, new_value, scope=period), "
+        "monthly_override(updates=[{month,revenue_usd,cogs_usd,note}], remove=[{month,fields}]), "
         "create_account(name, account_type, section), "
         "compound_plan(steps=[{tool,args}]) para instrucciones autocontenidas que requieren crear una cuenta y registrar un asiento; "
+        "target_balance_adjustment(account, month, target_amount, currency, counter_account opcional) para ajustar caja, inventario, cuentas por cobrar o proveedores a un saldo objetivo; "
         "recalcular_preview(), guardar_payload(), finalizar_periodo(), generar_documento(), "
         "question. "
-        "Si falta cuenta, mes o monto, usa question. Si el usuario pide crear una cuenta nueva y tambien registrar una partida en la misma instruccion, usa compound_plan. Si solo pide crear cuenta, usa create_account. "
+        "Si el usuario pide fijar ingresos o costos exactos de un mes, usa monthly_override. Si pide que una cuenta cierre en un monto, usa target_balance_adjustment. Si falta cuenta, mes o monto, usa question. Si el usuario pide crear una cuenta nueva y tambien registrar una partida en la misma instruccion, usa compound_plan. Si solo pide crear cuenta, usa create_account. "
         "Si el usuario dice 'lo mismo' o 'igual que antes', usa journal_entry con repeat_last=true y el nuevo month o amount indicado. "
         "Si pide guardar o recalcular, usa guardar_payload o recalcular_preview. "
         "Si pide finalizar el periodo, usa finalizar_periodo. Si pide generar el documento, usa generar_documento."
@@ -433,15 +438,25 @@ def _months_between(start: str, end: str) -> list[str]:
 
 def _statement_value(result, description: str, month: str) -> float:
     df = result.df_esf_mensual_full
-    if not month or month not in df.columns:
+    col = _month_column(df, month)
+    if not month or col is None:
         return 0.0
     rows = df[df["Descripcion"] == description]
     if rows.empty:
         return 0.0
     try:
-        return float(rows.iloc[0][month] or 0)
+        return float(rows.iloc[0][col] or 0)
     except Exception:
         return 0.0
+
+
+def _month_column(df, month: str):
+    if month in df.columns:
+        return month
+    for col in df.columns:
+        if str(col).startswith(month):
+            return col
+    return None
 
 
 def _er_value(result, description: str) -> float:

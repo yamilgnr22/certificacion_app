@@ -129,7 +129,9 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
     income_variability = _pct(income.get("income_variability_pct") or income.get("variabilidad_ingresos_pct"), 15.0)
     cost_pct = _pct(income.get("cost_pct") or income.get("porcentaje_costo"), 70.0)
     cost_variability = _pct(income.get("cost_variability_pct") or income.get("variabilidad_costo_pct"), 5.0)
-    income_overrides = _index_income_overrides(income.get("monthly_overrides") or income.get("overrides") or [])
+    income_overrides, income_override_warnings = _index_income_overrides(
+        income.get("monthly_overrides") or income.get("overrides") or []
+    )
     cash_sales_pct = _pct(income.get("cash_sales_pct") or income.get("porcentaje_contado"), 85.0)
     credit_sales_pct = max(0.0, min(1.0, 1.0 - cash_sales_pct))
 
@@ -191,10 +193,27 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
         beginning_result_accum = result_accum + result_accum_adjustment
         capital_beginning = previous_capital
         cash_beginning = state["cash"]
-        revenue = _round(base_income_usd * exchange_rate * revenue_factors[idx])
+        month_override = income_overrides.get(key, {})
+        generated_revenue_factor = revenue_factors[idx]
+        generated_cost_rate = cost_rates[idx]
+        if "revenue_usd" in month_override:
+            revenue = _round(month_override["revenue_usd"] * exchange_rate)
+            revenue_source = "exact"
+            revenue_factor = month_override["revenue_usd"] / base_income_usd if base_income_usd else 1.0
+        else:
+            revenue = _round(base_income_usd * exchange_rate * generated_revenue_factor)
+            revenue_source = "estimated"
+            revenue_factor = generated_revenue_factor
         cash_sales = _round(revenue * cash_sales_pct)
         credit_sales = _round(revenue * credit_sales_pct)
-        cogs = _round(revenue * cost_rates[idx])
+        if "cogs_usd" in month_override:
+            cogs = _round(month_override["cogs_usd"] * exchange_rate)
+            cogs_source = "exact"
+            cost_rate = cogs / revenue if revenue else 0.0
+        else:
+            cogs = _round(revenue * generated_cost_rate)
+            cogs_source = "estimated"
+            cost_rate = generated_cost_rate
         gross_profit = revenue - cogs
         base_purchases = _round(purchase_base_usd * exchange_rate * purchase_factors[idx])
         purchase_adjustment = _round(month_events.get("purchase_adjustment", 0.0))
@@ -386,8 +405,10 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
 
         month_data = {
             "month": month,
-            "revenue_factor": revenue_factors[idx],
-            "cost_rate": cost_rates[idx],
+            "revenue_factor": revenue_factor,
+            "cost_rate": cost_rate,
+            "revenue_source": revenue_source,
+            "cogs_source": cogs_source,
             "purchase_factor": purchase_factors[idx],
             "revenue": revenue,
             "cash_sales": cash_sales,
@@ -582,6 +603,9 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
         "income_variability_pct": income_variability * 100,
         "cost_variability_pct": cost_variability * 100,
         "income_monthly_overrides": income_overrides,
+        "income_override_warnings": income_override_warnings,
+        "exact_revenue_months": full_summary.get("exact_revenue_months", []),
+        "exact_cogs_months": full_summary.get("exact_cogs_months", []),
         "revenue_factors": revenue_factors,
         "cost_rates": cost_rates,
         "purchase_factors": purchase_factors,
@@ -693,6 +717,12 @@ def _build_summary(
         "income_average": _round(sum(item["revenue"] for item in monthly) / len(monthly)),
         "net_income_total": _round(sum(item["net_income"] for item in monthly)),
         "net_income_average": _round(sum(item["net_income"] for item in monthly) / len(monthly)),
+        "exact_revenue_months": [
+            _month_key(item["month"]) for item in monthly if item.get("revenue_source") == "exact"
+        ],
+        "exact_cogs_months": [
+            _month_key(item["month"]) for item in monthly if item.get("cogs_source") == "exact"
+        ],
         "ending_assets": _round(monthly[-1]["total_assets"]),
         "ending_liabilities": _round(monthly[-1]["total_liabilities"]),
         "ending_equity": _round(monthly[-1]["total_equity"]),
@@ -1562,7 +1592,7 @@ def _override_pct(override: Mapping[str, Any], key: str, default_decimal: float)
     return _pct(override.get(key), default_decimal * 100.0)
 
 
-def _index_income_overrides(raw: Any) -> Dict[str, Dict[str, float]]:
+def _index_income_overrides(raw: Any) -> tuple[Dict[str, Dict[str, float]], List[Dict[str, Any]]]:
     if isinstance(raw, Mapping):
         items = []
         for month, values in raw.items():
@@ -1575,12 +1605,25 @@ def _index_income_overrides(raw: Any) -> Dict[str, Dict[str, float]]:
         items = []
 
     out: Dict[str, Dict[str, float]] = {}
+    warnings: List[Dict[str, Any]] = []
     for item in items:
         if not isinstance(item, Mapping):
             continue
-        month = _normalize_month_key(item.get("month") or item.get("mes"))
+        raw_month = item.get("month") or item.get("mes")
+        month = _normalize_month_key(raw_month)
         if not month:
+            warnings.append({
+                "type": "invalid_month",
+                "month": str(raw_month or ""),
+                "message": "Override mensual ignorado por mes invalido.",
+            })
             continue
+        if month in out:
+            warnings.append({
+                "type": "duplicate_month",
+                "month": month,
+                "message": "Override mensual duplicado; se uso el ultimo valor.",
+            })
         values: Dict[str, float] = {}
         if item.get("cost_pct") not in {None, ""}:
             values["cost_pct"] = _to_float(item.get("cost_pct"), 70.0)
@@ -1590,9 +1633,44 @@ def _index_income_overrides(raw: Any) -> Dict[str, Dict[str, float]]:
             values["cost_variability_pct"] = _to_float(item.get("cost_variability_pct"), 5.0)
         if item.get("variabilidad_costo_pct") not in {None, ""}:
             values["cost_variability_pct"] = _to_float(item.get("variabilidad_costo_pct"), 5.0)
+        revenue_usd = _override_amount_usd(item, ("revenue_usd", "ingreso_usd"), "revenue_usd", month, warnings)
+        if revenue_usd is not None:
+            values["revenue_usd"] = revenue_usd
+        cogs_usd = _override_amount_usd(item, ("cogs_usd", "costo_usd"), "cogs_usd", month, warnings)
+        if cogs_usd is not None:
+            values["cogs_usd"] = cogs_usd
+        if revenue_usd is not None and cogs_usd is not None and cogs_usd > revenue_usd:
+            warnings.append({
+                "type": "cogs_gt_revenue",
+                "month": month,
+                "message": "El costo exacto mensual excede el ingreso exacto mensual.",
+            })
         if values:
             out[month] = values
-    return out
+    return out, warnings
+
+
+def _override_amount_usd(
+    item: Mapping[str, Any],
+    keys: Iterable[str],
+    label: str,
+    month: str,
+    warnings: List[Dict[str, Any]],
+) -> Optional[float]:
+    for key in keys:
+        if item.get(key) in {None, ""}:
+            continue
+        value = _to_float(item.get(key), 0.0)
+        if value < 0:
+            warnings.append({
+                "type": "negative_amount",
+                "month": month,
+                "field": label,
+                "message": f"Override {label} negativo ignorado.",
+            })
+            return None
+        return value
+    return None
 
 
 def _normalize_month_key(value: Any) -> str:

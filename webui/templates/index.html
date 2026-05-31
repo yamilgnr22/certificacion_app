@@ -332,6 +332,26 @@
                 <div class="field"><label>Interés mensual %</label><input id="m_interes_creditos" type="number" step="0.1" value="0"></div>
               </div>
 
+              <details class="exact-values-panel" id="monthlyOverridesPanel">
+                <summary>Valores exactos por mes</summary>
+                <div id="monthlyOverridesWarnings" class="inline-warning hidden"></div>
+                <div class="mini-table-wrap">
+                  <table class="mini-table exact-values-table">
+                    <thead>
+                      <tr>
+                        <th>Mes</th>
+                        <th>Ingreso USD</th>
+                        <th>Costo USD</th>
+                        <th>Nota</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody id="monthlyOverridesRows"></tbody>
+                  </table>
+                </div>
+                <button id="btnAddMonthlyOverride" class="btn secondary small" type="button">+ Mes</button>
+              </details>
+
               <h3>Gastos operativos USD/mes</h3>
               <div class="grid-4 compact-grid">
                 <div class="field"><label>Sueldos</label><input id="m_g_sueldos" type="number" value="2700"></div>

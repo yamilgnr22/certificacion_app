@@ -78,6 +78,23 @@ from services.serializers import parse_json_object
 PROMPT_VERSION = "agent-command-v1.0.0"
 MAX_TOOL_CALLS_PER_TURN = 3
 MAX_TURN_DURATION_S = 30.0
+SESSION_CONTEXT_TTL_MINUTES = 30
+
+TARGET_BALANCE_ACCOUNTS = {
+    "inventory": {"label": "Inventarios", "normal_balance": "debit"},
+    "cash": {"label": "Efectivo y Equivalentes de Efectivo", "normal_balance": "debit"},
+    "accounts_receivable": {"label": "Cuentas por Cobrar Clientes", "normal_balance": "debit"},
+    "suppliers": {"label": "Proveedores", "normal_balance": "credit"},
+}
+
+TARGET_COUNTER_DEFAULTS = {
+    # El motor actual no postea journals contra P&L como COGS/Compras; para objetivo
+    # de inventario se usa caja/proveedores hasta que el engine soporte P&L manual.
+    "inventory": {"increase": ("cash", "suppliers"), "decrease": ("cash",)},
+    "cash": {"increase": ("accounts_receivable", "loans_personal"), "decrease": ("suppliers", "exp_other")},
+    "accounts_receivable": {"increase": ("current_earnings",), "decrease": ("cash",)},
+    "suppliers": {"increase": ("inventory",), "decrease": ("cash",)},
+}
 
 
 class AgentCommandService:
@@ -118,6 +135,18 @@ class AgentCommandService:
         periodo = self.periodos.get(periodo_id)
         if not periodo:
             raise AgentNotFoundError("Periodo no encontrado.")
+
+        retrying_pending_goal = False
+        context = self.agent_repo.get_session_context(
+            periodo_id=periodo.id,
+            cpa_user=cpa_user,
+            ttl_minutes=SESSION_CONTEXT_TTL_MINUTES,
+        )
+        if _is_save_confirmation(message) and context and context.pending_goal_message:
+            message = str(context.pending_goal_message or "").strip()
+            retrying_pending_goal = True
+            is_dirty = False
+            current_payload = None
 
         persisted_payload = parse_json_object(periodo.payload_json)
         dirty_payload = dict(current_payload or {}) if isinstance(current_payload, Mapping) else {}
@@ -168,11 +197,19 @@ class AgentCommandService:
         elif intent in MUTATION_INTENTS:
             if used_dirty_payload:
                 message_text = "Guarda los cambios antes de preparar una correccion contable." if intent == "correct_voucher" else "Guarda los cambios antes de preparar una propuesta contable."
+                if intent == "target_balance_adjustment":
+                    message_text = "Guarda los cambios antes de preparar un ajuste por objetivo."
+                self._set_pending_goal(periodo.id, cpa_user, message=message, intent=intent)
                 response = self._question_response(
                     command_id=command_id,
                     intent=intent,
                     message=message_text,
                 )
+                response["ui_actions"] = [{
+                    "type": "save_and_retry",
+                    "retry_message": message,
+                    "retry_intent_hint": intent,
+                }]
             elif intent == "compound_plan":
                 try:
                     self.planner.validate(interpreted)
@@ -239,6 +276,14 @@ class AgentCommandService:
         )
         if used_dirty_payload and response.get("response_type") in {"answer", "navigation", "proposal"}:
             response["assistant_message"] = "Segun los cambios sin guardar en pantalla: " + str(response.get("assistant_message") or "")
+        if retrying_pending_goal:
+            self._clear_pending_goal(periodo.id, cpa_user)
+        self._update_session_context_from_response(
+            periodo_id=periodo.id,
+            cpa_user=cpa_user,
+            intent=str(response.get("intent") or intent),
+            response=response,
+        )
 
         self.agent_repo.add_message(
             periodo_id=periodo.id,
@@ -301,6 +346,8 @@ class AgentCommandService:
                     if isinstance(account, Mapping):
                         self._apply_account_creation({"account": dict(account)}, command_id=proposal.command_id, cpa_user=cpa_user, strict=True)
             result = build_financial_model(projected_payload)
+            if proposal_data.get("kind") == "target_balance_adjustment_proposal":
+                self._verify_target_balance_after_apply(result, proposal_data)
             periodo.payload_json = json.dumps(projected_payload, ensure_ascii=False, sort_keys=True, default=str)
             periodo.validation_json = json.dumps(result.validations, ensure_ascii=False, sort_keys=True, default=str)
             periodo.period_blocks_json = json.dumps(result.metadata.get("period_blocks") or [], ensure_ascii=False, sort_keys=True, default=str)
@@ -341,6 +388,22 @@ class AgentCommandService:
                     for account in proposal_data.get("account_operations") or []
                     if isinstance(account, Mapping)
                 ]
+            if proposal_data.get("kind") == "target_balance_adjustment_proposal":
+                target = proposal_data.get("target") if isinstance(proposal_data.get("target"), Mapping) else {}
+                metadata.update({
+                    "kind": "target_balance_adjustment",
+                    "target_account": target.get("account"),
+                    "target_month": target.get("month"),
+                    "target_amount_original": target.get("target_amount_original"),
+                    "target_currency": target.get("target_currency"),
+                    "target_amount_nio": target.get("target_amount_nio"),
+                    "current_balance_nio_before": target.get("current_balance_nio_before"),
+                    "delta_applied_nio": target.get("delta_applied_nio"),
+                    "counter_account": proposal_data.get("counter_account"),
+                    "journal_entry_id": proposal_data.get("journal_entry_id"),
+                    "user_message": proposal_data.get("original_message"),
+                    "exchange_rate_used": target.get("exchange_rate_used"),
+                })
             after = _periodo_snapshot(periodo)
             AuditService(self.session).log(
                 cpa_user=cpa_user,
@@ -393,6 +456,51 @@ class AgentCommandService:
     @staticmethod
     def _provider_from_config() -> LLMProvider:
         return get_llm_provider()
+
+    def _set_pending_goal(self, periodo_id: str, cpa_user: str, *, message: str, intent: str) -> None:
+        self.agent_repo.upsert_session_context(
+            periodo_id=periodo_id,
+            cpa_user=cpa_user,
+            pending_goal_message=str(message or ""),
+            pending_goal_kind=str(intent or ""),
+        )
+
+    def _clear_pending_goal(self, periodo_id: str, cpa_user: str) -> None:
+        self.agent_repo.upsert_session_context(
+            periodo_id=periodo_id,
+            cpa_user=cpa_user,
+            pending_goal_message=None,
+            pending_goal_kind=None,
+        )
+
+    def _update_session_context_from_response(
+        self,
+        *,
+        periodo_id: str,
+        cpa_user: str,
+        intent: str,
+        response: Mapping[str, Any],
+    ) -> None:
+        changes: dict[str, Any] = {}
+        data = response.get("data") if isinstance(response.get("data"), Mapping) else {}
+        proposal = response.get("proposal") if isinstance(response.get("proposal"), Mapping) else {}
+        if data:
+            if data.get("account"):
+                changes["last_account"] = str(data.get("account") or "")
+            if data.get("month"):
+                changes["last_month"] = str(data.get("month") or "")[:7]
+            changes["last_query_kind"] = str(data.get("kind") or intent or "")
+            changes["last_query_payload"] = json.dumps(data, ensure_ascii=False, sort_keys=True, default=str)
+        if proposal:
+            if proposal.get("id"):
+                changes["last_proposal_id"] = str(proposal.get("id") or "")
+            target = proposal.get("target") if isinstance(proposal.get("target"), Mapping) else {}
+            if target.get("account"):
+                changes["last_account"] = str(target.get("account") or "")
+            if target.get("month"):
+                changes["last_month"] = str(target.get("month") or "")[:7]
+        if changes:
+            self.agent_repo.upsert_session_context(periodo_id=periodo_id, cpa_user=cpa_user, **changes)
 
     def _apply_short_memory(self, intent: str, args: Mapping[str, Any], *, periodo_id: str, cpa_user: str) -> dict[str, Any]:
         args = dict(args or {})
@@ -500,6 +608,8 @@ class AgentCommandService:
     ) -> dict[str, Any]:
         if intent in {"reverse_voucher", "correct_voucher"} and getattr(periodo, "estado", "") != "borrador":
             raise AgentValidationError("Solo puedo preparar reversos y correcciones en periodos borrador.")
+        if intent == "target_balance_adjustment" and getattr(periodo, "estado", "") != "borrador":
+            raise AgentValidationError("No puedo modificar este periodo porque ya no esta en borrador.")
         projected_payload, proposal_payload = self._build_projected_payload(
             intent=intent,
             payload=payload,
@@ -561,6 +671,10 @@ class AgentCommandService:
             return self._prepare_journal_entry(intent, payload, args, command_id, original_message)
         if intent == "assumption_change":
             return self._prepare_assumption_change(payload, args, ui_context, command_id, original_message)
+        if intent == "monthly_override":
+            return self._prepare_monthly_override(payload, args, command_id, original_message)
+        if intent == "target_balance_adjustment":
+            return self._prepare_target_balance_adjustment(payload, args, command_id, original_message)
         if intent == "create_account":
             return self._prepare_create_account(payload, args, command_id, original_message)
         if intent == "finalizar_periodo":
@@ -1003,6 +1117,268 @@ class AgentCommandService:
             extra={"field": field, "before": before_value, "after": after_value, "scope": "period"},
         )
 
+    def _prepare_monthly_override(
+        self,
+        payload: Mapping[str, Any],
+        args: Mapping[str, Any],
+        command_id: str,
+        original_message: str,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        valid_months = set(_payload_months(payload))
+        if not valid_months:
+            raise AgentValidationError("El periodo no tiene meses validos para aplicar valores exactos.")
+        period = dict(payload.get("period") or {})
+        exchange_rate = float(_to_float(period.get("exchange_rate") or period.get("tasa_cambio")) or 0)
+        if exchange_rate <= 0:
+            raise AgentValidationError("El periodo necesita una tasa de cambio valida para convertir montos.")
+
+        income = dict(payload.get("income") or {})
+        overrides = _income_overrides_by_month(income.get("monthly_overrides") or income.get("overrides") or [])
+        updates = _monthly_override_updates(args)
+        removals = _monthly_override_removals(args)
+        if not updates and not removals:
+            raise AgentValidationError("Indique mes y valor exacto de ingreso o costo.")
+
+        rows: list[dict[str, Any]] = []
+        for update in updates:
+            month = str(update.get("month") or update.get("mes") or "")[:7]
+            if month not in valid_months:
+                raise AgentValidationError(f"El mes {month or '(vacio)'} no esta dentro del periodo modelado.")
+            current = dict(overrides.get(month) or {"month": month})
+            before = {"revenue_usd": current.get("revenue_usd"), "cogs_usd": current.get("cogs_usd")}
+            changed = False
+            for target_key, aliases in {
+                "revenue_usd": ("revenue_usd", "ingreso_usd", "revenue", "ingreso"),
+                "cogs_usd": ("cogs_usd", "costo_usd", "cost_usd", "costo"),
+            }.items():
+                raw_value = _first_present(update, aliases)
+                nio_value = _first_present(update, (target_key.replace("_usd", "_nio"), aliases[1].replace("_usd", "_nio")))
+                if raw_value is None and nio_value is None:
+                    continue
+                value = (float(_to_float(nio_value) or 0.0) / exchange_rate) if nio_value is not None else float(_to_float(raw_value) or 0.0)
+                if value < 0:
+                    raise AgentValidationError("Los valores exactos de ingreso y costo no pueden ser negativos.")
+                current[target_key] = round(float(value), 2)
+                changed = True
+            note = str(update.get("note") or update.get("nota") or "").strip()
+            if note:
+                current["note"] = note[:200]
+            if not changed and not note:
+                continue
+            overrides[month] = current
+            rows.append({
+                "month": month,
+                "before_revenue_usd": before.get("revenue_usd"),
+                "after_revenue_usd": current.get("revenue_usd"),
+                "before_cogs_usd": before.get("cogs_usd"),
+                "after_cogs_usd": current.get("cogs_usd"),
+                "note": current.get("note") or "",
+            })
+
+        for removal in removals:
+            month = str(removal.get("month") or removal.get("mes") or "")[:7]
+            if month not in valid_months:
+                raise AgentValidationError(f"El mes {month or '(vacio)'} no esta dentro del periodo modelado.")
+            current = dict(overrides.get(month) or {"month": month})
+            before = {"revenue_usd": current.get("revenue_usd"), "cogs_usd": current.get("cogs_usd")}
+            fields = removal.get("fields") or removal.get("campos") or ["revenue_usd", "cogs_usd", "note"]
+            if isinstance(fields, str):
+                fields = [fields]
+            for field in fields:
+                normalized = str(field or "").strip().lower()
+                if normalized in {"revenue", "ingreso", "ingreso_usd"}:
+                    normalized = "revenue_usd"
+                if normalized in {"cogs", "cost", "costo", "costo_usd"}:
+                    normalized = "cogs_usd"
+                current.pop(normalized, None)
+            if has_monthly_override_data(current):
+                overrides[month] = current
+            else:
+                overrides.pop(month, None)
+            rows.append({
+                "month": month,
+                "before_revenue_usd": before.get("revenue_usd"),
+                "after_revenue_usd": current.get("revenue_usd"),
+                "before_cogs_usd": before.get("cogs_usd"),
+                "after_cogs_usd": current.get("cogs_usd"),
+                "removed": True,
+            })
+
+        projected = deepcopy(dict(payload or {}))
+        projected_income = dict(projected.get("income") or {})
+        projected_income["monthly_overrides"] = _income_overrides_list(overrides)
+        projected["income"] = projected_income
+        build_financial_model(projected)
+        return projected, _proposal_payload(
+            kind="monthly_override_proposal",
+            title="Valores exactos por mes",
+            assistant_message="Prepare una propuesta para actualizar ingresos y costos exactos por mes.",
+            month=rows[0]["month"] if rows else None,
+            rows=rows,
+            technical_records=rows,
+            original_message=original_message,
+            extra={
+                "scope": "monthly_overrides",
+                "override_rows": rows,
+                "assumption_impact": self._compute_assumption_impact(payload, projected),
+            },
+        )
+
+    def _prepare_target_balance_adjustment(
+        self,
+        payload: Mapping[str, Any],
+        args: Mapping[str, Any],
+        command_id: str,
+        original_message: str,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        target_account = self._normalize_account(args.get("account") or args.get("target_account") or args.get("cuenta"))
+        target_month = str(args.get("month") or args.get("target_month") or args.get("mes") or _last_payload_month(payload))[:7]
+        target_amount = _target_amount_value(args)
+        currency = str(args.get("currency") or args.get("moneda") or "nio").strip().upper()
+        if currency in {"DOLAR", "DOLARES"}:
+            currency = "USD"
+        if currency in {"CORDOBA", "CORDOBAS", "C$"}:
+            currency = "NIO"
+        if not target_account or target_account not in TARGET_BALANCE_ACCOUNTS:
+            raise AgentValidationError(
+                "Entendi que queres ajustar una cuenta a un saldo objetivo, pero en esta fase solo puedo hacerlo para "
+                "Inventario, Caja, Cuentas por Cobrar y Proveedores."
+            )
+        valid_months = set(_payload_months(payload))
+        if target_month not in valid_months:
+            raise AgentValidationError(f"El mes {target_month or '(vacio)'} no esta dentro del periodo modelado.")
+        if target_amount is None or target_amount < 0:
+            raise AgentValidationError("Indique un saldo objetivo valido y no negativo.")
+
+        result = build_financial_model(payload)
+        exchange_rate = _period_exchange_rate(payload)
+        target_label = TARGET_BALANCE_ACCOUNTS[target_account]["label"]
+        current_nio = _statement_value(result, target_label, target_month)
+        target_nio = round(float(target_amount) * exchange_rate, 2) if currency == "USD" else round(float(target_amount), 2)
+        delta_nio = round(target_nio - current_nio, 2)
+        if abs(delta_nio) <= 1:
+            raise AgentValidationError(f"{target_label} ya cierra cerca del objetivo en {target_month}; no hace falta asiento.")
+
+        counter_account = self._target_counter_account(target_account, delta_nio, args)
+        lines = self._target_adjustment_lines(
+            target_account=target_account,
+            counter_account=counter_account,
+            delta_nio=delta_nio,
+        )
+        description = (
+            f"Ajuste para que {target_label} cierre en {target_amount:,.2f} {currency} "
+            f"en {target_month}"
+        )
+        self._validate_journal_entry(payload=payload, month=target_month, description=description, lines=lines)
+        entry_id = f"JE-{uuid.uuid4().hex[:8].upper()}"
+        entry = {
+            "entry_id": entry_id,
+            "month": target_month,
+            "description": description[:200],
+            "lines": lines,
+            "currency": "nio",
+            "entry_type": "target_balance_adjustment",
+            "source": "chat_financiero",
+            "instruction_id": command_id,
+            "locked": True,
+            "message": original_message,
+            "target_account": target_account,
+            "target_month": target_month,
+            "target_amount_original": target_amount,
+            "target_currency": currency,
+            "target_amount_nio": target_nio,
+            "current_balance_nio_before": current_nio,
+            "delta_applied_nio": delta_nio,
+            "counter_account": counter_account,
+            "exchange_rate_used": exchange_rate,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        projected = _append_journal_entry(payload, entry)
+        build_financial_model(projected)
+        rows = [
+            {"account": line["account_label"], "debit": line["debit"], "credit": line["credit"], "reference": line.get("reference") or ""}
+            for line in lines
+        ]
+        warnings: list[str] = []
+        if _is_past_month(target_month):
+            warnings.append("Estas ajustando un mes pasado. Verifica que no este certificado antes de aplicar.")
+        return projected, _proposal_payload(
+            kind="target_balance_adjustment_proposal",
+            title=f"Ajustar {target_label} a objetivo",
+            assistant_message=(
+                f"Prepare un asiento para llevar {target_label} en {target_month} "
+                f"a {target_amount:,.2f} {currency}."
+            ),
+            month=target_month,
+            rows=rows,
+            technical_records=[entry],
+            original_message=original_message,
+            extra={
+                "target": {
+                    "account": target_account,
+                    "account_label": target_label,
+                    "month": target_month,
+                    "target_amount_original": target_amount,
+                    "target_currency": currency,
+                    "target_amount_nio": target_nio,
+                    "current_balance_nio_before": current_nio,
+                    "delta_applied_nio": delta_nio,
+                    "exchange_rate_used": exchange_rate,
+                },
+                "counter_account": counter_account,
+                "counter_account_label": self._account_label(counter_account, payload),
+                "journal_entry_id": entry_id,
+                "description": description[:200],
+                "totals": _journal_totals(lines),
+                "calculation_steps": [
+                    f"Saldo actual C$: {current_nio:,.2f}",
+                    f"Objetivo C$: {target_nio:,.2f}",
+                    f"Diferencia C$: {delta_nio:,.2f}",
+                ],
+                "warnings": warnings,
+            },
+        )
+
+    def _target_counter_account(self, target_account: str, delta_nio: float, args: Mapping[str, Any]) -> str:
+        explicit = args.get("counter_account") or args.get("contra_account") or args.get("contrapartida")
+        if explicit:
+            counter = self._normalize_account(explicit)
+            if self._account_label(counter, {}):
+                return counter
+        defaults = TARGET_COUNTER_DEFAULTS[target_account]["increase" if delta_nio > 0 else "decrease"]
+        for account in defaults:
+            label = self._account_label(account, {})
+            if label and not self._postable_account_error(account, label):
+                return account
+        return defaults[0]
+
+    def _target_adjustment_lines(self, *, target_account: str, counter_account: str, delta_nio: float) -> list[dict[str, Any]]:
+        amount = round(abs(delta_nio), 2)
+        target_spec = TARGET_BALANCE_ACCOUNTS[target_account]
+        target_is_debit = target_spec["normal_balance"] == "debit"
+        increase_target = delta_nio > 0
+        target_side = "debit" if target_is_debit == increase_target else "credit"
+        counter_side = "credit" if target_side == "debit" else "debit"
+        raw_lines = [
+            {"account": target_account, "debit": amount if target_side == "debit" else 0, "credit": amount if target_side == "credit" else 0},
+            {"account": counter_account, "debit": amount if counter_side == "debit" else 0, "credit": amount if counter_side == "credit" else 0},
+        ]
+        return self._normalize_journal_lines(raw_lines, {})
+
+    def _verify_target_balance_after_apply(self, result, proposal_data: Mapping[str, Any]) -> None:
+        target = proposal_data.get("target") if isinstance(proposal_data.get("target"), Mapping) else {}
+        account = str(target.get("account") or "")
+        month = str(target.get("month") or "")[:7]
+        target_nio = float(_to_float(target.get("target_amount_nio")) or 0.0)
+        label = TARGET_BALANCE_ACCOUNTS.get(account, {}).get("label", "")
+        if not label or not month:
+            raise AgentValidationError("La propuesta de objetivo no tiene cuenta o mes verificable.")
+        actual = _statement_value(result, label, month)
+        if abs(actual - target_nio) > 1.0:
+            raise AgentValidationError(
+                f"El asiento no llevo {label} al objetivo. Objetivo C$ {target_nio:,.2f}, resultado C$ {actual:,.2f}."
+            )
+
     def _prepare_create_account(
         self,
         payload: Mapping[str, Any],
@@ -1338,6 +1714,70 @@ class AgentCommandService:
         }
 
 
+def _monthly_override_updates(args: Mapping[str, Any]) -> list[dict[str, Any]]:
+    raw = args.get("updates") or args.get("months") or args.get("valores") or []
+    if isinstance(raw, Mapping):
+        raw = [raw]
+    updates = [dict(item) for item in raw if isinstance(item, Mapping)]
+    if not updates and (args.get("month") or args.get("mes")):
+        updates = [dict(args)]
+    return updates
+
+
+def _monthly_override_removals(args: Mapping[str, Any]) -> list[dict[str, Any]]:
+    raw = args.get("remove") or args.get("removals") or args.get("delete") or []
+    if args.get("action") in {"remove", "delete", "quitar", "eliminar"} and (args.get("month") or args.get("mes")):
+        raw = [dict(args)]
+    if isinstance(raw, Mapping):
+        raw = [raw]
+    return [dict(item) for item in raw if isinstance(item, Mapping)]
+
+
+def _first_present(data: Mapping[str, Any], keys: tuple[str, ...]) -> Any:
+    for key in keys:
+        if data.get(key) not in {None, ""}:
+            return data.get(key)
+    return None
+
+
+def has_monthly_override_data(item: Mapping[str, Any]) -> bool:
+    return any(key != "month" and value not in {None, ""} for key, value in item.items())
+
+
+def _is_save_confirmation(message: str) -> bool:
+    text = str(message or "").strip().lower()
+    replacements = str.maketrans("áéíóúü", "aeiouu")
+    text = text.translate(replacements)
+    return text in {"ya guarde", "ya guarde.", "ya lo guarde", "ya lo hice", "listo", "guardado", "ya esta guardado"}
+
+
+def _target_amount_value(args: Mapping[str, Any]) -> float | None:
+    raw = args.get("target_amount")
+    if raw is None:
+        raw = args.get("amount") or args.get("monto") or args.get("saldo")
+    try:
+        if isinstance(raw, str):
+            value = raw.strip().lower().replace(",", "").replace("usd", "").replace("c$", "")
+            multiplier = 1000 if value.endswith("k") else 1
+            if value.endswith("k"):
+                value = value[:-1]
+            return float(value) * multiplier
+        return float(raw)
+    except Exception:
+        return None
+
+
+def _period_exchange_rate(payload: Mapping[str, Any]) -> float:
+    period = dict((payload or {}).get("period") or {})
+    value = period.get("exchange_rate") or period.get("tasa_cambio") or (payload or {}).get("tasa_cambio")
+    return float(_to_float(value) or 1.0)
+
+
+def _is_past_month(month: str) -> bool:
+    current = datetime.now(timezone.utc).strftime("%Y-%m")
+    return bool(month and month < current)
+
+
 AGENT_COMMAND_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -1347,6 +1787,11 @@ AGENT_COMMAND_SCHEMA: dict[str, Any] = {
                 "explain_balance",
                 "show_ledger",
                 "show_voucher",
+                "get_account_balance",
+                "get_ledger",
+                "get_period_summary",
+                "convert_currency",
+                "compute_target_delta",
                 "navigate",
                 "reverse_voucher",
                 "correct_voucher",
@@ -1354,8 +1799,10 @@ AGENT_COMMAND_SCHEMA: dict[str, Any] = {
                 "account_transfer",
                 "year_close_transfer",
                 "assumption_change",
+                "monthly_override",
                 "create_account",
                 "compound_plan",
+                "target_balance_adjustment",
                 "recalcular_preview",
                 "guardar_payload",
                 "finalizar_periodo",
@@ -1372,7 +1819,7 @@ AGENT_COMMAND_SCHEMA: dict[str, Any] = {
 }
 
 
-MUTATION_INTENTS = {"reverse_voucher", "correct_voucher", "journal_entry", "account_transfer", "year_close_transfer", "assumption_change", "create_account", "compound_plan", "finalizar_periodo"}
+MUTATION_INTENTS = {"reverse_voucher", "correct_voucher", "journal_entry", "account_transfer", "year_close_transfer", "assumption_change", "monthly_override", "create_account", "compound_plan", "target_balance_adjustment", "finalizar_periodo"}
 
 SYSTEM_INTENTS = {"guardar_payload", "generar_documento"}
 
