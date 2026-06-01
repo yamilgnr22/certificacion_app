@@ -2792,6 +2792,35 @@
     });
     wrap.appendChild(grid);
 
+    // Warnings de seguridad: cuentas que quedarian negativas tras aplicar el plan
+    const safetyWarnings = Array.isArray(impact.safety_warnings) ? impact.safety_warnings : [];
+    if (safetyWarnings.length) {
+      const warn = document.createElement('div');
+      warn.className = 'plan-warning';
+      const heading = document.createElement('strong');
+      heading.textContent = `Atencion: este plan dejaria cuentas en negativo (${safetyWarnings.length})`;
+      warn.appendChild(heading);
+      const list = document.createElement('ul');
+      safetyWarnings.slice(0, 8).forEach(w => {
+        const li = document.createElement('li');
+        const beforeStr = w.before_nio !== undefined ? formatSignedMoney(w.before_nio) : '?';
+        const afterStr = w.after_nio !== undefined ? formatSignedMoney(w.after_nio) : '?';
+        li.textContent = `${w.account_label || w.account} en ${w.month}: ${beforeStr} → ${afterStr}`;
+        list.appendChild(li);
+      });
+      if (safetyWarnings.length > 8) {
+        const li = document.createElement('li');
+        li.textContent = `... y ${safetyWarnings.length - 8} mas`;
+        list.appendChild(li);
+      }
+      warn.appendChild(list);
+      const hint = document.createElement('p');
+      hint.className = 'plan-warning-hint';
+      hint.textContent = 'Sugerencia: especifica una contrapartida distinta (ej: "usa Creditos Personales como contrapartida") o ajusta los saldos iniciales antes de aplicar.';
+      warn.appendChild(hint);
+      wrap.appendChild(warn);
+    }
+
     const details = document.createElement('details');
     details.className = 'proposal-technical';
     details.open = steps.length <= 6;
@@ -2807,17 +2836,33 @@
       const target = step.kind === 'monthly_override'
         ? (step.field === 'revenue_usd' ? step.after_revenue_usd : step.after_cogs_usd)
         : step.target_amount;
-      [
+      const counterLabel = step.counter_account_label || step.counter_account || '';
+      const cells = [
         step.step_order || '',
         step.kind || '',
         step.account_label || step.account || step.field || '',
         step.month || '',
         target === undefined || target === null ? '' : `${formatMoney(target)} ${step.currency || 'USD'}`,
         formatSignedMoney(step.expected_delta_nio || 0),
-        step.counter_account_label || step.counter_account || '',
-      ].forEach(value => {
+        counterLabel,
+      ];
+      cells.forEach((value, idx) => {
         const td = document.createElement('td');
         td.textContent = value;
+        // Marcar la celda de contrapartida cuando fue auto-seleccionada
+        if (idx === 6 && step.counter_source === 'auto_selected') {
+          const badge = document.createElement('span');
+          badge.className = 'step-counter-auto-badge';
+          badge.textContent = ' auto';
+          badge.title = step.counter_pick_reason || 'Contrapartida seleccionada automaticamente para evitar descuadres';
+          td.appendChild(badge);
+        } else if (idx === 6 && step.counter_source === 'default_unsafe') {
+          const badge = document.createElement('span');
+          badge.className = 'step-counter-unsafe-badge';
+          badge.textContent = ' ⚠';
+          badge.title = step.counter_pick_reason || 'Ninguna contrapartida default evita descuadres';
+          td.appendChild(badge);
+        }
         tr.appendChild(td);
       });
       tbody.appendChild(tr);

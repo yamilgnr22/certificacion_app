@@ -1596,6 +1596,37 @@ input[type="checkbox"] {
 .proposal-grid { display: grid; gap: 8px; }
 .proposal-item { padding: 8px; background: var(--surface-4); border-radius: var(--radius-sm); font-size: 12px; }
 .proposal-impact { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--divider); }
+.plan-warning {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 183, 77, 0.12);
+  border: 1px solid rgba(255, 183, 77, 0.45);
+  color: #ffd194;
+  font-size: 12px;
+}
+.plan-warning strong { display: block; margin-bottom: 6px; color: #ffb74d; }
+.plan-warning ul { margin: 4px 0 6px; padding-left: 18px; }
+.plan-warning li { margin: 2px 0; }
+.plan-warning-hint { margin: 6px 0 0; font-size: 11px; color: #ffd194; opacity: 0.85; }
+.step-counter-auto-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  font-size: 10px;
+  background: rgba(0, 230, 118, 0.15);
+  color: var(--primary);
+  border-radius: 3px;
+  cursor: help;
+}
+.step-counter-unsafe-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  font-size: 11px;
+  color: #ffb74d;
+  cursor: help;
+}
 .proposal-impact-title {
   font-size: 11px;
   text-transform: uppercase;

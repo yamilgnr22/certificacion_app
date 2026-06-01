@@ -2271,7 +2271,7 @@ class AgentCommandService:
         except Exception:
             return 0.0
 
-    def _compute_plan_aggregate_impact(self, payload: Mapping[str, Any], projected_payload: Mapping[str, Any]) -> dict[str, float]:
+    def _compute_plan_aggregate_impact(self, payload: Mapping[str, Any], projected_payload: Mapping[str, Any]) -> dict[str, Any]:
         try:
             before = build_financial_model(payload)
             after = build_financial_model(projected_payload)
@@ -2282,6 +2282,7 @@ class AgentCommandService:
                 "net_income_total_delta": 0,
                 "total_assets_end_delta": 0,
                 "cash_end_delta": 0,
+                "safety_warnings": [],
             }
         months = after.summary.get("all_months") or after.summary.get("months") or before.summary.get("all_months") or before.summary.get("months") or []
         last_month = str(months[-1]) if months else ""
@@ -2291,7 +2292,45 @@ class AgentCommandService:
             "net_income_total_delta": round(float(after.summary.get("net_income_total") or 0) - float(before.summary.get("net_income_total") or 0), 2),
             "total_assets_end_delta": round(_statement_value(after, "Total Activos", last_month) - _statement_value(before, "Total Activos", last_month), 2),
             "cash_end_delta": round(_statement_value(after, "Efectivo y Equivalentes de Efectivo", last_month) - _statement_value(before, "Efectivo y Equivalentes de Efectivo", last_month), 2),
+            "safety_warnings": self._detect_plan_safety_warnings(before, after, months),
         }
+
+    @staticmethod
+    def _detect_plan_safety_warnings(before_model, after_model, months: list[str]) -> list[dict[str, Any]]:
+        """Detecta cuentas operativas que pasaron a negativo (o quedaron mas negativas) tras el plan.
+
+        No vigila todas las cuentas del catalogo (eso seria ruido); solo las operativas
+        comunes donde un saldo negativo casi siempre es bug, no decision contable.
+        """
+        watched = [
+            ("cash", "Efectivo y Equivalentes de Efectivo"),
+            ("accounts_receivable", "Cuentas por Cobrar Clientes"),
+            ("inventory", "Inventarios"),
+            ("suppliers", "Proveedores"),
+        ]
+        warnings: list[dict[str, Any]] = []
+        for account_code, account_label in watched:
+            for month in months:
+                month = str(month)
+                before_val = _statement_value(before_model, account_label, month)
+                after_val = _statement_value(after_model, account_label, month)
+                # Vigilar cualquier mes que termina negativo (sea por el plan o no)
+                if after_val < 0:
+                    severity = "negative_after_plan"
+                    if before_val < 0 and after_val >= before_val:
+                        # ya estaba negativo y mejoro o quedo igual -> no es problema del plan
+                        continue
+                    if before_val < 0 and after_val < before_val:
+                        severity = "more_negative_after_plan"
+                    warnings.append({
+                        "account": account_code,
+                        "account_label": account_label,
+                        "month": month,
+                        "before_nio": round(before_val, 2),
+                        "after_nio": round(after_val, 2),
+                        "severity": severity,
+                    })
+        return warnings
 
     def _compute_assumption_impact(self, payload: Mapping[str, Any], projected_payload: Mapping[str, Any]) -> dict[str, float]:
         try:
