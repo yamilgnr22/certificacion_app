@@ -965,10 +965,11 @@ class AgentCommandService:
             counter = target.get("counter_account") or target.get("contrapartida")
             if not counter:
                 raise AgentValidationError("Cada step multi-cuenta debe indicar contrapartida.")
+            ta = target.get("target_amount") if target.get("target_amount") is not None else target.get("amount")
             normalized_targets.append({
                 "account": account,
                 "month": target.get("month") or target.get("target_month"),
-                "target_amount": target.get("target_amount") or target.get("amount"),
+                "target_amount": ta,
                 "currency": self._normalize_currency(target.get("currency") or "USD"),
                 "counter_account": counter,
             })
@@ -1125,12 +1126,13 @@ class AgentCommandService:
             seen_months.add((account, month))
             if month not in valid_months:
                 raise AgentValidationError(f"El mes {month or '(vacio)'} no esta dentro del periodo modelado.")
+            raw_amount = raw.get("target_amount") if raw.get("target_amount") is not None else raw.get("amount")
             step = {
                 "step_order": len(steps) + 1,
                 "kind": "target_balance",
                 "account": account,
                 "month": month,
-                "target_amount": _to_float(raw.get("target_amount") or raw.get("amount")),
+                "target_amount": _to_float(raw_amount) if raw_amount is not None else 0.0,
                 "currency": self._normalize_currency(raw.get("currency") or "USD"),
                 "counter_account": raw.get("counter_account") or raw.get("contrapartida"),
             }
@@ -2154,13 +2156,20 @@ class AgentCommandService:
                         f"El mes {month or '(vacio)'} no esta dentro del periodo modelado. "
                         f"Meses validos: {', '.join(sorted(valid_months))}."
                     )
+                ta = item.get("target_amount") if item.get("target_amount") is not None else item.get("amount")
                 normalized.append({
                     "month": month,
-                    "target_amount": item.get("target_amount") or item.get("amount"),
+                    "target_amount": ta,
                 })
             return normalized
         months = self._months_scope(payload, args)
-        average = _to_float(args.get("average") or args.get("target_average") or args.get("promedio"))
+        # Importante: no usar `or` aqui porque average=0 es valido (llevar cuenta a cero)
+        raw_avg: Any = None
+        for key in ("average", "target_average", "promedio"):
+            if key in args and args[key] is not None:
+                raw_avg = args[key]
+                break
+        average = _to_float(raw_avg) if raw_avg is not None else None
         if average is None:
             amount = _target_amount_value(args)
             month = args.get("month") or args.get("target_month")
@@ -2493,9 +2502,14 @@ def _is_save_confirmation(message: str) -> bool:
 
 
 def _target_amount_value(args: Mapping[str, Any]) -> float | None:
-    raw = args.get("target_amount")
-    if raw is None:
-        raw = args.get("amount") or args.get("monto") or args.get("saldo")
+    # Acepta varias variantes que el LLM puede usar; el primero no-None gana
+    # (incluido 0 explicito, que es valido para "llevar la cuenta a cero")
+    for key in ("target_amount", "amount", "monto", "saldo", "value", "valor", "target", "objetivo", "valor_objetivo"):
+        if key in args and args[key] is not None:
+            raw = args[key]
+            break
+    else:
+        return None
     try:
         if isinstance(raw, str):
             value = raw.strip().lower().replace(",", "").replace("usd", "").replace("c$", "")

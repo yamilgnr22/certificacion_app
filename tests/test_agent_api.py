@@ -1785,6 +1785,58 @@ class AgentApiTest(unittest.TestCase):
         self.assertEqual(limited.status_code, 400)
         self.assertIn("hasta 4", limited.get_json()["error"])
 
+    def test_plan_multi_target_balance_with_average_zero_works(self):
+        """Reproduce: 'ajustá CxC a 0 en todos los meses, contra Capital'.
+
+        El LLM rutea a plan_multi_target_balance con average=0. El backend debe
+        generar un plan con un step por mes, cada uno con target_amount=0.
+        """
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider({
+            "intent": "plan_multi_target_balance",
+            "args": {
+                "account": "accounts_receivable",
+                "currency": "NIO",
+                "average": 0,
+                "counter_account": "capital",
+            },
+        })
+        resp = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "CxC a 0 todos los meses, contra Capital"},
+        )
+        data = resp.get_json()
+        self.assertEqual(resp.status_code, 200, data)
+        self.assertEqual(data.get("response_type"), "plan", data)
+        steps = data["plan"]["steps"]
+        self.assertGreaterEqual(len(steps), 1, f"Esperaba al menos un step, vino: {steps}")
+        for step in steps:
+            self.assertEqual(step["target_amount"], 0, f"Step {step} no tiene target_amount=0")
+
+    def test_single_target_balance_to_zero_works(self):
+        """Reproduce: 'ajustá CxC a 0 en diciembre 2025, contra Capital'.
+
+        target_balance_adjustment con target_amount=0 (explicito) debe generar
+        propuesta sin fallar la validacion "Indique un saldo objetivo valido".
+        """
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider({
+            "intent": "target_balance_adjustment",
+            "args": {
+                "account": "accounts_receivable",
+                "month": "2026-04",
+                "target_amount": 0,
+                "currency": "NIO",
+                "counter_account": "capital",
+            },
+        })
+        resp = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "CxC a 0 en abril"},
+        )
+        data = resp.get_json()
+        self.assertEqual(resp.status_code, 200, data)
+        self.assertEqual(data.get("response_type"), "proposal", data)
+        self.assertEqual(data["proposal"]["target"]["target_amount_original"], 0)
+
     def test_plan_variability_pct_oscillates_around_average(self):
         web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider(
             {

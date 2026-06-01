@@ -407,13 +407,19 @@ class AgentToolRegistry:
 
     def _compute_target_distribution(self, payload: Mapping[str, Any], args: Mapping[str, Any]) -> dict[str, Any]:
         months = [str(m).strip()[:7] for m in (args.get("months") or []) if str(m or "").strip()]
-        average = _number(args.get("average") or args.get("target_average") or args.get("promedio"))
+        # No usar `or` para average porque 0 es valido (llevar cuenta a cero)
+        raw_avg: Any = None
+        for key in ("average", "target_average", "promedio"):
+            if key in args and args[key] is not None:
+                raw_avg = args[key]
+                break
+        average = _number(raw_avg) if raw_avg is not None else 0.0
         overrides = args.get("overrides") if isinstance(args.get("overrides"), Mapping) else {}
         variability_pct = _number(args.get("variability_pct") or args.get("variabilidad_pct") or 0)
-        if not months or average <= 0:
+        if not months or average < 0:
             return {
                 "response_type": "question",
-                "assistant_message": "Necesito meses y promedio positivo para distribuir objetivos.",
+                "assistant_message": "Necesito meses y promedio no negativo para distribuir objetivos.",
                 "ui_actions": [],
                 "data": {},
             }
