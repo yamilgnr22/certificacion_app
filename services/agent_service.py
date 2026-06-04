@@ -1868,6 +1868,16 @@ class AgentCommandService:
             counter = self._normalize_account(explicit)
             if self._account_label(counter, {}):
                 return counter
+            raise AgentValidationError(
+                f"No reconozco la contrapartida '{explicit}'. Probá con nombres como: "
+                "capital, loans_personal, loans_pledge, loans_commercial, loans_mortgage, suppliers, inventory."
+            )
+        if target_account == "cash":
+            raise AgentValidationError(
+                "Para ajustar la caja necesito que me indiques la contrapartida explicitamente "
+                "(ej: 'usa capital como contrapartida', 'usa loans_personal', 'usa loans_pledge'). "
+                "No asumo una por defecto."
+            )
         defaults = TARGET_COUNTER_DEFAULTS[target_account]["increase" if delta_nio > 0 else "decrease"]
         for account in defaults:
             label = self._account_label(account, {})
