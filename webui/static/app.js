@@ -1,4 +1,33 @@
 (() => {
+  // =====================================================================
+  // app.js -- Indice de secciones (Ctrl+F "// =====" para saltar)
+  // =====================================================================
+  //  - Estado, primitivas, validacion Excel
+  //  - Subida y stream SSE
+  //  - Excel: validate / generate
+  //  - Mensajeria y utilidades de fetch
+  //  - Extraccion de documentos
+  //  - Clientes: CRUD
+  //  - Periodos del cliente: lista y plantilla
+  //  - Periodos: formulario y acciones
+  //  - Asistente: primitivas UI
+  //  - Toggle USD/NIO en saldos iniciales
+  //  - Modelo: build payload
+  //  - Editor avanzado del Periodo
+  //  - Drafts y finales guardados
+  //  - Formato de numeros
+  //  - Render del asistente: planes y propuestas
+  //  - Render del modelo: formato y clasificacion
+  //  - Render del modelo: tablas (preview, ER/ESF, cuentas)
+  //  - Modelo: preview / generate
+  //  - Chat: workflow / send / apply / discard
+  //  - Catalogo de cuentas
+  //  - Activacion de modos
+  //  - Editor avanzado: event listeners y bootstrap
+  // =====================================================================
+
+  // ====================== Estado, primitivas, validacion Excel ======================
+
   const qs = (sel) => document.querySelector(sel);
   const qsa = (sel) => Array.from(document.querySelectorAll(sel));
 
@@ -287,6 +316,8 @@
     input.addEventListener('change', update);
   }
 
+  // ====================== Subida y stream SSE ======================
+
   async function uploadForToken() {
     const excel = qs('#excel').files[0];
     if (!excel) throw new Error('Seleccione primero un Excel');
@@ -355,6 +386,8 @@
       if (genBtn) genBtn.disabled = false; // permite reintentar generación si se desea
     });
   }
+
+  // ====================== Excel: validate / generate ======================
 
   async function onValidate() {
     try {
@@ -472,6 +505,8 @@
   let clientesSearchTimer = null;
   let catalogoSearchTimer = null;
 
+  // ====================== Mensajeria y utilidades de fetch ======================
+
   function setModelMessage(text, type = 'info') {
     const wrap = qs('#modelMessages');
     if (!wrap) return;
@@ -545,6 +580,8 @@
       .replaceAll('"', '&quot;')
       .replaceAll("'", '&#039;');
   }
+
+  // ====================== Extraccion de documentos ======================
 
   function clearDocExtraction() {
     pendingDocExtraction = null;
@@ -677,6 +714,8 @@
       field.appendChild(err);
     });
   }
+
+  // ====================== Clientes: CRUD ======================
 
   async function loadGiros() {
     const data = await fetchJson('/api/giros');
@@ -1114,6 +1153,8 @@
       if (btn) btn.disabled = false;
     }
   }
+
+  // ====================== Periodos del cliente: lista y plantilla ======================
 
   function renderClientePeriodos(periodos) {
     const wrap = qs('#clientePeriodosList');
@@ -1715,6 +1756,8 @@
     }
   }
 
+  // ====================== Asistente: primitivas UI ======================
+
   function appendChatMessage(text, type = 'app') {
     const wrap = qs('#modelChatMessages');
     if (!wrap || !text) return;
@@ -2055,6 +2098,8 @@
       })
       .filter(ev => ev.month && ev.account && Number.isFinite(ev.amount));
   }
+
+  // ====================== Modelo: build payload ======================
 
   function buildModelPayload() {
     syncMonthlyOverridesFromTable({ strict: true });
@@ -2522,6 +2567,8 @@
     setGenerateEnabled(false);
   }
 
+  // ====================== Drafts y finales guardados ======================
+
   function savedSearchText(record) {
     return [
       record.client_name,
@@ -2709,6 +2756,8 @@
     }
   }
 
+  // ====================== Formato de numeros ======================
+
   function formatMoney(value) {
     const n = Number(value || 0);
     return n.toLocaleString('es-NI', { maximumFractionDigits: 0 });
@@ -2791,6 +2840,8 @@
     };
     return labels[account] || account || '';
   }
+
+  // ====================== Render del asistente: planes y propuestas ======================
 
   function renderChatPlan(data) {
     const plan = data.plan || {};
@@ -3393,6 +3444,8 @@
     });
   }
 
+  // ====================== Render del modelo: formato y clasificacion ======================
+
   function formatAccountingMoney(value, { zeroAsDash = false, zeroDecimals = false } = {}) {
     const n = Number(value || 0);
     if (Math.abs(n) < 0.5) return zeroAsDash ? '-' : (zeroDecimals ? '0.00' : '0');
@@ -3569,6 +3622,8 @@
     selects.forEach(select => { select.value = selectedModelBlockId; });
     toolbars.forEach(toolbar => toolbar.classList.remove('hidden'));
   }
+
+  // ====================== Render del modelo: tablas (preview, ER/ESF, cuentas) ======================
 
   function renderModelData(data, { includeEsf = false, preferredAccount = '' } = {}) {
     lastModelPreviewData = data;
@@ -3873,6 +3928,8 @@
     wrap.appendChild(table);
   }
 
+  // ====================== Modelo: preview / generate ======================
+
   async function fetchModelPreview(loadingText) {
     setModelMessage(loadingText);
     const payload = buildModelPayload();
@@ -3972,6 +4029,8 @@
       setModelMessage(String(e.message || e), 'error');
     }
   }
+
+  // ====================== Chat: workflow / send / apply / discard ======================
 
   async function executeChatWorkflow(workflow) {
     const action = workflow?.action || workflow?.workflow_action || '';
@@ -4342,6 +4401,8 @@
     await requestModelChatProposal('deshacer último ajuste');
   }
 
+  // ====================== Catalogo de cuentas ======================
+
   async function loadCatalogo() {
     const params = new URLSearchParams();
     const q = qs('#catalogoSearch')?.value?.trim();
@@ -4402,6 +4463,8 @@
     });
     wrap.appendChild(table);
   }
+
+  // ====================== Activacion de modos ======================
 
   function activateMode(target) {
     if (!target) return;
