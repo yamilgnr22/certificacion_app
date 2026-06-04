@@ -784,3 +784,34 @@ def _extract_target_month(proposal_payload: Mapping[str, Any], args: Mapping[str
         if _MONTH_PATTERN.match(record_month):
             return record_month
     return None
+
+
+# ============================================================
+# Argumentos y periodo
+# ============================================================
+
+def _target_amount_value(args: Mapping[str, Any]) -> float | None:
+    # Acepta varias variantes que el LLM puede usar; el primero no-None gana
+    # (incluido 0 explicito, que es valido para "llevar la cuenta a cero")
+    for key in ("target_amount", "amount", "monto", "saldo", "value", "valor", "target", "objetivo", "valor_objetivo"):
+        if key in args and args[key] is not None:
+            raw = args[key]
+            break
+    else:
+        return None
+    try:
+        if isinstance(raw, str):
+            value = raw.strip().lower().replace(",", "").replace("usd", "").replace("c$", "")
+            multiplier = 1000 if value.endswith("k") else 1
+            if value.endswith("k"):
+                value = value[:-1]
+            return float(value) * multiplier
+        return float(raw)
+    except Exception:
+        return None
+
+
+def _period_exchange_rate(payload: Mapping[str, Any]) -> float:
+    period = dict((payload or {}).get("period") or {})
+    value = period.get("exchange_rate") or period.get("tasa_cambio") or (payload or {}).get("tasa_cambio")
+    return float(_to_float(value) or 1.0)
