@@ -1862,6 +1862,47 @@
     return Number.isFinite(n) ? n : fallback;
   }
 
+  // ====================== Toggle USD/NIO en saldos iniciales ======================
+  const SALDOS_INICIALES_INPUT_IDS = [
+    'm_b_cash', 'm_b_ar', 'm_b_inventory', 'm_b_real_estate',
+    'm_b_equipment', 'm_b_vehicles', 'm_b_accum_dep', 'm_b_cards',
+    'm_b_suppliers', 'm_b_taxes', 'm_b_accrued', 'm_b_personal',
+    'm_b_pledge', 'm_b_commercial', 'm_b_mortgage', 'm_b_retained',
+  ];
+  let saldosInicialesUnit = 'nio'; // 'nio' | 'usd'
+
+  function getExchangeRate() {
+    return numberValue('m_tasa_cambio', 36.6243) || 36.6243;
+  }
+
+  function updateSaldosUnitUi() {
+    const label = qs('#saldosInicialesUnitLabel');
+    const btn = qs('#btnToggleSaldosUnit');
+    if (label) label.textContent = saldosInicialesUnit === 'usd' ? 'USD' : 'córdobas';
+    if (btn) btn.textContent = saldosInicialesUnit === 'usd' ? 'Ver en córdobas' : 'Ver en USD';
+  }
+
+  function setSaldosInicialesUnit(target) {
+    if (target === saldosInicialesUnit) return;
+    const rate = getExchangeRate();
+    if (!Number.isFinite(rate) || rate <= 0) return;
+    const factor = target === 'usd' ? (1 / rate) : rate;
+    SALDOS_INICIALES_INPUT_IDS.forEach(id => {
+      const el = qs(`#${id}`);
+      if (!el) return;
+      const current = Number(el.value);
+      if (!Number.isFinite(current)) return;
+      const converted = current * factor;
+      el.value = target === 'usd' ? converted.toFixed(2) : Math.round(converted);
+    });
+    saldosInicialesUnit = target;
+    updateSaldosUnitUi();
+  }
+
+  function ensureSaldosInicialesInNio() {
+    if (saldosInicialesUnit === 'usd') setSaldosInicialesUnit('nio');
+  }
+
   function compactMonthlyOverride(item) {
     const out = {};
     Object.entries(item || {}).forEach(([key, value]) => {
@@ -2017,6 +2058,7 @@
 
   function buildModelPayload() {
     syncMonthlyOverridesFromTable({ strict: true });
+    ensureSaldosInicialesInNio();
     return {
       client: {
         cliente_id: selectedClienteId || undefined,
@@ -4418,6 +4460,9 @@
     renderMonthlyOverridesTable();
     clearPendingChatProposal();
     setGenerateEnabled(false);
+  });
+  qs('#btnToggleSaldosUnit')?.addEventListener('click', () => {
+    setSaldosInicialesUnit(saldosInicialesUnit === 'usd' ? 'nio' : 'usd');
   });
   qs('#btnModeloESF')?.addEventListener('click', onModelEsfPreview);
   qs('#btnModeloPreview')?.addEventListener('click', onModelPreview);

@@ -383,7 +383,10 @@
           </div>
           <div class="workbench-grid esf-stack">
             <div class="workbench-inputs">
-              <h3>Saldos iniciales (córdobas)</h3>
+              <div class="saldos-iniciales-header">
+                <h3>Saldos iniciales (<span id="saldosInicialesUnitLabel">córdobas</span>)</h3>
+                <button id="btnToggleSaldosUnit" class="btn small" type="button" title="Convertir saldos entre USD y NIO usando el tipo de cambio del periodo">Ver en USD</button>
+              </div>
               <div class="grid-4 compact-grid">
                 <div class="field"><label>Efectivo</label><input id="m_b_cash" type="number" value="410193"></div>
                 <div class="field"><label>Cuentas por cobrar</label><input id="m_b_ar" type="number" value="62261"></div>

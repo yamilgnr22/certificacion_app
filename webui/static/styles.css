@@ -1258,6 +1258,20 @@ input[type="checkbox"] {
   font-weight: 500;
 }
 .workbench-inputs h3:first-child { margin-top: 0; }
+.saldos-iniciales-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.saldos-iniciales-header h3 { margin: 0; }
+.btn.small {
+  padding: 4px 10px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
 .exact-values-panel {
   margin: 18px 0 6px;
   padding: 12px;
