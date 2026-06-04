@@ -275,7 +275,7 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
         state["inventory"] = _round(state["inventory"] + purchases - cogs)
 
         credit_card_new = month_events.get("credit_card_new", 0.0)
-        credit_card_payment = month_events.get("credit_card_payment", state["credit_cards"] + credit_card_new)
+        credit_card_payment = month_events.get("credit_card_payment", 0.0)
         supplier_financing_requested = _round(max(0.0, month_events.get("supplier_financing", 0.0)))
         supplier_financing = _round(min(supplier_financing_requested, purchases))
         cash_purchases = _round(max(0.0, purchases - supplier_financing))
