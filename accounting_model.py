@@ -106,6 +106,10 @@ def build_accounting(
     system_vouchers = _build_system_vouchers(payload, monthly, months, opening_balances, account_types)
     saved_vouchers = _saved_vouchers(payload)
     vouchers = [*system_vouchers, *saved_vouchers]
+    # Orden cronologico estable: los vouchers guardados se anexan al final de
+    # la lista, pero el running balance del mayor (y las trazas por mes que
+    # derivan de el) requieren procesar cada mes completo en orden.
+    vouchers.sort(key=lambda voucher: str(voucher.get("month") or ""))
     ledger = _build_ledger(vouchers, account_types)
     traces = _build_traces(ledger)
     return {
@@ -305,6 +309,19 @@ def _monthly_vouchers(item: Mapping[str, Any], month: str) -> Iterable[Dict[str,
             yield _voucher("", month, "asset_purchase", f"Compra de {account.lower()}", [
                 _line(account, debit=amount),
                 _line("Efectivo y Equivalentes de Efectivo", credit=amount),
+            ])
+
+    asset_sales = [
+        ("Bienes Inmuebles", item.get("sale_real_estate")),
+        ("Mobiliario y Equipos", item.get("sale_equipment")),
+        ("Vehiculos", item.get("sale_vehicles")),
+    ]
+    for account, amount in asset_sales:
+        amount = _round(amount)
+        if amount:
+            yield _voucher("", month, "asset_sale", f"Venta de {account.lower()}", [
+                _line("Efectivo y Equivalentes de Efectivo", debit=amount),
+                _line(account, credit=amount),
             ])
 
     yield from _equity_vouchers(item, month)

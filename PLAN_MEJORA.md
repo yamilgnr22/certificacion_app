@@ -97,7 +97,7 @@
   - Aceptación: test con `credit_card_payment` mayor al saldo → el pasivo queda en 0, la caja solo baja por el monto aplicado, y aparece el warning. El `balance_check` y el check de F1-T1 quedan en 0.
   - Riesgo si no: la fuente más probable de los descuadres que F1-T1 va a empezar a detectar.
 
-- [ ] **F1-T3 — Conciliación mayor↔ESF (invariante I3)** · **CRÍTICO · M**
+- [x] **F1-T3 — Conciliación mayor↔ESF (invariante I3)** · **CRÍTICO · M** *(hecho 2026-06-10; `invariants.validate_ledger_vs_esf` integrado como `validations["ledger_esf"]`. Bonus: se detectaron y corrigieron 2 bugs — faltaba el voucher de venta de activos, y el running balance del mayor se corrompía con vouchers guardados fuera de orden cronológico. Suite: 203 passed)*
   - Qué: nueva función `validate_ledger_vs_esf(accounting, df_esf_full, months, tolerance=1.0)` en un nuevo módulo `invariants.py` (raíz): para cada cuenta de balance del mayor (`accounting["trace"]`), comparar `closing_balance` del último mes contra la fila correspondiente del ESF, por mes. Integrarla en `build_financial_model` → `validations["ledger_esf"]`. Mapear cuentas con `accounting_accounts.LEDGER_ACCOUNT_LABELS`.
   - Archivos: `invariants.py` (nuevo), `financial_model.py` (integración), `tests/test_invariants.py` (nuevo).
   - Aceptación: test que construye un modelo estándar y verifica `validations["ledger_esf"]["ok"] == True`; test que agrega un voucher guardado desbalanceado a mano al payload y verifica que el check lo detecta con cuenta y mes.
