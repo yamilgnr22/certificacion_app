@@ -109,7 +109,7 @@
   - Aceptación: `grep` de "cuentas por cobrar clientes" devuelve UNA sola definición en código (fuera de tests). Suite completa verde (especialmente `test_financial_model.py` y `test_agent_api.py`).
   - Riesgo si no: un alias agregado en un dict y no en los otros produce cuentas mal normalizadas que F1-T3 reportará como falsos positivos.
 
-- [ ] **F1-T5 — Invariante ER↔ESF explícito (I2)** · **IMPORTANTE · S**
+- [x] **F1-T5 — Invariante ER↔ESF explícito (I2)** · **IMPORTANTE · S** *(hecho 2026-06-10; `invariants.validate_er_vs_esf` integrado como `validations["er_esf"]`. Suite: 206 passed)*
   - Qué: en `invariants.py`, check de que la utilidad acumulada del ER (fila "Ingresos/Utilidad Neta") coincide con `result_accum` mostrado en el ESF del último mes (± ajustes de asientos a `current_earnings`, que ya están en `result_accum_adjustment`). Integrar a `validations["er_esf"]`.
   - Archivos: `invariants.py`, `financial_model.py`, `tests/test_invariants.py`.
   - Aceptación: test con asiento del chat contra `current_earnings` → el check sigue OK (considera el ajuste); test con corrupción manual del payload → falla con monto.

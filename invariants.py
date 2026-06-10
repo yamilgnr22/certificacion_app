@@ -1,5 +1,9 @@
 """Invariantes contables verificables (Fase 1 del plan de mejora).
 
+I2 — Coherencia ER vs ESF: la utilidad acumulada del Estado de Resultados
+(mas los asientos directos contra Resultados del Ejercicio) debe coincidir
+con la fila "Resultados del Ejercicio" del ESF, mes a mes.
+
 I3 — Conciliacion mayor vs ESF: el saldo final por cuenta del libro mayor
 (accounting_model) debe coincidir, mes a mes, con la fila correspondiente
 del ESF mensual (financial_model). Ambos son derivaciones paralelas de los
@@ -60,6 +64,71 @@ def _esf_row_spec(key: str) -> tuple[str, int]:
     if key == "accum_depreciation":
         return "(-) Depreciacion Acumulada", -1
     return LEDGER_ACCOUNT_LABELS[key], 1
+
+
+def validate_er_vs_esf(
+    df_er: pd.DataFrame,
+    monthly: List[Mapping[str, Any]],
+    *,
+    tolerance: float = 1.0,
+) -> Dict[str, Any]:
+    """Verifica que la utilidad del ER fluya a Resultados del Ejercicio.
+
+    El acumulado esperado de cada mes es la utilidad neta del ER mas los
+    asientos directos del chat contra Resultados del Ejercicio. Se compara
+    contra el valor mostrado en el ESF (month_data["result_accum"]).
+    """
+    checks: List[Dict[str, Any]] = []
+    errors: List[Dict[str, Any]] = []
+
+    if df_er is None or df_er.empty or not monthly:
+        return {
+            "ok": False,
+            "errors": [{"month": "", "expected": 0.0, "esf": 0.0, "difference": 0.0,
+                        "message": "ER vacio para conciliar contra el ESF"}],
+            "checks": checks,
+        }
+
+    desc_col = df_er.columns[0]
+    net_rows = df_er[df_er[desc_col].astype(str).str.strip() == "Ingresos/Utilidad Neta"]
+    if net_rows.empty:
+        return {
+            "ok": False,
+            "errors": [{"month": "", "expected": 0.0, "esf": 0.0, "difference": 0.0,
+                        "message": "El ER no tiene fila de utilidad neta"}],
+            "checks": checks,
+        }
+    net_row = net_rows.iloc[0]
+
+    running = 0.0
+    for item in monthly:
+        month_col = item.get("month")
+        month = month_col.strftime("%Y-%m") if hasattr(month_col, "strftime") else str(month_col)[:7]
+        er_net = _num(net_row[month_col]) if month_col in df_er.columns else _num(item.get("net_income"))
+        journal_delta = _num(item.get("result_accum_journal_increase")) - _num(item.get("result_accum_journal_decrease"))
+        running += er_net + journal_delta
+        esf_value = _num(item.get("result_accum"))
+        difference = round(running - esf_value, 2)
+        passed = abs(difference) <= tolerance
+        checks.append({
+            "rule": "I2: utilidad ER acumulada = Resultados del Ejercicio ESF",
+            "month": month,
+            "expected": round(running, 2),
+            "esf": round(esf_value, 2),
+            "ok": passed,
+        })
+        if not passed:
+            errors.append({
+                "month": month,
+                "expected": round(running, 2),
+                "esf": round(esf_value, 2),
+                "difference": difference,
+            })
+        # Continuar desde el valor del ESF evita arrastrar en cascada un
+        # descuadre puntual a todos los meses siguientes.
+        running = esf_value if not passed else running
+
+    return {"ok": not errors, "errors": errors, "checks": checks}
 
 
 def validate_ledger_vs_esf(

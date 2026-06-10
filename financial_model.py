@@ -9,7 +9,7 @@ import pandas as pd
 
 from accounting_accounts import LEDGER_ACCOUNT_ALIASES
 from accounting_model import build_accounting
-from invariants import validate_ledger_vs_esf
+from invariants import validate_er_vs_esf, validate_ledger_vs_esf
 from validators import validate_er, validate_esf
 
 
@@ -594,6 +594,7 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
     v_er = validate_er(full_df_er, tolerance=1.0)
     v_esf = validate_esf(full_df_esf, tolerance=1.0, mode="mensual")
     v_ledger = validate_ledger_vs_esf(accounting, full_df_esf, [_month_key(m) for m in months], tolerance=1.0)
+    v_er_esf = validate_er_vs_esf(full_df_er, monthly, tolerance=1.0)
     balance_errors = [
         {"month": _month_key(item["month"]), "difference": item["balance_check"]}
         for item in monthly
@@ -624,6 +625,7 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
         # Solo ok+errors: los ~cuenta x mes checks individuales inflarian el
         # validation_json persistido por periodo.
         "ledger_esf": {"ok": v_ledger["ok"], "errors": v_ledger["errors"]},
+        "er_esf": {"ok": v_er_esf["ok"], "errors": v_er_esf["errors"]},
     }
     full_summary = _build_summary(monthly, months, seed, v_er, v_esf, balance_errors, negative_cash)
     period_blocks = _build_period_blocks(months)

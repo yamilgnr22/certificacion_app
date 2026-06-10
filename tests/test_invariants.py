@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from financial_model import build_financial_model
-from invariants import validate_ledger_vs_esf
+from invariants import validate_er_vs_esf, validate_ledger_vs_esf
 from tests.test_financial_model import sample_payload
 
 
@@ -80,6 +80,58 @@ class LedgerEsfInvariantTest(unittest.TestCase):
         outcome = validate_ledger_vs_esf({}, pd.DataFrame(), ["2026-01"])
 
         self.assertFalse(outcome["ok"])
+
+
+class ErEsfInvariantTest(unittest.TestCase):
+    """F1-T5: la utilidad del ER debe fluir a Resultados del Ejercicio."""
+
+    def test_sane_model_reconciles(self):
+        result = build_financial_model(sample_payload())
+
+        self.assertTrue(
+            result.validations["er_esf"]["ok"],
+            result.validations["er_esf"]["errors"],
+        )
+
+    def test_journal_entry_against_current_earnings_is_considered(self):
+        payload = sample_payload()
+        payload["movements"]["journal_entries"] = [
+            {
+                "month": "2026-02",
+                "debit_account": "current_earnings",
+                "credit_account": "retained_earnings",
+                "amount_nio": 120000,
+                "description": "Traslado parcial de resultados",
+            }
+        ]
+
+        result = build_financial_model(payload)
+
+        self.assertTrue(
+            result.validations["er_esf"]["ok"],
+            result.validations["er_esf"]["errors"],
+        )
+
+    def test_corrupted_result_accum_is_detected(self):
+        # Simula un ESF cuyo Resultados del Ejercicio quedo en cero todos
+        # los meses pese a que el ER reporta utilidad.
+        model = build_financial_model(sample_payload())
+        corrupted = [
+            {
+                "month": month,
+                "result_accum": 0.0,
+                "result_accum_journal_increase": 0.0,
+                "result_accum_journal_decrease": 0.0,
+            }
+            for month in model.df_er_full.columns[2:-2]
+        ]
+
+        outcome = validate_er_vs_esf(model.df_er_full, corrupted)
+
+        self.assertFalse(outcome["ok"])
+        self.assertTrue(outcome["errors"])
+        first = outcome["errors"][0]
+        self.assertTrue(abs(first["difference"]) > 1.0)
 
 
 if __name__ == "__main__":
