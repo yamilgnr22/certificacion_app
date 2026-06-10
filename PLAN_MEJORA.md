@@ -91,7 +91,7 @@
   - Aceptación: test nuevo que inyecta un descuadre artificial (p.ej. duplicar una salida de caja vía monkeypatch o evento inválido) y verifica que `validations["capital"]["ok"] == False` con el mes y monto correctos. Todos los tests existentes siguen verdes (modelos sanos no disparan el check).
   - Riesgo si no: descuadres reales invisibles para siempre; el resto del plan construye sobre arena.
 
-- [ ] **F1-T2 — Eliminar clamps silenciosos en pasivos** · **CRÍTICO · S**
+- [x] **F1-T2 — Eliminar clamps silenciosos en pasivos** · **CRÍTICO · S** *(hecho 2026-06-10; helper `_apply_liability_payment` recorta al disponible del mes y reporta en `validations["overpayments"]`. El test de F1-T1 pasó a usar `credit_card_new` sin contrapartida como descuadre inyectado. Suite: 199 passed)*
   - Qué: en [financial_model.py:289-295](financial_model.py:289) (credit_cards, suppliers, taxes_payable, accrued_expenses, y el loop de loans en ~294), cuando `pago > saldo disponible`: recortar el pago efectivo al saldo (afectando también la salida de caja, no solo el pasivo) y registrar warning en `validations["overpayments"]` con `{month, account, requested, applied}`.
   - Archivos: `financial_model.py`, `tests/test_financial_model.py`.
   - Aceptación: test con `credit_card_payment` mayor al saldo → el pasivo queda en 0, la caja solo baja por el monto aplicado, y aparece el warning. El `balance_check` y el check de F1-T1 quedan en 0.

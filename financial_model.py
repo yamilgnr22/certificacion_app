@@ -103,6 +103,37 @@ class FinancialModelResult:
     df_esf_mensual_full: pd.DataFrame
 
 
+def _apply_liability_payment(
+    overpayments: List[Dict[str, Any]],
+    month: str,
+    account: str,
+    *,
+    balance: float,
+    additions: float,
+    requested: float,
+) -> tuple[float, float]:
+    """Aplica un pago contra un pasivo recortandolo al disponible del mes.
+
+    Devuelve (pago_aplicado, saldo_final). Si el pago pedido excede el
+    disponible (saldo inicial + nuevos del mes), se recorta al disponible
+    y se registra el sobrepago para validations["overpayments"]. Antes el
+    saldo se clampeaba a cero en silencio y la caja salia completa, lo que
+    generaba un descuadre absorbido por Capital.
+    """
+    requested = _round(requested)
+    available = _round(max(0.0, balance + additions))
+    applied = requested
+    if requested > available:
+        applied = available
+        overpayments.append({
+            "month": month,
+            "account": account,
+            "requested": requested,
+            "applied": applied,
+        })
+    return applied, _round(balance + additions - applied)
+
+
 def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
     """Build the financial statements that used to be prepared in Excel."""
     payload = dict(payload or {})
@@ -176,6 +207,7 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
         purchase_factors.append(1.0 + rng.uniform(-purchase_variability, purchase_variability))
 
     monthly: List[Dict[str, float]] = []
+    overpayments: List[Dict[str, Any]] = []
     state = dict(balances)
     dynamic_state = {name: 0.0 for name in dynamic_specs}
     result_accum = 0.0
@@ -291,13 +323,28 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
         accrued_new = month_events.get("accrued_new", 0.0)
         accrued_payment = month_events.get("accrued_payment", 0.0)
 
-        state["credit_cards"] = max(0.0, _round(state["credit_cards"] + credit_card_new - credit_card_payment))
-        state["suppliers"] = max(0.0, _round(state["suppliers"] + supplier_new - supplier_payment))
-        state["taxes_payable"] = max(0.0, _round(state["taxes_payable"] + taxes_new - taxes_payment))
-        state["accrued_expenses"] = max(0.0, _round(state["accrued_expenses"] + accrued_new - accrued_payment))
+        credit_card_payment, state["credit_cards"] = _apply_liability_payment(
+            overpayments, key, "credit_cards",
+            balance=state["credit_cards"], additions=credit_card_new, requested=credit_card_payment,
+        )
+        supplier_payment, state["suppliers"] = _apply_liability_payment(
+            overpayments, key, "suppliers",
+            balance=state["suppliers"], additions=supplier_new, requested=supplier_payment,
+        )
+        taxes_payment, state["taxes_payable"] = _apply_liability_payment(
+            overpayments, key, "taxes_payable",
+            balance=state["taxes_payable"], additions=taxes_new, requested=taxes_payment,
+        )
+        accrued_payment, state["accrued_expenses"] = _apply_liability_payment(
+            overpayments, key, "accrued_expenses",
+            balance=state["accrued_expenses"], additions=accrued_new, requested=accrued_payment,
+        )
 
         for loan_key, new_amount in new_loans.items():
-            state[loan_key] = max(0.0, _round(state[loan_key] + new_amount - loan_payments[loan_key]))
+            loan_payments[loan_key], state[loan_key] = _apply_liability_payment(
+                overpayments, key, loan_key,
+                balance=state[loan_key], additions=new_amount, requested=loan_payments[loan_key],
+            )
 
         state["accum_depreciation"] = _round(state["accum_depreciation"] - depreciation)
 
@@ -570,6 +617,7 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
         "balance": {"ok": not balance_errors, "errors": balance_errors},
         "cash": {"ok": not negative_cash, "warnings": negative_cash},
         "capital": {"ok": not capital_errors, "errors": capital_errors},
+        "overpayments": {"ok": not overpayments, "warnings": overpayments},
     }
     full_summary = _build_summary(monthly, months, seed, v_er, v_esf, balance_errors, negative_cash)
     period_blocks = _build_period_blocks(months)
