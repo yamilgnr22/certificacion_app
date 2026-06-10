@@ -7,6 +7,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 import pandas as pd
 
+from accounting_accounts import LEDGER_ACCOUNT_ALIASES
 from accounting_model import build_accounting
 from validators import validate_er, validate_esf
 
@@ -1443,43 +1444,10 @@ def _normalize_ledger_account(value: Any, dynamic_accounts: Mapping[str, str] | 
     key = _plain(value)
     if dynamic_accounts and key in dynamic_accounts:
         return dynamic_accounts[key]
-    aliases = {
-        "efectivo": "cash",
-        "caja": "cash",
-        "banco": "cash",
-        "bancos": "cash",
-        "efectivo y equivalentes de efectivo": "cash",
-        "cuentas por cobrar": "accounts_receivable",
-        "cuentas por cobrar clientes": "accounts_receivable",
-        "inventario": "inventory",
-        "inventarios": "inventory",
-        "bienes inmuebles": "ppe_real_estate",
-        "vivienda": "ppe_real_estate",
-        "mobiliario y equipos": "ppe_equipment",
-        "equipos": "ppe_equipment",
-        "vehiculos": "ppe_vehicles",
-        "depreciacion acumulada": "accum_depreciation",
-        "tarjetas": "credit_cards",
-        "tarjetas de credito": "credit_cards",
-        "proveedores": "suppliers",
-        "impuestos por pagar": "taxes_payable",
-        "gastos acumulados": "accrued_expenses",
-        "gastos acumulados por pagar": "accrued_expenses",
-        "creditos hipotecarios": "loans_mortgage",
-        "creditos consumo": "loans_consumo",
-        "creditos personales": "loans_personal",
-        "creditos prendarios": "loans_pledge",
-        "creditos comerciales": "loans_commercial",
-        "capital": "capital",
-        "resultados acumulados": "retained_earnings",
-        "resultado acumulado": "retained_earnings",
-        "resultados del ejercicio": "current_earnings",
-        "resultado del ejercicio": "current_earnings",
-        "utilidad del ejercicio": "current_earnings",
-    }
     if key in LEDGER_ACCOUNTS:
         return key
-    return aliases.get(key, "")
+    # Catalogo unico de alias: accounting_accounts.LEDGER_ACCOUNT_ALIASES
+    return LEDGER_ACCOUNT_ALIASES.get(key, "")
 
 
 def _dynamic_account_aliases(payload: Mapping[str, Any]) -> Dict[str, str]:

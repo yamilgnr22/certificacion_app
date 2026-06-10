@@ -103,7 +103,7 @@
   - Aceptación: test que construye un modelo estándar y verifica `validations["ledger_esf"]["ok"] == True`; test que agrega un voucher guardado desbalanceado a mano al payload y verifica que el check lo detecta con cuenta y mes.
   - Riesgo si no: los dos motores (estado vs. mayor) pueden divergir tras cualquier refactor sin que ningún test lo note.
 
-- [ ] **F1-T4 — Unificar el catálogo de cuentas (una sola fuente)** · **IMPORTANTE · M**
+- [x] **F1-T4 — Unificar el catálogo de cuentas (una sola fuente)** · **IMPORTANTE · M** *(hecho 2026-06-10; `financial_model._normalize_ledger_account` y `accounting_model._account_label` ahora importan de `accounting_accounts`. Suite: 199 passed)*
   - Qué: `accounting_accounts.py` pasa a ser la única fuente. Eliminar el dict inline duplicado de `_normalize_ledger_account` ([financial_model.py:1362-1395](financial_model.py:1362)) y el de `_account_label` ([accounting_model.py:627-661](accounting_model.py:627)); ambos importan `LEDGER_ACCOUNT_ALIASES` / `LEDGER_ACCOUNT_LABELS` / `normalize_account`.
   - Archivos: `financial_model.py`, `accounting_model.py`, `accounting_accounts.py`.
   - Aceptación: `grep` de "cuentas por cobrar clientes" devuelve UNA sola definición en código (fuera de tests). Suite completa verde (especialmente `test_financial_model.py` y `test_agent_api.py`).

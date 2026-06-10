@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any, Dict, Iterable, Mapping
 
+from accounting_accounts import LEDGER_ACCOUNT_LABELS
+
 
 ACCOUNT_TYPES = {
     "Efectivo y Equivalentes de Efectivo": "asset",
@@ -624,41 +626,9 @@ def _runtime_account_type(value: Any) -> str:
 
 
 def _account_label(account_key: Any) -> str:
-    mapping = {
-        "cash": "Efectivo y Equivalentes de Efectivo",
-        "accounts_receivable": "Cuentas por Cobrar Clientes",
-        "inventory": "Inventarios",
-        "ppe_real_estate": "Bienes Inmuebles",
-        "ppe_equipment": "Mobiliario y Equipos",
-        "ppe_vehicles": "Vehiculos",
-        "accum_depreciation": "Depreciacion Acumulada",
-        "credit_cards": "Tarjetas de Credito",
-        "suppliers": "Proveedores",
-        "taxes_payable": "Impuestos por Pagar",
-        "accrued_expenses": "Gastos Acumulados por pagar",
-        "loans_mortgage": "Creditos Hipotecarios",
-        "loans_consumo": "Creditos Consumo",
-        "loans_personal": "Creditos Personales",
-        "loans_pledge": "Creditos Prendarios",
-        "loans_commercial": "Creditos Comerciales",
-        "capital": "Capital",
-        "retained_earnings": "Resultados Acumulados",
-        "current_earnings": "Resultados del Ejercicio",
-        "revenue": "Ingresos",
-        "cogs": "Costo de Venta",
-        "exp_salaries": "Sueldos y Salarios",
-        "exp_services": "Servicios Publicos",
-        "depreciation_expense": "Gasto por Depreciacion",
-        "financial_expenses": "Gastos Financieros",
-        "exp_alcaldia_dgi": "Alcaldia y DGI",
-        "exp_fuel": "Combustible",
-        "exp_advertising": "Publicidad",
-        "exp_maintenance": "Mantenimientos",
-        "exp_rent": "Renta",
-        "exp_insurance": "Seguros",
-        "exp_other": "Otros Gastos",
-    }
-    return mapping.get(str(account_key or ""), str(account_key or ""))
+    # Catalogo unico de etiquetas: accounting_accounts.LEDGER_ACCOUNT_LABELS
+    key = str(account_key or "")
+    return LEDGER_ACCOUNT_LABELS.get(key, key)
 
 
 def _month_key(value: Any) -> str:
