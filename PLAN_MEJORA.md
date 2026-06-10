@@ -85,7 +85,7 @@
 ### FASE 1 — Fundamentos: invariantes reales en el motor contable
 *Objetivo: que la ecuación contable no PUEDA romperse sin que la app lo grite. Es prerequisito de todo lo demás: el solver y la IA confían en estas validaciones.*
 
-- [ ] **F1-T1 — Capital transaccional + check del residuo** · **CRÍTICO · M**
+- [x] **F1-T1 — Capital transaccional + check del residuo** · **CRÍTICO · M** *(hecho 2026-06-10; suite completa verde: 197 passed. El test del descuadre usa el clamp de sobrepago — al hacer F1-T2 cambiarlo a monkeypatch, ver nota en CapitalInvariantTest)*
   - Qué: en el loop mensual de `build_financial_model`, acumular `capital_transactional = capital_apertura + aportes − retiros ± reclasificaciones (± delta de asientos del chat contra capital)`. Mantener el cálculo residual actual, pero agregar a `validations` un bloque `capital`: `{ok, errors:[{month, residual, transactional, diff}]}` cuando `|residual − transactional| > 1.0`. Dejar de ignorar asientos contra capital en `_apply_journal_side` ([financial_model.py:1328](financial_model.py:1328)): registrarlos en el acumulador transaccional.
   - Archivos: `financial_model.py` (líneas ~183-400, ~1328), `tests/test_financial_model.py`.
   - Aceptación: test nuevo que inyecta un descuadre artificial (p.ej. duplicar una salida de caja vía monkeypatch o evento inválido) y verifica que `validations["capital"]["ok"] == False` con el mes y monto correctos. Todos los tests existentes siguen verdes (modelos sanos no disparan el check).

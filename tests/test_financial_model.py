@@ -1061,5 +1061,67 @@ class FinancialModelTest(unittest.TestCase):
         self.assertTrue(replaced["_adjusted_result"].validations["balance"]["ok"])
 
 
+class CapitalInvariantTest(unittest.TestCase):
+    """F1-T1: el capital residual del ESF debe coincidir con el transaccional."""
+
+    def test_sane_model_passes_capital_check(self):
+        result = build_financial_model(sample_payload())
+
+        self.assertTrue(result.validations["capital"]["ok"])
+        self.assertEqual(result.validations["capital"]["errors"], [])
+
+    def test_contributions_reclassification_and_journal_entries_are_tracked(self):
+        payload = sample_payload()
+        payload["movements"]["events"].extend([
+            {"month": "2026-01", "account": "capital_contribution", "amount": 100000, "currency": "nio"},
+            {"month": "2026-03", "account": "reclasificacion_capital", "amount": 80000, "currency": "nio"},
+        ])
+        payload["movements"]["journal_entries"] = [
+            {
+                "month": "2026-02",
+                "debit_account": "capital",
+                "credit_account": "cash",
+                "amount_nio": 50000,
+                "description": "Retiro de capital via asiento del chat",
+            }
+        ]
+
+        result = build_financial_model(payload)
+
+        self.assertTrue(
+            result.validations["capital"]["ok"],
+            result.validations["capital"]["errors"],
+        )
+        self.assertTrue(result.validations["balance"]["ok"])
+
+    def test_capital_check_detects_hidden_imbalance(self):
+        # Pago de tarjeta muy por encima del saldo disponible: el clamp actual
+        # deja el pasivo en 0 pero la caja sale completa. Ese descuadre real
+        # antes se absorbia en Capital sin ninguna alerta; ahora el invariante
+        # lo reporta. NOTA F1-T2: cuando el clamp pase a recortar el pago,
+        # este setup dejara de descuadrar y el test debe inyectar el error
+        # via monkeypatch sobre el estado.
+        payload = sample_payload()
+        payload["movements"]["events"].append(
+            {"month": "2026-02", "account": "abono_tarjeta", "amount": 1_000_000, "currency": "nio"}
+        )
+
+        result = build_financial_model(payload)
+        capital_validation = result.validations["capital"]
+
+        self.assertFalse(capital_validation["ok"])
+        months = [error["month"] for error in capital_validation["errors"]]
+        self.assertIn("2026-02", months)
+        first = next(e for e in capital_validation["errors"] if e["month"] == "2026-02")
+        # El saldo inicial de tarjetas es 183,122 (default): la caja baja
+        # 1,000,000 pero el pasivo solo puede bajar 183,122.
+        self.assertAlmostEqual(first["difference"], -(1_000_000 - 183_122), delta=2)
+        # El descuadre persiste hasta el final del periodo.
+        self.assertIn("2026-04", months)
+        # Y el balance_check tradicional NO lo detecta (capital residual lo
+        # absorbe): esa es exactamente la razon de ser de este invariante.
+        self.assertTrue(result.validations["balance"]["ok"])
+
+
 if __name__ == "__main__":
     unittest.main()

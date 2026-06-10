@@ -182,6 +182,11 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
     result_accum_adjustment = 0.0
     opening_capital = _opening_capital(balances)
     previous_capital = opening_capital
+    # Capital transaccional: acumulado solo por movimientos explicitos de capital
+    # (apertura, aportes, retiros, reclasificaciones y asientos del chat).
+    # Se compara contra el capital residual del ESF para detectar descuadres
+    # que de otra forma quedarian absorbidos en silencio.
+    capital_transactional = opening_capital
 
     for idx, month in enumerate(months):
         key = _month_key(month)
@@ -364,6 +369,15 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
         current_earnings_journal_increase = journal_effects.get("result_accum_journal_increase", 0.0)
         current_earnings_journal_decrease = journal_effects.get("result_accum_journal_decrease", 0.0)
 
+        capital_journal_delta = _round(journal_effects.get("capital_journal_delta", 0.0))
+        capital_transactional = _round(
+            capital_transactional
+            + capital_contribution
+            - owner_withdrawal
+            - capital_reclassification
+            + capital_journal_delta
+        )
+
         dynamic_current_assets = _dynamic_total(dynamic_state, dynamic_specs, account_type="activo", section="corriente")
         dynamic_non_current_assets = _dynamic_total(dynamic_state, dynamic_specs, account_type="activo", section="no_corriente")
         dynamic_current_liabilities = _dynamic_total(dynamic_state, dynamic_specs, account_type="pasivo", section="corriente")
@@ -398,6 +412,9 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
         retained = state["retained_earnings"]
         displayed_result_accum = result_accum + result_accum_adjustment
         capital = total_assets - total_liabilities - retained - displayed_result_accum - dynamic_equity
+        # Invariante I1: el capital residual del ESF debe coincidir con el
+        # transaccional; una diferencia indica un descuadre real en otro lugar.
+        capital_residual_diff = _round(capital - capital_transactional)
         capital_change = capital - capital_beginning
         capital_increase = capital_change if capital_change > 0 else 0.0
         capital_decrease = abs(capital_change) if capital_change < 0 else 0.0
@@ -501,6 +518,8 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
             "non_current_liabilities": non_current_liabilities,
             "total_liabilities": total_liabilities,
             "capital": capital,
+            "capital_transactional": capital_transactional,
+            "capital_residual_diff": capital_residual_diff,
             "retained_earnings": retained,
             "result_accum": displayed_result_accum,
             "total_equity": total_equity,
@@ -535,11 +554,22 @@ def build_financial_model(payload: Mapping[str, Any]) -> FinancialModelResult:
         for item in monthly
         if item["cash"] < 0
     ]
+    capital_errors = [
+        {
+            "month": _month_key(item["month"]),
+            "residual": _round(item["capital"]),
+            "transactional": _round(item["capital_transactional"]),
+            "difference": _round(item["capital_residual_diff"]),
+        }
+        for item in monthly
+        if abs(item["capital_residual_diff"]) > 1.0
+    ]
     validations = {
         "er": v_er,
         "esf": v_esf,
         "balance": {"ok": not balance_errors, "errors": balance_errors},
         "cash": {"ok": not negative_cash, "warnings": negative_cash},
+        "capital": {"ok": not capital_errors, "errors": capital_errors},
     }
     full_summary = _build_summary(monthly, months, seed, v_er, v_esf, balance_errors, negative_cash)
     period_blocks = _build_period_blocks(months)
@@ -1326,6 +1356,12 @@ def _apply_journal_side(
     kind = spec["kind"]
     state_key = spec.get("state") or ""
     if account == "capital":
+        # Capital no tiene state propio (es residual en el ESF), pero el delta
+        # se registra para que el acumulado transaccional lo incluya. La clave
+        # NO usa el sufijo "_journal_increase/decrease" porque los movimientos
+        # de Capital ya se derivan del residual y se duplicarian.
+        delta = amount if side == "credit" else -amount
+        effects["capital_journal_delta"] = effects.get("capital_journal_delta", 0.0) + delta
         return
     if account == "current_earnings":
         delta = amount if side == "credit" else -amount
