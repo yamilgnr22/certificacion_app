@@ -124,7 +124,7 @@
 ### FASE 2 — Solver de restricciones determinista
 *Depende de Fase 1 (el solver necesita invariantes confiables para validar sus soluciones). Construye SOBRE las recetas existentes en `agent_plan_builders.py` — no las reemplaza.*
 
-- [ ] **F2-T1 — Extraer núcleo del solver a `services/solver/constraint_solver.py`** · **IMPORTANTE · M**
+- [x] **F2-T1 — Extraer núcleo del solver a `services/solver/constraint_solver.py`** · **IMPORTANTE · M** *(hecho 2026-06-10; `ConstraintSolver.solve(payload, constraints) → SolveResult` con kinds target/average/floor/utility. El mixin quedó como adaptador; `agent_tools` delega `distribute_average`. `tests/test_solver.py` lo ejercita sin Flask/LLM. Suite: 217 passed)*
   - Qué: crear el paquete `services/solver/` con una API pura: `solve(payload, constraints: list[Constraint]) -> SolveResult`. `Constraint` = dataclass `{kind: "target"|"average"|"floor"|"utility", account, months, amount, currency, counter_account, variability_pct}`. `SolveResult` = `{feasible: bool, steps: [...], infeasible_reason: str|None, aggregate_impact}`. Internamente delega en la lógica ya probada de `_simulate_target_plan`, `compute_target_distribution` y `_build_target_utility_plan` (mover, no duplicar; los mixins pasan a llamar al solver).
   - Archivos: `services/solver/__init__.py`, `services/solver/constraint_solver.py` (nuevos), `services/agent_plan_builders.py` (delega), `tests/test_solver.py` (nuevo).
   - Aceptación: `test_solver.py` ejercita el solver SIN tocar Flask ni LLM (payload de fixture → constraints → verifica saldos resultantes con `build_financial_model`). `test_agent_api.py` completo sigue verde.
