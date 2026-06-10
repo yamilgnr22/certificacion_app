@@ -13,8 +13,8 @@ from sqlalchemy.orm import Session
 
 from accounting_accounts import LEDGER_ACCOUNT_LABELS
 from accounting_model import reverse_voucher
-from financial_model import build_financial_model
 from llm import LLMProvider, LLMProviderError, get_llm_provider
+from model_cache import cached_build_financial_model as build_financial_model
 from repositories import AccountRepository, AgentRepository, PeriodoRepository
 from services.audit_service import AuditService, stable_hash
 from services.agent_errors import (

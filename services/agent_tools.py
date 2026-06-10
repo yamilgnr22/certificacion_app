@@ -7,7 +7,7 @@ from typing import Any, Callable, Mapping
 
 from accounting_accounts import account_label, normalize_account
 from accounting_model import get_account_ledger, get_trace
-from financial_model import build_financial_model
+from model_cache import cached_build_financial_model as build_financial_model
 
 
 ToolHandler = Callable[[Mapping[str, Any], Mapping[str, Any]], dict[str, Any]]

@@ -146,6 +146,39 @@ class AgentApiTest(unittest.TestCase):
         self._save_payload(payload)
         return voucher
 
+    def test_proposal_reuses_cached_model_builds(self):
+        # F3-T3: una propuesta por objetivo usa el modelo 4+ veces (payload
+        # base y proyectado para la propuesta, y de nuevo ambos para el
+        # impacto). Con cache solo deben construirse los 2 payloads unicos.
+        import model_cache
+
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider({
+            "intent": "target_balance_adjustment",
+            "args": {"account": "inventory", "month": "2026-02", "target_amount": 150000, "currency": "USD"},
+        })
+        model_cache.clear_model_cache()
+        calls = {"count": 0}
+        real_build = model_cache.build_financial_model
+
+        def counting(payload):
+            calls["count"] += 1
+            return real_build(payload)
+
+        model_cache.build_financial_model = counting
+        try:
+            resp = self.client.post(
+                "/api/agent/command",
+                json={"periodo_id": self.periodo["id"], "message": "inventario a 150k usd en febrero"},
+            )
+        finally:
+            model_cache.build_financial_model = real_build
+            model_cache.clear_model_cache()
+
+        data = resp.get_json()
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(data["response_type"], "proposal")
+        self.assertEqual(calls["count"], 2)
+
     def test_missing_openai_key_returns_clear_error(self):
         old_key = os.environ.pop("OPENAI_API_KEY", None)
         web_server.app.config.pop("AGENT_LLM_PROVIDER", None)

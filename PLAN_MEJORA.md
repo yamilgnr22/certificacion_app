@@ -163,7 +163,7 @@
   - Aceptación: test unitario con provider fake que falla una vez y acierta la segunda → el comando se completa y `llm_retries == 1`.
   - Riesgo si no: fallos transitorios del proveedor se vuelven errores de usuario.
 
-- [ ] **F3-T3 — Cache de `build_financial_model` por hash de payload** · **IMPORTANTE · M**
+- [x] **F3-T3 — Cache de `build_financial_model` por hash de payload** · **IMPORTANTE · M** *(hecho 2026-06-10; `model_cache.py` LRU de 16 entradas, usado por agent_service, plan/proposal builders y agent_tools. Una propuesta por objetivo pasó de 4 builds a 2; benchmark 12 meses: 6 builds 242ms→40ms. Suite: 210 passed)*
   - Qué: el modelo se reconstruye 3-6 veces por propuesta y N veces por plan (un build por mes en `_build_non_negative_account_plan`, [agent_plan_builders.py:121-164](services/agent_plan_builders.py:121)). Crear `model_cache.py` con LRU (~16 entradas) keyed por `stable_hash(payload)` (ya existe en `services/audit_service.py`). Usarlo en `agent_service`, plan builders y proposal builders. Invalidación: no hace falta — el payload es inmutable por valor; cada proyección tiene hash distinto.
   - Archivos: `model_cache.py` (nuevo), `services/agent_service.py`, `services/agent_plan_builders.py`, `services/agent_proposal_builders.py`, `tests/test_agent_api.py`.
   - Aceptación: test que cuenta invocaciones (monkeypatch sobre `build_financial_model`) en un `handle_command` de propuesta: las llamadas con el mismo hash se resuelven de cache. Tiempo de un plan de 12 meses medido antes/después en el PR.

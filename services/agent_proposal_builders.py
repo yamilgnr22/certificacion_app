@@ -21,7 +21,7 @@ from typing import Any, Mapping
 
 from accounting_accounts import LEDGER_ACCOUNT_LABELS
 from accounting_model import reverse_voucher
-from financial_model import build_financial_model
+from model_cache import cached_build_financial_model as build_financial_model
 from services.agent_constants import TARGET_BALANCE_ACCOUNTS, TARGET_COUNTER_DEFAULTS
 from services.agent_errors import AgentValidationError
 from services.agent_helpers import (

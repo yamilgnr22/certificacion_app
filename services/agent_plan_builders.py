@@ -16,7 +16,7 @@ import logging
 from copy import deepcopy
 from typing import Any, Mapping
 
-from financial_model import build_financial_model
+from model_cache import cached_build_financial_model as build_financial_model
 from services.agent_constants import MAX_PLAN_ACCOUNTS, TARGET_BALANCE_ACCOUNTS
 from services.agent_errors import AgentValidationError
 from services.agent_helpers import (
