@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 import json
 import time
@@ -86,6 +87,8 @@ from services.periodo_service import PeriodoService
 from services.rollforward_service import RollforwardService
 from services.serializers import agent_plan_to_dict, parse_json_object
 
+
+logger = logging.getLogger(__name__)
 
 PROMPT_VERSION = "agent-command-v1.0.0"
 MAX_TOOL_CALLS_PER_TURN = 3
@@ -1045,6 +1048,7 @@ class AgentCommandService(AgentPlanBuilderMixin, AgentProposalBuilderMixin):
             before_result = build_financial_model(payload)
             after_result = build_financial_model(projected_payload)
         except Exception:
+            logger.warning("No se pudo calcular el impacto de la propuesta (intent=%s); se reporta vacio", intent, exc_info=True)
             return {"month": None, "items": []}
         months = (
             after_result.summary.get("all_months")
@@ -1123,6 +1127,7 @@ class AgentCommandService(AgentPlanBuilderMixin, AgentProposalBuilderMixin):
             before = build_financial_model(payload)
             after = build_financial_model(projected_payload)
         except Exception:
+            logger.warning("No se pudo calcular el impacto del cambio de supuesto; se reporta vacio", exc_info=True)
             return {}
         before_summary = before.summary or {}
         after_summary = after.summary or {}

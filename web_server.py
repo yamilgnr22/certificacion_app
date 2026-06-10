@@ -1195,4 +1195,7 @@ def model_save_final():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8000"))
     debug = os.environ.get("CERTAPP_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
-    app.run(host="0.0.0.0", port=port, debug=debug, use_reloader=False)
+    # Por defecto solo localhost: la app no tiene autenticacion y maneja PII.
+    # Para exponer a la red local: CERTAPP_HOST=0.0.0.0
+    host = os.environ.get("CERTAPP_HOST", "127.0.0.1").strip() or "127.0.0.1"
+    app.run(host=host, port=port, debug=debug, use_reloader=False)

@@ -12,6 +12,7 @@ expone `self.tools` (AgentToolRegistry).
 from __future__ import annotations
 
 import json
+import logging
 from copy import deepcopy
 from typing import Any, Mapping
 
@@ -27,6 +28,9 @@ from services.agent_helpers import (
     _target_amount_value,
     _to_float,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class AgentPlanBuilderMixin:
@@ -441,6 +445,7 @@ class AgentPlanBuilderMixin:
             before = build_financial_model(payload)
             after = build_financial_model(projected_payload)
         except Exception:
+            logger.warning("No se pudo calcular el impacto agregado del plan; se reporta en cero", exc_info=True)
             return {
                 "revenue_total_delta": 0,
                 "cogs_total_delta": 0,
