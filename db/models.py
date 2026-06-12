@@ -219,14 +219,6 @@ class AgentSessionContext(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
 
-class LegacyCallCounter(Base):
-    __tablename__ = "legacy_call_counters"
-
-    endpoint: Mapped[str] = mapped_column(String(120), primary_key=True)
-    call_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
-
-
 class AccountCatalog(Base):
     __tablename__ = "account_catalog"
     __table_args__ = (

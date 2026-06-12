@@ -19,8 +19,6 @@ from document_generator import generar_documento_completo
 from report_utils import build_report, save_report_json
 from financial_model import build_financial_model, result_to_json
 from accounting_model import get_account_ledger, get_trace, reverse_voucher
-from chat_controller import ChatCommandError, handle_chat_command
-from model_chat import ModelChatError, preview_chat_adjustment
 from document_extraction import extract_client_documents
 from model_storage import (
     ModelStorageError,
@@ -152,25 +150,6 @@ def _db_session():
 
 def _cpa_user() -> str:
     return request.headers.get("X-CPA-User", "system").strip() or "system"
-
-
-def _increment_legacy_chat_counter(endpoint: str) -> None:
-    """Best-effort: no bloquea el endpoint legacy si DB/migracion no esta lista."""
-    try:
-        engine = _get_db_engine()
-        if _db_requires_alembic():
-            require_alembic_version(engine)
-        session = session_factory(engine)()
-        try:
-            AgentRepository(session).increment_legacy_counter(endpoint)
-            session.commit()
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
-    except Exception:
-        app.logger.debug("No se pudo incrementar contador legacy %s", endpoint, exc_info=True)
 
 
 def _json_body() -> dict:
@@ -943,42 +922,6 @@ def model_trace():
         return {"ok": False, "error": str(exc)}, 404
     except Exception as exc:
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 400
-
-
-@app.post("/api/model/chat/preview")
-def model_chat_preview():
-    """Interpreta una instruccion de chat y devuelve una propuesta de ajuste."""
-    try:
-        body = request.get_json(silent=True) or {}
-        payload = body.get("payload") or {}
-        message = body.get("message") or ""
-        scope = body.get("scope") or {}
-        data = preview_chat_adjustment(payload, message, scope=scope)
-        status = 200 if data.get("ok") else (422 if data.get("needs_clarification") or data.get("not_viable") else 400)
-        return data, status
-    except ModelChatError as exc:
-        return {"ok": False, "error": str(exc)}, exc.status_code
-    except Exception as exc:
-        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 400
-
-
-@app.post("/api/model/chat/command")
-def model_chat_command():
-    """Orquesta instrucciones del asistente contable para consultas, UI y propuestas."""
-    try:
-        _increment_legacy_chat_counter("/api/model/chat/command")
-        body = request.get_json(silent=True) or {}
-        payload = body.get("payload") or {}
-        message = body.get("message") or ""
-        ui_context = body.get("ui_context") or {}
-        scope = body.get("scope") or ui_context.get("scope") or {}
-        data = handle_chat_command(payload, message, ui_context=ui_context, scope=scope)
-        status = 200 if data.get("ok") else (422 if data.get("needs_clarification") else 400)
-        return data, status
-    except ChatCommandError as exc:
-        return {"ok": False, "assistant_message": str(exc), "error": str(exc)}, exc.status_code
-    except Exception as exc:
-        return {"ok": False, "assistant_message": f"{type(exc).__name__}: {exc}", "error": f"{type(exc).__name__}: {exc}"}, 400
 
 
 @app.post("/api/model/documents/extract")

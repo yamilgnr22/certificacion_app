@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 
-from db.models import AgentMessage, AgentPlan, AgentProposal, AgentSessionContext, LegacyCallCounter
+from db.models import AgentMessage, AgentPlan, AgentProposal, AgentSessionContext
 
 
 class AgentRepository:
@@ -37,16 +37,6 @@ class AgentRepository:
         self.session.add(record)
         self.session.flush()
         return record
-
-    def increment_legacy_counter(self, endpoint: str) -> LegacyCallCounter:
-        counter = self.session.get(LegacyCallCounter, endpoint)
-        if counter is None:
-            counter = LegacyCallCounter(endpoint=endpoint, call_count=0, updated_at=datetime.now(timezone.utc))
-            self.session.add(counter)
-        counter.call_count += 1
-        counter.updated_at = datetime.now(timezone.utc)
-        self.session.flush()
-        return counter
 
     def add_proposal(
         self,

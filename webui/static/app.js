@@ -4163,14 +4163,20 @@
 
   async function requestModelChatProposal(message) {
     clearPendingChatProposal();
+    // El chat legacy de drafts fue retirado (F3-T4): el asistente contable
+    // trabaja sobre periodos guardados en SQLite.
+    if (!activePeriodoId) {
+      const hint = 'El asistente trabaja sobre periodos: abri (o crea) un periodo de un cliente y volve a intentarlo.';
+      appendChatMessage(hint, 'app');
+      setModelMessage(hint, 'warning');
+      return;
+    }
     try {
       appendChatMessage('Estoy revisando el modelo...', 'app');
-      const useAgent = !!activePeriodoId;
+      const useAgent = true;
       const uiContext = buildModelChatUiContext();
-      const endpoint = useAgent ? '/api/agent/command' : '/api/model/chat/command';
-      const body = useAgent
-        ? { periodo_id: activePeriodoId, message, ui_context: uiContext, current_payload: buildModelPayload(), is_dirty: !!editorDirty }
-        : { payload: buildModelPayload(), message, scope: buildModelChatScope(), ui_context: uiContext };
+      const endpoint = '/api/agent/command';
+      const body = { periodo_id: activePeriodoId, message, ui_context: uiContext, current_payload: buildModelPayload(), is_dirty: !!editorDirty };
       const resp = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

@@ -169,7 +169,7 @@
   - Aceptación: test que cuenta invocaciones (monkeypatch sobre `build_financial_model`) en un `handle_command` de propuesta: las llamadas con el mismo hash se resuelven de cache. Tiempo de un plan de 12 meses medido antes/después en el PR.
   - Riesgo si no: planes sobre períodos de 24-36 meses tardan decenas de segundos y chocan con `MAX_TURN_DURATION_S = 30`.
 
-- [ ] **F3-T4 — Retirar el chat legacy** · **IMPORTANTE · M**
+- [x] **F3-T4 — Retirar el chat legacy** · **IMPORTANTE · M** *(hecho 2026-06-10 por decisión explícita del usuario, sin esperar el contador: −2,500 líneas (model_chat.py, chat_controller.py, endpoints, 26 tests legacy, método del repo y modelo LegacyCallCounter; la migración 004 queda intacta). El chat de la UI ahora exige período activo. Smoke test: index 200, endpoint legacy 404. Suite: 199 passed)*
   - Qué: verificar `legacy_call_counters` en la DB; si los endpoints `/api/model/chat/*` tienen uso ~0, eliminar `model_chat.py`, `chat_controller.py`, sus endpoints en [web_server.py:948-981](web_server.py:948), sus tests (`test_chat_controller.py`, `test_chat_legacy_snapshot.py`) y el código del UI que los llama.
   - Archivos: eliminar los citados; `web_server.py`, `webui/static/app.js`.
   - Aceptación: suite verde, `grep -r "model_chat\|chat_controller"` sin resultados fuera de git history, la UI del asistente funciona end-to-end.
