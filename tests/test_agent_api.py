@@ -179,6 +179,21 @@ class AgentApiTest(unittest.TestCase):
         self.assertEqual(data["response_type"], "proposal")
         self.assertEqual(calls["count"], 2)
 
+    def test_llm_retries_are_reported_in_response(self):
+        provider = FakeProvider({"intent": "question", "args": {}, "assistant_message": "ok"})
+        provider.last_retries = 1
+        web_server.app.config["AGENT_LLM_PROVIDER"] = provider
+
+        resp = self.client.post(
+            "/api/agent/command",
+            json={"periodo_id": self.periodo["id"], "message": "hola"},
+        )
+
+        data = resp.get_json()
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(data["llm_retries"], 1)
+        self.assertEqual(data["audit"]["llm_retries"], 1)
+
     def test_compound_constraints_plan_applies_both_goals(self):
         # F2-T3: "caja promedio 5,000 USD usando capital y que inventario
         # cierre en 100,000 USD en febrero" en UNA instruccion.

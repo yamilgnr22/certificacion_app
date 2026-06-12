@@ -157,7 +157,7 @@
   - Aceptación: suite verde + prueba manual de las 6 frases ambiguas del prompt actual contra el LLM real (documentar resultados en el PR).
   - Riesgo si no: cada intent nuevo degrada el ruteo de los existentes sin forma de notarlo.
 
-- [ ] **F3-T2 — Reintento estructurado ante JSON inválido del LLM** · **IMPORTANTE · S**
+- [x] **F3-T2 — Reintento estructurado ante JSON inválido del LLM** · **IMPORTANTE · S** *(hecho 2026-06-10; `OpenAIProvider.complete_json` reintenta 1 vez con el error como contexto; el agente reporta `llm_retries` en respuesta y audit. Suite: 227 passed)*
   - Qué: en `OpenAIProvider.complete_json` ([llm/provider.py:34](llm/provider.py:34)), ante `LLMProviderError` por JSON inválido o schema incumplido, un (1) reintento agregando el error como mensaje. Registrar el reintento en la respuesta (`audit.llm_retries`).
   - Archivos: `llm/provider.py`, `services/agent_service.py`.
   - Aceptación: test unitario con provider fake que falla una vez y acierta la segunda → el comando se completa y `llm_retries == 1`.

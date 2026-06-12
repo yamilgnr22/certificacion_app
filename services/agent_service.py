@@ -162,6 +162,7 @@ class AgentCommandService(AgentPlanBuilderMixin, AgentProposalBuilderMixin):
             raise AgentConfigError(str(exc)) from exc
         except Exception as exc:
             raise AgentServiceError(f"No pude interpretar la instruccion: {type(exc).__name__}: {exc}") from exc
+        llm_retries = int(getattr(provider, "last_retries", 0) or 0)
 
         if _elapsed_seconds(started_at) > MAX_TURN_DURATION_S:
             response = self._decorate_response(
@@ -281,6 +282,8 @@ class AgentCommandService(AgentPlanBuilderMixin, AgentProposalBuilderMixin):
             used_dirty_payload=used_dirty_payload,
             started_at=started_at,
         )
+        response["llm_retries"] = llm_retries
+        response.setdefault("audit", {})["llm_retries"] = llm_retries
         if used_dirty_payload and response.get("response_type") in {"answer", "navigation", "proposal"}:
             response["assistant_message"] = "Segun los cambios sin guardar en pantalla: " + str(response.get("assistant_message") or "")
         if retrying_pending_goal:
