@@ -130,7 +130,7 @@
   - Aceptación: `test_solver.py` ejercita el solver SIN tocar Flask ni LLM (payload de fixture → constraints → verifica saldos resultantes con `build_financial_model`). `test_agent_api.py` completo sigue verde.
   - Riesgo si no: la lógica del solver queda soldada a los mixins del agente; imposible testearla o extenderla aislada.
 
-- [ ] **F2-T2 — Diagnóstico de infactibilidad con números** · **IMPORTANTE · M**
+- [x] **F2-T2 — Diagnóstico de infactibilidad con números** · **IMPORTANTE · M** *(hecho 2026-06-10; promedios imposibles reportan promedio/fijado/negativo requerido, utilidad fuera de rango reporta actual/meta/límite, palancas negativas reportan mes y cifras, y los safety warnings se citan con monto en el assistant_message. Suite: 220 passed)*
   - Qué: cuando una meta no se puede cumplir (hoy: errores genéricos como "delta demasiado alto" en [agent_plan_builders.py:190](services/agent_plan_builders.py:190)), `SolveResult.infeasible_reason` debe explicar el conflicto con cifras: meta pedida, valor máximo/mínimo alcanzable, y qué restricción lo limita (p.ej. "llevar caja a C$5,000 en marzo requiere retirar C$120,000 pero la contrapartida capital quedaría en C$−15,000"). El agente lo muestra tal cual.
   - Archivos: `services/solver/constraint_solver.py`, `services/agent_plan_builders.py`, `tests/test_solver.py`.
   - Aceptación: test con meta imposible (inventario negativo requerido) → `feasible=False` y `infeasible_reason` contiene los tres números.

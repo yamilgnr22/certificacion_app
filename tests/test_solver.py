@@ -151,6 +151,48 @@ class ConstraintSolverTest(unittest.TestCase):
         self.assertFalse(outcome.feasible)
         self.assertIn("no esta dentro del periodo", outcome.infeasible_reason)
 
+    def test_impossible_average_reports_the_three_numbers(self):
+        # F2-T2: promedio 50k USD en 4 meses (total 200k) con un mes fijado
+        # en 500k obliga a los meses libres a cerrar en -100k.
+        outcome = self.solver.solve(solver_payload(), [
+            Constraint(kind="average", account="inventory", months=MONTHS,
+                       amount=50000, currency="USD", counter_account="suppliers",
+                       overrides={"2026-02": 500000}),
+        ])
+
+        self.assertFalse(outcome.feasible)
+        reason = outcome.infeasible_reason
+        self.assertIn("50,000.00", reason)    # promedio pedido
+        self.assertIn("500,000.00", reason)   # monto fijado
+        self.assertIn("-100,000.00", reason)  # saldo negativo requerido
+        self.assertIn("Inventarios", reason)
+
+    def test_utility_too_far_reports_current_target_and_limit(self):
+        outcome = self.solver.solve(solver_payload(), [
+            Constraint(kind="utility", amount=1_000_000, lever="cogs"),
+        ])
+
+        self.assertFalse(outcome.feasible)
+        reason = outcome.infeasible_reason
+        self.assertIn("USD 1,000,000.00", reason)   # meta pedida
+        self.assertIn("utilidad actual", reason)    # valor actual con cifra
+        self.assertIn("limite automatico", reason)  # restriccion que lo bloquea
+
+    def test_safety_warning_is_quantified_in_assistant_message(self):
+        # Llevar cuentas por cobrar a 400k USD contra inventario (5.3M NIO)
+        # deja el inventario muy negativo: el plan es factible pero el
+        # mensaje debe advertirlo con el monto.
+        outcome = self.solver.solve(solver_payload(), [
+            Constraint(kind="target", account="accounts_receivable", month="2026-02",
+                       amount=400000, currency="USD", counter_account="inventory"),
+        ])
+
+        self.assertTrue(outcome.feasible, outcome.infeasible_reason)
+        self.assertIn("Inventarios", outcome.assistant_message)
+        self.assertIn("quedaria en C$", outcome.assistant_message)
+        warnings = outcome.aggregate_impact.get("safety_warnings") or []
+        self.assertTrue(any(w["account"] == "inventory" for w in warnings))
+
     def test_distribute_average_respects_overrides_and_average(self):
         targets = distribute_average(MONTHS, 100000, {"2026-02": 130000}, 0.0)
 

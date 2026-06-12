@@ -141,6 +141,49 @@ def distribute_average(
     ]
 
 
+def _warning_suffix(impact: Mapping[str, Any]) -> str:
+    """F2-T2: resume con cifras el peor safety warning del plan, si existe."""
+    warnings = list(impact.get("safety_warnings") or [])
+    if not warnings:
+        return ""
+    worst = min(warnings, key=lambda w: float(_to_float(w.get("after_nio")) or 0.0))
+    extra = f" (y {len(warnings) - 1} aviso(s) mas)" if len(warnings) > 1 else ""
+    return (
+        f" Ojo: {worst.get('account_label')} quedaria en C$ {float(_to_float(worst.get('after_nio')) or 0.0):,.2f} "
+        f"en {worst.get('month')}{extra}."
+    )
+
+
+def diagnose_negative_targets(
+    targets: list[Mapping[str, Any]],
+    *,
+    label: str,
+    average: Any,
+    currency: str,
+    overrides: Mapping[str, Any] | None,
+) -> None:
+    """F2-T2: si la distribucion requiere saldos negativos, explica con cifras.
+
+    Un promedio bajo combinado con montos fijos altos obliga a los meses
+    libres a cerrar en negativo, lo que nunca es aplicable como saldo.
+    """
+    negative = [t for t in targets if float(_to_float(t.get("target_amount")) or 0.0) < 0]
+    if not negative:
+        return
+    fixed_total = sum(
+        float(_to_float(value) or 0.0)
+        for value in (overrides or {}).values()
+        if float(_to_float(value) or 0.0) > 0
+    )
+    worst = min(negative, key=lambda t: float(_to_float(t.get("target_amount")) or 0.0))
+    worst_amount = float(_to_float(worst.get("target_amount")) or 0.0)
+    raise AgentValidationError(
+        f"El promedio objetivo de {label} ({float(_to_float(average) or 0.0):,.2f} {currency}) es imposible con esos montos fijos: "
+        f"los meses fijados suman {fixed_total:,.2f} y obligarian a los meses libres a cerrar en {worst_amount:,.2f} "
+        f"(negativo, por ejemplo en {worst.get('month')}). Baja los montos fijos o subi el promedio."
+    )
+
+
 class ConstraintSolver:
     """Resuelve metas declarativas produciendo steps verificados."""
 
@@ -227,6 +270,13 @@ class ConstraintSolver:
                 }
                 for item in distribute_average(months, constraint.amount or 0.0, constraint.overrides, constraint.variability_pct)
             ]
+            diagnose_negative_targets(
+                targets,
+                label=label,
+                average=constraint.amount,
+                currency=constraint.currency,
+                overrides=constraint.overrides,
+            )
             return self.simulate_target_plan(
                 kind="multi_target_balance",
                 payload=payload,
@@ -317,12 +367,13 @@ class ConstraintSolver:
             steps.append(step)
         if not steps:
             return {"no_plan": True, "assistant_message": "Todos los saldos ya cumplen los objetivos; no hace falta plan."}
+        impact = self.aggregate_impact(payload, working)
         return {
             "kind": kind,
             "plan_summary": f"{summary_prefix}: {len(steps)} paso(s)",
-            "assistant_message": f"Prepare un plan de {len(steps)} paso(s). Revisalo antes de aplicarlo.",
+            "assistant_message": f"Prepare un plan de {len(steps)} paso(s). Revisalo antes de aplicarlo.{_warning_suffix(impact)}",
             "steps": steps,
-            "aggregate_impact": self.aggregate_impact(payload, working),
+            "aggregate_impact": impact,
         }
 
     def build_non_negative_plan(
@@ -386,8 +437,14 @@ class ConstraintSolver:
         current_nio = float(result.summary.get("net_income_total") or 0)
         target_nio = round(float(target_usd) * rate, 2)
         delta_nio = round(target_nio - current_nio, 2)
-        if abs(delta_nio) > max(abs(current_nio) * 3, rate):
-            raise AgentValidationError("El delta requerido para esa utilidad es demasiado alto para un ajuste automatico de una sola palanca.")
+        limit_nio = max(abs(current_nio) * 3, rate)
+        if abs(delta_nio) > limit_nio:
+            raise AgentValidationError(
+                f"La utilidad objetivo esta demasiado lejos para una sola palanca: pediste USD {float(target_usd):,.2f} "
+                f"(C$ {target_nio:,.2f}), la utilidad actual del periodo es C$ {current_nio:,.2f} y el ajuste requerido "
+                f"C$ {delta_nio:,.2f} excede el limite automatico de C$ {limit_nio:,.2f} (3x la utilidad actual). "
+                "Procesalo por partes o fija ingresos/costos exactos por mes."
+            )
         months = [str(m) for m in (result.summary.get("all_months") or result.summary.get("months") or _payload_months(payload))]
         if not months:
             raise AgentValidationError("No encontre meses para distribuir la utilidad objetivo.")
@@ -404,7 +461,10 @@ class ConstraintSolver:
             if lever == "revenue":
                 after_revenue_usd = round((current_revenue + allocated_delta) / rate, 2)
                 if after_revenue_usd < 0:
-                    raise AgentValidationError("El objetivo dejaria ingresos negativos en un mes.")
+                    raise AgentValidationError(
+                        f"El objetivo dejaria ingresos negativos en {month}: ingresos actuales C$ {current_revenue:,.2f} "
+                        f"+ ajuste C$ {allocated_delta:,.2f} = C$ {current_revenue + allocated_delta:,.2f}."
+                    )
                 step = {
                     "step_order": index,
                     "kind": "monthly_override",
@@ -418,7 +478,10 @@ class ConstraintSolver:
             else:
                 after_cogs_nio = current_cogs - allocated_delta
                 if after_cogs_nio < 0:
-                    raise AgentValidationError("El objetivo dejaria costo de ventas negativo en un mes.")
+                    raise AgentValidationError(
+                        f"El objetivo dejaria el costo de ventas negativo en {month}: costo actual C$ {current_cogs:,.2f} "
+                        f"- ajuste C$ {allocated_delta:,.2f} = C$ {after_cogs_nio:,.2f}."
+                    )
                 step = {
                     "step_order": index,
                     "kind": "monthly_override",
@@ -432,12 +495,13 @@ class ConstraintSolver:
             working = self.apply_step(step, working, plan_id="preview", user_message=original_message)
             self.verify_step(step, build_financial_model(working))
             steps.append(step)
+        impact = self.aggregate_impact(payload, working)
         return {
             "kind": "target_utility",
             "plan_summary": f"Ajuste de utilidad anual a USD {float(target_usd):,.2f} usando {lever}",
-            "assistant_message": f"Prepare un plan para llevar la utilidad anual a USD {float(target_usd):,.2f} usando {lever}.",
+            "assistant_message": f"Prepare un plan para llevar la utilidad anual a USD {float(target_usd):,.2f} usando {lever}.{_warning_suffix(impact)}",
             "steps": steps,
-            "aggregate_impact": self.aggregate_impact(payload, working),
+            "aggregate_impact": impact,
         }
 
     # ------------------------------------------------------------------

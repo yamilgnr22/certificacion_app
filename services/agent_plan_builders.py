@@ -21,7 +21,7 @@ from services.agent_helpers import (
     _target_amount_value,
     _to_float,
 )
-from services.solver import ConstraintSolver, distribute_average
+from services.solver import ConstraintSolver, diagnose_negative_targets, distribute_average
 
 
 class AgentPlanBuilderMixin:
@@ -209,7 +209,15 @@ class AgentPlanBuilderMixin:
         exceptions = args.get("exceptions") if isinstance(args.get("exceptions"), Mapping) else {}
         merged_overrides = {**overrides, **exceptions}
         variability_pct = _to_float(args.get("variability_pct") or args.get("variabilidad_pct") or 0.0)
-        return distribute_average(months, average, merged_overrides, variability_pct or 0.0)
+        targets = distribute_average(months, average, merged_overrides, variability_pct or 0.0)
+        diagnose_negative_targets(
+            targets,
+            label="la cuenta objetivo",
+            average=average,
+            currency=self._normalize_currency(args.get("currency") or args.get("moneda") or "USD"),
+            overrides=merged_overrides,
+        )
+        return targets
 
     def _apply_plan_step_to_payload(
         self,
