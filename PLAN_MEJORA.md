@@ -151,7 +151,7 @@
 ### FASE 3 — Capa de IA: robustez de interpretación
 *Depende de F2-T1 (la IA emite constraints hacia el solver). El patrón base ya es correcto; esto es endurecimiento.*
 
-- [ ] **F3-T1 — Migrar reglas de ruteo del mega-prompt a few-shot estructurado** · **IMPORTANTE · M**
+- [x] **F3-T1 — Migrar reglas de ruteo del mega-prompt a few-shot estructurado** · **IMPORTANTE · M** *(hecho 2026-06-10; prompt reescrito en `services/agent_prompt.py` con rol + intents + 12 reglas + 14 ejemplos few-shot; snapshot test en `tests/test_prompt_snapshot.py`; ruteo verificado contra el LLM real con `scripts/check_prompt_routing.py`: 12/12 casos. Suite: 229 passed)*
   - Qué: el system prompt de [agent_helpers.py:45-91](services/agent_helpers.py:45) creció a un bloque de reglas frágil. Reorganizarlo: (a) lista compacta de intents con schema, (b) 10-15 ejemplos `usuario → JSON esperado` cubriendo los casos ambiguos documentados (oscile vs. piso, multi-objetivo, referenciales "el primero/dale"), (c) snapshot-test del prompt para detectar regresiones accidentales.
   - Archivos: `services/agent_helpers.py`, `tests/test_agent_api.py` (los tests con provider fake ya cubren el contrato; agregar casos de ruteo con fakes).
   - Aceptación: suite verde + prueba manual de las 6 frases ambiguas del prompt actual contra el LLM real (documentar resultados en el PR).
