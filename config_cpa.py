@@ -32,6 +32,11 @@ class CpaProfile:
     fin_quinquenio: str = "21 de diciembre del 2028"
     telefono: str = "+505 8966 5057"
     email: str = "yamilgnr22@gmail.com"
+    # Fuentes del encabezado/pie. "Abadi" requiere estar instalada en la
+    # maquina que abre el documento; si no lo esta, Word sustituye con una
+    # similar. Para maxima portabilidad usar "Calibri" en el JSON.
+    font_encabezado: str = "Abadi"
+    font_secundaria: str = "Abadi Extra Light"
 
 
 def _profile_path() -> Path:

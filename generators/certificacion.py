@@ -100,11 +100,11 @@ def generar_certificacion(doc: Document, dfc: pd.DataFrame, profile=None):
             p_h = header.add_paragraph()
         run = p_h.add_run(f"{cpa.titulo_corto} {cpa.nombre}\n")
         run.bold = True
-        run.font.name = "Abadi"
+        run.font.name = cpa.font_encabezado
         run.font.size = Pt(10)
         run.font.color.rgb = RGBColor(20, 47, 80)
         run2 = p_h.add_run(f"Contador Público Autorizado No. {cpa.numero_cpa}")
-        run2.font.name = "Abadi Extra Light"
+        run2.font.name = cpa.font_secundaria
         run2.font.size = Pt(9)
         apply_paragraph_style(p_h, font_name="Arial", font_size=9)
         add_paragraph_border(p_h, "bottom")
@@ -118,11 +118,11 @@ def generar_certificacion(doc: Document, dfc: pd.DataFrame, profile=None):
         else:
             p_f = footer.add_paragraph()
         p_f.add_run(f"📞 {cpa.telefono}   📧 {cpa.email}\t\tPágina ")
-        apply_paragraph_style(p_f, font_name="Abadi Extra Light", font_size=8)
+        apply_paragraph_style(p_f, font_name=cpa.font_secundaria, font_size=8)
         add_paragraph_border(p_f, "top")
         add_page_number(p_f)
         for run in p_f.runs:
-            run.font.name = "Abadi Extra Light"
+            run.font.name = cpa.font_secundaria
             run.font.size = Pt(8)
 
     # ————————————————————— Cuerpo de certificación —————————————————————

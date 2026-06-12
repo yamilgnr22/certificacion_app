@@ -15,6 +15,18 @@ Herramienta para generar un documento de certificación (DOCX) a partir de un Ex
 Variables de entorno (opcionales):
 - `OPENAI_API_KEY`: para validación LLM
 - `POPPLER_PATH`: carpeta de binarios de Poppler (Windows), por ejemplo `C:\\poppler-xx\\Library\\bin`
+- Ver `.env.example` para la lista completa.
+
+## Perfil del CPA (`cpa_profile.json`)
+Los datos del contador que firma (nombre, cédula, No. CPA, acuerdo/quinquenio,
+teléfono, email, ciudad y fuentes del encabezado) viven en `cpa_profile.json`
+en la raíz (o la ruta indicada en `CERTAPP_CPA_PROFILE`). Editar el JSON y
+regenerar el documento basta: no hay que tocar código ni reiniciar el servidor.
+El JSON puede ser parcial; los campos ausentes usan los valores por defecto.
+
+Nota de fuentes: el encabezado usa "Abadi" por defecto, que debe estar
+instalada en la máquina que abre el DOCX; para máxima portabilidad cambiar
+`font_encabezado`/`font_secundaria` a "Calibri".
 
 ## Instalación rápida
 ```

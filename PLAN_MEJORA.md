@@ -205,13 +205,13 @@
   - Aceptación: cambiar el teléfono en el JSON y regenerar → el DOCX refleja el cambio sin tocar código.
   - Riesgo si no: la renovación del quinquenio (2028) o un cambio de contacto exige editar código en 6 lugares.
 
-- [ ] **F5-T2 — Test E2E del documento generado** · **IMPORTANTE · M**
+- [x] **F5-T2 — Test E2E del documento generado** · **IMPORTANTE · M** *(hecho 2026-06-10; `tests/test_document_e2e.py` cruza identidad, montos de certificación y totales ER/ESF del DOCX contra el modelo. Suite: 211 passed)*
   - Qué: test que genera un DOCX desde un payload fixture, lo reabre con `python-docx` y verifica: (a) los montos en texto coinciden con `result.summary` (ingresos brutos, utilidad, promedios), (b) nombre y cédula del cliente presentes, (c) las tablas ER/ESF tienen las filas de totales correctas.
   - Archivos: `tests/test_document_e2e.py` (nuevo).
   - Aceptación: el test corre en la suite y falla si se rompe el mapeo cifras→texto.
   - Riesgo si no: única pieza sin red de seguridad automática; un bug de formato se descubre en el banco.
 
-- [ ] **F5-T3 — Fallback de fuentes** · **DESEABLE · S**
+- [x] **F5-T3 — Fuentes configurables** · **DESEABLE · S** *(hecho 2026-06-10; `font_encabezado`/`font_secundaria` en el perfil del CPA (default Abadi); README documenta el requisito y la alternativa Calibri. Nota: la verificación visual en una máquina sin Abadi queda a cargo del usuario)*
   - Qué: "Abadi"/"Abadi Extra Light" solo renderizan si están instaladas. Definir las fuentes en `config_cpa.py` con fallback (Calibri) y documentar el requisito en README.
   - Archivos: `config_cpa.py`, `generators/certificacion.py`, `word_helpers.py`, `README.md`.
   - Aceptación: manual — abrir el DOCX en una máquina sin Abadi y verificar presentación digna.
