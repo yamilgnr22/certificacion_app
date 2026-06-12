@@ -803,6 +803,7 @@
     currentClienteId = null;
     currentClienteOriginalCedula = '';
     currentClienteExtractionMeta = null;
+    clearExtractionReviewUI();
     ['c_nombre_completo', 'c_cedula', 'c_telefono', 'c_email', 'c_nombre_negocio', 'c_ruc',
       'c_matricula_roc', 'c_direccion_domicilio', 'c_direccion_negocio', 'c_fecha_nacimiento',
       'c_fecha_inicio_negocio', 'c_giro_negocio_id',
@@ -880,6 +881,7 @@
     currentClienteId = cliente.id || null;
     currentClienteOriginalCedula = cliente.cedula || '';
     currentClienteExtractionMeta = cliente.last_cedula_extracted || null;
+    clearExtractionReviewUI();
     const mapping = {
       c_nombre_completo: cliente.nombre_completo,
       c_cedula: cliente.cedula,
@@ -952,6 +954,9 @@
     if (currentClienteExtractionMeta?.name_review_required && !currentClienteExtractionMeta?.name_review_resolved) {
       errors.push({ key: 'nombre_completo', message: 'Revise y confirme el nombre extraido antes de guardar.' });
     }
+    if (currentClienteExtractionMeta?.extraction_pending_confirmation && !currentClienteExtractionMeta?.extraction_confirmed) {
+      errors.push({ key: 'nombre_completo', message: 'Confirme los datos extraidos (boton "Confirmar datos extraidos") antes de guardar.' });
+    }
     markClienteInvalid(errors);
     return errors;
   }
@@ -1020,8 +1025,70 @@
     }
   }
 
+  // ====================== Confirmacion de datos extraidos (F4-T2) ======================
+
+  function clearExtractionReviewUI() {
+    qsa('#clienteFormPanel .doc-confidence-badge').forEach(el => el.remove());
+    qsa('#clienteFormPanel .field.extract-conf-baja, #clienteFormPanel .field.extract-conf-media, #clienteFormPanel .field.extract-conf-alta')
+      .forEach(el => el.classList.remove('extract-conf-baja', 'extract-conf-media', 'extract-conf-alta'));
+    const bar = qs('#c_extractionConfirm');
+    if (bar) bar.remove();
+  }
+
+  function renderExtractionBadge(inputId, level) {
+    const input = qs(`#${inputId}`);
+    const field = input ? input.closest('.field') : null;
+    if (!field) return;
+    const badge = document.createElement('span');
+    const known = ['alta', 'media', 'baja'].includes(level) ? level : '';
+    badge.className = `doc-confidence-badge ${known ? `conf-${known}` : 'conf-na'}`;
+    badge.textContent = known ? `extraido · ${known}` : 'extraido';
+    badge.title = known
+      ? `Campo extraido de documento con confianza ${known}. Verifique contra la imagen.`
+      : 'Campo extraido de documento. Verifique contra la imagen.';
+    const label = field.querySelector('label');
+    if (label) label.appendChild(badge);
+    else field.prepend(badge);
+    if (known) field.classList.add(`extract-conf-${known}`);
+  }
+
+  function renderExtractionConfirmBar() {
+    let bar = qs('#c_extractionConfirm');
+    if (bar) bar.remove();
+    bar = document.createElement('div');
+    bar.id = 'c_extractionConfirm';
+    bar.className = 'extraction-confirm pending';
+    const text = document.createElement('span');
+    text.textContent = 'Datos extraidos de documentos cargados. Revise cada campo marcado (especialmente los de confianza baja) y confirme antes de guardar.';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn primary';
+    btn.textContent = 'Confirmar datos extraidos';
+    btn.addEventListener('click', () => {
+      currentClienteExtractionMeta = {
+        ...(currentClienteExtractionMeta || {}),
+        extraction_confirmed: true,
+      };
+      bar.classList.remove('pending');
+      bar.classList.add('confirmed');
+      text.textContent = 'Datos extraidos confirmados.';
+      btn.remove();
+      markClienteInvalid([]);
+    });
+    bar.append(text, btn);
+    const anchor = qs('#c_nameReview');
+    if (anchor && anchor.parentElement) anchor.parentElement.insertBefore(bar, anchor);
+    else qs('#clienteFormPanel')?.prepend(bar);
+  }
+
   function applyClientePatchToForm(patch) {
-    currentClienteExtractionMeta = buildNameExtractionMeta(patch);
+    clearExtractionReviewUI();
+    currentClienteExtractionMeta = {
+      ...(buildNameExtractionMeta(patch) || {}),
+      extraction_pending_confirmation: true,
+      extraction_confirmed: false,
+    };
+    const confidence = patch?.field_confidence || {};
     const mapping = {
       nombre_completo: 'c_nombre_completo',
       cedula: 'c_cedula',
@@ -1048,7 +1115,11 @@
         else if (n) value = 'Otro';
       }
       setClienteField(id, value);
+      if (value !== undefined && value !== null && value !== '') {
+        renderExtractionBadge(id, String(confidence[key] || '').toLowerCase());
+      }
     });
+    renderExtractionConfirmBar();
     renderNameReview(currentClienteExtractionMeta);
   }
 

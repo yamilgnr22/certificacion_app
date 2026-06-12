@@ -1693,3 +1693,44 @@ input[type="checkbox"] {
 
 /* Utility */
 .center { text-align: center; }
+
+/* ====================== Confirmacion de datos extraidos (F4-T2) ====================== */
+.doc-confidence-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  vertical-align: middle;
+  text-transform: uppercase;
+}
+.doc-confidence-badge.conf-alta { background: rgba(105, 240, 174, 0.15); color: var(--success); }
+.doc-confidence-badge.conf-media { background: rgba(255, 213, 79, 0.15); color: var(--warn); }
+.doc-confidence-badge.conf-baja { background: rgba(255, 82, 82, 0.18); color: var(--danger); }
+.doc-confidence-badge.conf-na { background: rgba(255, 255, 255, 0.08); color: var(--muted, #9aa0a6); }
+
+.field.extract-conf-baja input,
+.field.extract-conf-baja select {
+  border-bottom-color: var(--danger);
+  box-shadow: 0 1px 0 0 var(--danger);
+}
+.field.extract-conf-media input,
+.field.extract-conf-media select {
+  border-bottom-color: var(--warn);
+  box-shadow: 0 1px 0 0 var(--warn);
+}
+
+.extraction-confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 10px 0;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.extraction-confirm.pending { background: rgba(255, 213, 79, 0.10); color: var(--warn); border: 1px solid rgba(255, 213, 79, 0.35); }
+.extraction-confirm.confirmed { background: rgba(105, 240, 174, 0.10); color: var(--success); border: 1px solid rgba(105, 240, 174, 0.35); }

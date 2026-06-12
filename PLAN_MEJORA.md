@@ -184,7 +184,7 @@
   - Aceptación: tests existentes adaptados + prueba manual con las imágenes de `input_docs/cedula/` mostrando confidencias coherentes.
   - Riesgo si no: el usuario no sabe qué campo revisar con cuidado; un dígito de cédula mal leído llega al documento legal.
 
-- [ ] **F4-T2 — UI de confirmación campo por campo** · **IMPORTANTE · M**
+- [x] **F4-T2 — UI de confirmación campo por campo** · **IMPORTANTE · M** *(hecho 2026-06-10; badges "extraído · alta/media/baja" por campo con resaltado en media/baja, banner de confirmación obligatoria que bloquea guardar hasta pulsar "Confirmar datos extraídos". Verificado en navegador real (preview): flujo completo extracción→badges→bloqueo→confirmar→guardado desbloqueado. Suite: 202 passed)*
   - Qué: tras extraer, el formulario de cliente marca cada campo autocompletado con badge de origen ("extraído — confianza baja/media/alta") y exige un click "Confirmar datos extraídos" antes de habilitar guardar. Campos de confianza baja resaltados.
   - Archivos: `webui/static/app.js` (sección "Extraccion de documentos"), `webui/static/styles.css`, `webui/templates/index.html`.
   - Aceptación: manual — subir cédula, verificar badges, verificar que guardar está bloqueado hasta confirmar.
