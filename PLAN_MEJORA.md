@@ -178,7 +178,7 @@
 ### FASE 4 — Extracción por imagen: confirmación humana de primera clase
 *Independiente de F2/F3; puede intercalarse. El núcleo ya funciona.*
 
-- [ ] **F4-T1 — Confianza por campo en la extracción** · **IMPORTANTE · M**
+- [x] **F4-T1 — Confianza por campo en la extracción** · **IMPORTANTE · M** *(hecho 2026-06-10; `field_confidence` (alta/media/baja) exigido por el JSON schema por documento y propagado al `client_patch` con las claves del patch; el resumen de matrícula usa la peor de sus partes. Verificado con imágenes reales de `input_docs/cedula/`: schema aceptado y confidencias coherentes. Suite: 202 passed)*
   - Qué: ampliar el JSON schema de `_document_schema()` en [document_extraction.py](document_extraction.py) para que cada campo devuelva `{value, confidence: "alta"|"media"|"baja", visible: bool}`. Propagar a `client_patch` como `{value, confidence}`.
   - Archivos: `document_extraction.py`, `tests/test_document_extraction.py`.
   - Aceptación: tests existentes adaptados + prueba manual con las imágenes de `input_docs/cedula/` mostrando confidencias coherentes.

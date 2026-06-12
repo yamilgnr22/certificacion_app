@@ -230,6 +230,74 @@ def _is_model_unavailable_error(exc: Exception) -> bool:
     return any(fragment in text for fragment in ["model_not_found", "does not have access to model", "model `"])
 
 
+# Mapeo campo-del-documento -> clave del client_patch para propagar confianza.
+_CEDULA_CONFIDENCE_MAP = {
+    "nombre_completo": "nombre_completo",
+    "numero_cedula": "cedula",
+    "fecha_nacimiento": "fecha_nacimiento",
+    "lugar_nacimiento": "lugar_nacimiento",
+    "fecha_emision": "fecha_emision_cedula",
+    "fecha_expiracion": "fecha_expiracion_cedula",
+    "sexo": "sexo",
+    "domicilio_formal": "domicilio",
+    "direccion_formal": "direccion_personal",
+}
+
+_MATRICULA_CONFIDENCE_MAP = {
+    "modalidad": "regimen",
+    "direccion_negocio_formal": "direccion_negocio",
+    "actividad_economica": "giro_negocio",
+}
+
+_CONFIDENCE_RANK = {"alta": 3, "media": 2, "baja": 1}
+
+
+def _confidence_level(raw: Any) -> str:
+    level = str(raw or "").strip().lower()
+    return level if level in _CONFIDENCE_RANK else ""
+
+
+def _worst_confidence(*levels: str) -> str:
+    known = [level for level in levels if level]
+    if not known:
+        return ""
+    return min(known, key=lambda level: _CONFIDENCE_RANK[level])
+
+
+def _patch_confidence(cedula: Mapping[str, Any], matricula: Mapping[str, Any]) -> Dict[str, str]:
+    """F4-T1: confianza por clave del patch, derivada de field_confidence."""
+    cedula_conf = cedula.get("field_confidence") if isinstance(cedula.get("field_confidence"), Mapping) else {}
+    matricula_conf = matricula.get("field_confidence") if isinstance(matricula.get("field_confidence"), Mapping) else {}
+    out: Dict[str, str] = {}
+    for doc_field, patch_key in _CEDULA_CONFIDENCE_MAP.items():
+        level = _confidence_level(cedula_conf.get(doc_field))
+        if level:
+            out[patch_key] = level
+    for doc_field, patch_key in _MATRICULA_CONFIDENCE_MAP.items():
+        level = _confidence_level(matricula_conf.get(doc_field))
+        if level:
+            out[patch_key] = level
+    # El resumen de matricula combina codigo interno + ROC: usar la peor.
+    summary_level = _worst_confidence(
+        _confidence_level(matricula_conf.get("codigo_interno")),
+        _confidence_level(matricula_conf.get("roc")),
+    )
+    if summary_level:
+        out["matricula"] = summary_level
+    # Si la cedula no fue legible y el numero salio del RUC de la matricula,
+    # la confianza relevante es la del RUC.
+    if not _clean(cedula.get("numero_cedula")) and _clean(matricula.get("ruc")):
+        ruc_level = _confidence_level(matricula_conf.get("ruc"))
+        if ruc_level:
+            out["cedula"] = ruc_level
+    # El nombre puede venir de la matricula cuando la cedula no lo trae.
+    if not _clean(cedula.get("nombre_completo")) and _clean(matricula.get("nombre_contribuyente")):
+        name_level = _confidence_level(matricula_conf.get("nombre_contribuyente"))
+        if name_level:
+            out["nombre_completo"] = name_level
+    return out
+
+
 def build_client_patch(extraction: Mapping[str, Any]) -> Dict[str, Any]:
     documents = extraction.get("documents") if isinstance(extraction, Mapping) else {}
     cedula = (documents or {}).get("cedula") or {}
@@ -257,7 +325,13 @@ def build_client_patch(extraction: Mapping[str, Any]) -> Dict[str, Any]:
         "direccion_negocio": _normalize_address_text(_clean(matricula.get("direccion_negocio_formal"))),
         "giro_negocio": _clean(matricula.get("actividad_economica")),
     }
-    return {key: value for key, value in patch.items() if value is not None and value != "" and value != []}
+    out = {key: value for key, value in patch.items() if value is not None and value != "" and value != []}
+    confidence = _patch_confidence(cedula, matricula)
+    # Solo confianza de campos que realmente quedaron en el patch.
+    confidence = {key: level for key, level in confidence.items() if key in out}
+    if confidence:
+        out["field_confidence"] = confidence
+    return out
 
 
 def _apply_name_verification(extraction: dict[str, Any]) -> None:
@@ -346,6 +420,9 @@ Reglas generales:
 - Lee nombres y apellidos caracter por caracter. No sustituyas letras visibles por apellidos "parecidos";
   si hay duda, conserva exactamente la secuencia visible en la imagen.
 - Devuelve fechas visibles en formato ISO YYYY-MM-DD. Si la imagen muestra 28-01-1999, devuelve 1999-01-28.
+- Para CADA campo devuelve ademas su nivel de confianza en field_confidence:
+  "alta" = lectura nitida y completa; "media" = legible pero con esfuerzo (borroso leve, reflejo);
+  "baja" = parcialmente tapado, borroso o dudoso. Si el campo no es visible usa "baja".
 
 Para cedula extrae: nombre completo, numero de cedula, fecha de nacimiento, lugar de nacimiento, sexo, direccion formal,
 domicilio formal con municipio y departamento, fecha de emision y fecha de expiracion.
@@ -368,6 +445,47 @@ Reglas:
 - Si una letra no es confiable, manten la mejor lectura visible y agrega esa posicion en uncertain_characters.
 - Si el bloque no se ve, usa "No visible en la imagen".
 """.strip()
+
+
+CEDULA_VALUE_FIELDS = [
+    "nombres_raw",
+    "apellidos_raw",
+    "nombre_completo",
+    "numero_cedula",
+    "fecha_nacimiento",
+    "lugar_nacimiento",
+    "sexo",
+    "direccion_formal",
+    "domicilio_formal",
+    "fecha_emision",
+    "fecha_expiracion",
+]
+
+MATRICULA_VALUE_FIELDS = [
+    "alcaldia",
+    "anio",
+    "nombre_contribuyente",
+    "modalidad",
+    "ruc",
+    "cuenta_fiscal",
+    "direccion_negocio_formal",
+    "actividad_economica",
+    "distrito",
+    "roc",
+    "fecha_emision",
+    "fecha_constancia",
+    "codigo_interno",
+]
+
+
+def _confidence_schema(fields: list[str]) -> Dict[str, Any]:
+    level = {"type": "string", "enum": ["alta", "media", "baja"]}
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {field: level for field in fields},
+        "required": list(fields),
+    }
 
 
 def _document_schema() -> Dict[str, Any]:
@@ -399,6 +517,7 @@ def _document_schema() -> Dict[str, Any]:
         "name_review_required": {"type": "boolean"},
         "name_review_reason": string_or_null,
         "name_candidates": {"type": "array", "items": candidate_schema},
+        "field_confidence": _confidence_schema(CEDULA_VALUE_FIELDS),
     }
     matricula_props = {
         "alcaldia": string_or_null,
@@ -415,6 +534,7 @@ def _document_schema() -> Dict[str, Any]:
         "fecha_constancia": string_or_null,
         "codigo_interno": string_or_null,
         "resumen_linea": string_or_null,
+        "field_confidence": _confidence_schema(MATRICULA_VALUE_FIELDS),
     }
     return {
         "name": "nicaragua_document_extraction",

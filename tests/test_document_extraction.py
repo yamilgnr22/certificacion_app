@@ -176,6 +176,75 @@ class DocumentExtractionMappingTest(unittest.TestCase):
 
         self.assertEqual(patch["matricula"], "RNVD-117331; ROC No. 138034303")
 
+    def test_field_confidence_propagates_to_patch_keys(self):
+        # F4-T1: la confianza por campo del documento llega al patch con la
+        # clave del patch, y el resumen de matricula usa la peor de sus partes.
+        extraction = {
+            "documents": {
+                "cedula": {
+                    "nombre_completo": "Dayana Marilen Centeno Luquez",
+                    "numero_cedula": "0012811860054R",
+                    "domicilio_formal": "Municipio de Managua, Departamento de Managua",
+                    "field_confidence": {
+                        "nombre_completo": "alta",
+                        "numero_cedula": "alta",
+                        "domicilio_formal": "baja",
+                    },
+                },
+                "matricula": {
+                    "modalidad": "Cuota fija",
+                    "codigo_interno": "RNVD-117331",
+                    "roc": "138034303",
+                    "field_confidence": {
+                        "modalidad": "media",
+                        "codigo_interno": "alta",
+                        "roc": "baja",
+                    },
+                },
+            }
+        }
+
+        patch = build_client_patch(extraction)
+
+        confidence = patch["field_confidence"]
+        self.assertEqual(confidence["nombre_completo"], "alta")
+        self.assertEqual(confidence["cedula"], "alta")
+        self.assertEqual(confidence["domicilio"], "baja")
+        self.assertEqual(confidence["regimen"], "media")
+        self.assertEqual(confidence["matricula"], "baja")  # peor de codigo/roc
+        # Sin confianza para campos que no quedaron en el patch.
+        self.assertNotIn("direccion_negocio", confidence)
+
+    def test_patch_without_confidence_metadata_keeps_old_contract(self):
+        extraction = {
+            "documents": {
+                "cedula": {"nombre_completo": "Cliente Sin Metadatos"},
+                "matricula": {},
+            }
+        }
+
+        patch = build_client_patch(extraction)
+
+        self.assertEqual(patch["nombre_completo"], "Cliente Sin Metadatos")
+        self.assertNotIn("field_confidence", patch)
+
+    def test_cedula_confidence_falls_back_to_ruc_when_number_comes_from_matricula(self):
+        extraction = {
+            "documents": {
+                "cedula": {},
+                "matricula": {
+                    "nombre_contribuyente": "Cliente Matricula",
+                    "ruc": "0012811860054R",
+                    "field_confidence": {"ruc": "media", "nombre_contribuyente": "alta"},
+                },
+            }
+        }
+
+        patch = build_client_patch(extraction)
+
+        self.assertEqual(patch["field_confidence"]["cedula"], "media")
+        self.assertEqual(patch["field_confidence"]["nombre_completo"], "alta")
+
     def test_matricula_summary_strips_image_label_noise(self):
         extraction = {
             "documents": {
