@@ -193,6 +193,52 @@ class ConstraintSolverTest(unittest.TestCase):
         warnings = outcome.aggregate_impact.get("safety_warnings") or []
         self.assertTrue(any(w["account"] == "inventory" for w in warnings))
 
+    def test_compound_cash_average_and_inventory_target(self):
+        # F2-T3 (caso de aceptacion del plan): "caja promedio 5,000 USD y que
+        # inventario cierre en 100,000 USD en un mes" en UNA sola resolucion.
+        payload = solver_payload()
+        outcome = self.solver.solve(payload, [
+            Constraint(kind="average", account="cash", months=MONTHS,
+                       amount=5000, currency="USD", counter_account="capital"),
+            Constraint(kind="target", account="inventory", month="2026-02",
+                       amount=100000, currency="USD", counter_account="suppliers"),
+        ])
+
+        self.assertTrue(outcome.feasible, outcome.infeasible_reason)
+        self.assertEqual(outcome.kind, "compound_constraints")
+        self.assertGreaterEqual(len(outcome.steps), 5)  # 4 meses de caja + 1 inventario
+
+        working = self._apply_steps(payload, outcome.steps)
+        result = build_financial_model(working)
+        cash_values = [
+            _statement_value(result, "Efectivo y Equivalentes de Efectivo", month)
+            for month in MONTHS
+        ]
+        self.assertAlmostEqual(sum(cash_values) / len(MONTHS), 5000 * RATE, delta=len(MONTHS))
+        self.assertAlmostEqual(
+            _statement_value(result, "Inventarios", "2026-02"),
+            100000 * RATE,
+            delta=1.0,
+        )
+
+    def test_compound_conflict_reports_the_pair(self):
+        # El target de cuentas por cobrar usa inventario como contrapartida,
+        # rompiendo el promedio de inventario pedido antes: el solver debe
+        # reportar el par en conflicto con cifras.
+        outcome = self.solver.solve(solver_payload(), [
+            Constraint(kind="average", account="inventory", months=MONTHS,
+                       amount=150000, currency="USD", counter_account="suppliers"),
+            Constraint(kind="target", account="accounts_receivable", month="2026-03",
+                       amount=100000, currency="USD", counter_account="inventory"),
+        ])
+
+        self.assertFalse(outcome.feasible)
+        reason = outcome.infeasible_reason
+        self.assertIn("Conflicto entre objetivos", reason)
+        self.assertIn("Cuentas por Cobrar Clientes", reason)
+        self.assertIn("promedio de Inventarios", reason)
+        self.assertIn("C$", reason)
+
     def test_distribute_average_respects_overrides_and_average(self):
         targets = distribute_average(MONTHS, 100000, {"2026-02": 130000}, 0.0)
 

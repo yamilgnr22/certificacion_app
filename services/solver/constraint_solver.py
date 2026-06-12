@@ -254,9 +254,7 @@ class ConstraintSolver:
                 summary_prefix="Ajuste por objetivos",
             )
         if len(constraints) != 1:
-            raise AgentValidationError(
-                "Por ahora el solver combina varios objetivos solo cuando todos son de saldo (kind=target)."
-            )
+            return self._solve_compound(payload, constraints, command_id, original_message)
         constraint = constraints[0]
         if constraint.kind == "average":
             months = constraint.months or _payload_months(payload)
@@ -286,10 +284,13 @@ class ConstraintSolver:
                 summary_prefix=f"Ajuste multi-mes de {label}",
             )
         if constraint.kind == "floor":
+            floor_nio = float(constraint.amount or 0.0)
+            if str(constraint.currency or "").upper() == "USD":
+                floor_nio = round(floor_nio * _period_exchange_rate(payload), 2)
             return self.build_non_negative_plan(
                 payload,
                 account=constraint.account,
-                floor=float(constraint.amount or 0.0),
+                floor=floor_nio,
                 buffer=constraint.buffer,
                 counter=constraint.counter_account or "loans_personal",
                 months=constraint.months or _payload_months(payload),
@@ -305,6 +306,151 @@ class ConstraintSolver:
                 original_message=original_message,
             )
         raise AgentValidationError(f"Tipo de restriccion no soportado: {constraint.kind or '(vacio)'}")
+
+    # ------------------------------------------------------------------
+    # Plan combinado (F2-T3): metas heterogeneas en una sola instruccion
+    # ------------------------------------------------------------------
+
+    def plan_constraints(
+        self,
+        payload: Mapping[str, Any],
+        constraints: list[Constraint],
+        *,
+        command_id: str,
+        original_message: str,
+    ) -> dict[str, Any]:
+        """Version dict de solve() para el flujo del agente (lanza
+        AgentValidationError en infactibilidad, como los demas builders)."""
+        return self._plan_for(payload, list(constraints or []), command_id, original_message)
+
+    def _solve_compound(
+        self,
+        payload: Mapping[str, Any],
+        constraints: list[Constraint],
+        command_id: str,
+        original_message: str,
+    ) -> dict[str, Any]:
+        if len(constraints) > 4:
+            raise AgentValidationError("Hasta 4 objetivos por plan combinado; dividilo en varios planes.")
+        # Orden de dependencia: la utilidad mueve ingresos/costos (y con ellos
+        # caja e inventario), los balances no-caja se ajustan con contrapartidas
+        # que no tocan caja, y la caja va al final porque absorbe el efecto de
+        # todo lo anterior.
+        ordered = sorted(constraints, key=self._constraint_priority)
+        working = deepcopy(dict(payload))
+        all_steps: list[dict[str, Any]] = []
+        for index, constraint in enumerate(ordered):
+            plan = self._plan_for(working, [constraint], command_id, original_message)
+            if not plan.get("no_plan"):
+                for step in plan.get("steps") or []:
+                    step = dict(step)
+                    step["step_order"] = len(all_steps) + 1
+                    working = self.apply_step(step, working, plan_id="compound", user_message=original_message)
+                    all_steps.append(step)
+            result = build_financial_model(working)
+            for previous in ordered[:index]:
+                failure = self.check_constraint(previous, result, payload)
+                if failure:
+                    raise AgentValidationError(
+                        f"Conflicto entre objetivos: al aplicar '{self._describe_constraint(constraint)}' "
+                        f"se rompe '{self._describe_constraint(previous)}': esperado C$ {failure['expected']:,.2f}, "
+                        f"quedaria C$ {failure['actual']:,.2f} (diferencia C$ {failure['difference']:,.2f}). "
+                        "Cambia la contrapartida de uno de los dos o procesalos por separado."
+                    )
+        if not all_steps:
+            return {"no_plan": True, "assistant_message": "Todos los objetivos ya se cumplen; no hace falta plan."}
+        result = build_financial_model(working)
+        for constraint in ordered:
+            failure = self.check_constraint(constraint, result, payload)
+            if failure:
+                raise AgentValidationError(
+                    f"El plan combinado no logro cumplir '{self._describe_constraint(constraint)}': "
+                    f"esperado C$ {failure['expected']:,.2f}, quedaria C$ {failure['actual']:,.2f}."
+                )
+        impact = self.aggregate_impact(payload, working)
+        return {
+            "kind": "compound_constraints",
+            "plan_summary": f"Plan combinado: {len(ordered)} objetivo(s), {len(all_steps)} paso(s)",
+            "assistant_message": (
+                f"Prepare un plan combinado de {len(all_steps)} paso(s) para {len(ordered)} objetivo(s). "
+                f"Revisalo antes de aplicarlo.{_warning_suffix(impact)}"
+            ),
+            "steps": all_steps,
+            "aggregate_impact": impact,
+        }
+
+    @staticmethod
+    def _constraint_priority(constraint: Constraint) -> int:
+        if constraint.kind == "utility":
+            return 0
+        is_cash = constraint.account == "cash"
+        if not is_cash and constraint.kind in {"target", "average"}:
+            return 1
+        if not is_cash and constraint.kind == "floor":
+            return 2
+        return 3
+
+    @staticmethod
+    def _describe_constraint(constraint: Constraint) -> str:
+        label = TARGET_BALANCE_ACCOUNTS.get(constraint.account, {}).get("label", constraint.account)
+        amount = float(_to_float(constraint.amount) or 0.0)
+        if constraint.kind == "target":
+            return f"{label} = {amount:,.2f} {constraint.currency} en {constraint.month}"
+        if constraint.kind == "average":
+            return f"promedio de {label} = {amount:,.2f} {constraint.currency}"
+        if constraint.kind == "floor":
+            return f"piso de {label} = {amount:,.2f} {constraint.currency}"
+        if constraint.kind == "utility":
+            return f"utilidad anual = USD {amount:,.2f}"
+        return constraint.kind or "(objetivo)"
+
+    def check_constraint(
+        self,
+        constraint: Constraint,
+        result: Any,
+        payload: Mapping[str, Any],
+    ) -> dict[str, Any] | None:
+        """Verifica una meta contra un modelo ya construido.
+
+        Devuelve None si se cumple, o {expected, actual, difference, month}
+        en NIO si quedo rota (tolerancias: C$1 por mes; promedios y utilidad
+        toleran el redondeo acumulado de sus meses).
+        """
+        rate = _period_exchange_rate(payload)
+        factor = rate if str(constraint.currency or "").upper() == "USD" else 1.0
+        label = TARGET_BALANCE_ACCOUNTS.get(constraint.account, {}).get("label", constraint.account)
+        amount = float(_to_float(constraint.amount) or 0.0)
+        if constraint.kind == "target":
+            month = constraint.month or (constraint.months[0] if constraint.months else "")
+            expected = round(amount * factor, 2)
+            actual = _statement_value(result, label, month)
+            if abs(actual - expected) > 1.0:
+                return {"expected": expected, "actual": round(actual, 2), "difference": round(actual - expected, 2), "month": month}
+            return None
+        if constraint.kind == "average":
+            months = constraint.months or _payload_months(payload)
+            expected = round(amount * factor, 2)
+            values = [_statement_value(result, label, month) for month in months]
+            actual = round(sum(values) / len(values), 2) if values else 0.0
+            if abs(actual - expected) > max(2.0, float(len(months))):
+                return {"expected": expected, "actual": actual, "difference": round(actual - expected, 2), "month": ""}
+            return None
+        if constraint.kind == "floor":
+            floor_nio = round(amount * factor, 2)
+            months = constraint.months or _payload_months(payload)
+            for month in months:
+                actual = _statement_value(result, label, month)
+                if actual < floor_nio - 1.0:
+                    return {"expected": floor_nio, "actual": round(actual, 2), "difference": round(actual - floor_nio, 2), "month": month}
+            return None
+        if constraint.kind == "utility":
+            expected = round(amount * rate, 2)
+            actual = float(result.summary.get("net_income_total") or 0.0)
+            month_count = len(result.summary.get("months") or []) or 1
+            if abs(actual - expected) > max(2.0, float(month_count)):
+                return {"expected": expected, "actual": round(actual, 2), "difference": round(actual - expected, 2), "month": ""}
+            return None
+        return None
 
     # ------------------------------------------------------------------
     # Simulacion (movida desde AgentPlanBuilderMixin)

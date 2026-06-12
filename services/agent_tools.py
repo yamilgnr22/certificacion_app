@@ -141,6 +141,7 @@ class AgentToolRegistry:
             "plan_non_negative_account": self._mutating_tool("plan_non_negative_account"),
             "plan_target_utility": self._mutating_tool("plan_target_utility"),
             "plan_multi_account_target_balance": self._mutating_tool("plan_multi_account_target_balance"),
+            "plan_compound_constraints": self._mutating_tool("plan_compound_constraints"),
         }
 
     @staticmethod

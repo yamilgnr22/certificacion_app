@@ -1282,6 +1282,7 @@ AGENT_COMMAND_SCHEMA: dict[str, Any] = {
                 "plan_non_negative_account",
                 "plan_target_utility",
                 "plan_multi_account_target_balance",
+                "plan_compound_constraints",
                 "recalcular_preview",
                 "guardar_payload",
                 "finalizar_periodo",
@@ -1298,7 +1299,7 @@ AGENT_COMMAND_SCHEMA: dict[str, Any] = {
 }
 
 
-PLAN_INTENTS = {"plan_multi_target_balance", "plan_non_negative_account", "plan_target_utility", "plan_multi_account_target_balance"}
+PLAN_INTENTS = {"plan_multi_target_balance", "plan_non_negative_account", "plan_target_utility", "plan_multi_account_target_balance", "plan_compound_constraints"}
 
 MUTATION_INTENTS = {"reverse_voucher", "correct_voucher", "journal_entry", "account_transfer", "year_close_transfer", "assumption_change", "monthly_override", "create_account", "compound_plan", "target_balance_adjustment", "finalizar_periodo", *PLAN_INTENTS}
 

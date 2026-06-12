@@ -179,6 +179,52 @@ class AgentApiTest(unittest.TestCase):
         self.assertEqual(data["response_type"], "proposal")
         self.assertEqual(calls["count"], 2)
 
+    def test_compound_constraints_plan_applies_both_goals(self):
+        # F2-T3: "caja promedio 5,000 USD usando capital y que inventario
+        # cierre en 100,000 USD en febrero" en UNA instruccion.
+        rate = 36.6243
+        web_server.app.config["AGENT_LLM_PROVIDER"] = FakeProvider({
+            "intent": "plan_compound_constraints",
+            "args": {
+                "constraints": [
+                    {"kind": "average", "account": "cash", "amount": 5000,
+                     "currency": "USD", "counter_account": "capital"},
+                    {"kind": "target", "account": "inventory", "month": "2026-02",
+                     "amount": 100000, "currency": "USD", "counter_account": "suppliers"},
+                ],
+            },
+        })
+        resp = self.client.post(
+            "/api/agent/command",
+            json={
+                "periodo_id": self.periodo["id"],
+                "message": "caja promedio 5000 usd usando capital y que inventario cierre en 100k usd en febrero",
+            },
+        )
+        data = resp.get_json()
+        self.assertEqual(resp.status_code, 200, data)
+        self.assertEqual(data["response_type"], "plan")
+        plan = data["plan"]
+        self.assertEqual(plan["kind"], "compound_constraints")
+        self.assertGreaterEqual(len(plan["steps"]), 5)
+
+        apply_resp = self.client.post(f"/api/agent/plans/{plan['id']}/apply")
+        self.assertEqual(apply_resp.status_code, 200, apply_resp.get_json())
+        self.assertEqual(apply_resp.get_json()["status"], "applied")
+
+        payload = self._payload()
+        months = ["2026-01", "2026-02", "2026-03", "2026-04"]
+        cash_values = [
+            self._esf_value(payload, "Efectivo y Equivalentes de Efectivo", month)
+            for month in months
+        ]
+        self.assertAlmostEqual(sum(cash_values) / len(months), 5000 * rate, delta=len(months))
+        self.assertAlmostEqual(
+            self._esf_value(payload, "Inventarios", "2026-02"),
+            100000 * rate,
+            delta=1.0,
+        )
+
     def test_missing_openai_key_returns_clear_error(self):
         old_key = os.environ.pop("OPENAI_API_KEY", None)
         web_server.app.config.pop("AGENT_LLM_PROVIDER", None)

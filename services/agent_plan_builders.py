@@ -21,7 +21,7 @@ from services.agent_helpers import (
     _target_amount_value,
     _to_float,
 )
-from services.solver import ConstraintSolver, diagnose_negative_targets, distribute_average
+from services.solver import Constraint, ConstraintSolver, diagnose_negative_targets, distribute_average
 
 
 class AgentPlanBuilderMixin:
@@ -48,7 +48,80 @@ class AgentPlanBuilderMixin:
             return self._build_target_utility_plan(payload, args, command_id, original_message)
         if intent == "plan_multi_account_target_balance":
             return self._build_multi_account_target_balance_plan(payload, args, command_id, original_message)
+        if intent == "plan_compound_constraints":
+            return self._build_compound_constraints_plan(payload, args, command_id, original_message)
         raise AgentValidationError("Ese tipo de plan no esta habilitado.")
+
+    def _build_compound_constraints_plan(
+        self,
+        payload: Mapping[str, Any],
+        args: Mapping[str, Any],
+        command_id: str,
+        original_message: str,
+    ) -> dict[str, Any]:
+        raw_constraints = args.get("constraints") if isinstance(args.get("constraints"), list) else []
+        constraints = [
+            self._constraint_from_args(item)
+            for item in raw_constraints
+            if isinstance(item, Mapping)
+        ]
+        if not constraints:
+            raise AgentValidationError("Indique los objetivos del plan combinado (cuenta, meta y mes/meses por objetivo).")
+        return self._solver.plan_constraints(
+            payload,
+            constraints,
+            command_id=command_id,
+            original_message=original_message,
+        )
+
+    def _constraint_from_args(self, item: Mapping[str, Any]) -> Constraint:
+        kind = str(item.get("kind") or item.get("tipo") or "").strip().lower()
+        kind_aliases = {
+            "saldo": "target", "cierre": "target", "target": "target",
+            "promedio": "average", "average": "average", "oscilacion": "average",
+            "piso": "floor", "minimo": "floor", "floor": "floor", "no_negativo": "floor",
+            "utilidad": "utility", "utility": "utility",
+        }
+        kind = kind_aliases.get(kind, kind)
+        if kind not in {"target", "average", "floor", "utility"}:
+            raise AgentValidationError(
+                f"Tipo de objetivo no reconocido: '{kind or '(vacio)'}'. Use target, average, floor o utility."
+            )
+        account = ""
+        if kind != "utility":
+            account = self._normalize_account(item.get("account") or item.get("cuenta"))
+            if account not in TARGET_BALANCE_ACCOUNTS:
+                raise AgentValidationError(
+                    "Cada objetivo de saldo del plan combinado debe ser sobre Inventario, Caja, Cuentas por Cobrar o Proveedores."
+                )
+        amount = _target_amount_value(item)
+        if amount is None:
+            amount = _to_float(item.get("average") or item.get("promedio") or item.get("floor") or item.get("piso"))
+        if amount is None:
+            raise AgentValidationError("Cada objetivo del plan combinado necesita un monto.")
+        months = [
+            _normalize_month_value(month) or str(month or "")[:7]
+            for month in (item.get("months") or item.get("meses") or [])
+            if str(month or "").strip()
+        ]
+        month = _normalize_month_value(item.get("month") or item.get("target_month") or item.get("mes")) or ""
+        if kind == "target" and not month:
+            raise AgentValidationError("Cada objetivo de cierre puntual necesita su mes (YYYY-MM).")
+        overrides = item.get("overrides") if isinstance(item.get("overrides"), Mapping) else {}
+        default_currency = "NIO" if kind == "floor" else "USD"
+        return Constraint(
+            kind=kind,
+            account=account,
+            month=month,
+            months=months,
+            amount=float(amount),
+            currency=self._normalize_currency(item.get("currency") or item.get("moneda") or default_currency),
+            counter_account=str(item.get("counter_account") or item.get("contrapartida") or ""),
+            variability_pct=float(_to_float(item.get("variability_pct") or item.get("variabilidad_pct")) or 0.0),
+            overrides=dict(overrides),
+            buffer=float(_to_float(item.get("buffer_nio") or item.get("buffer")) or 0.0),
+            lever=str(item.get("lever") or item.get("palanca") or "cogs").strip().lower() or "cogs",
+        )
 
     def _build_multi_target_balance_plan(
         self,
