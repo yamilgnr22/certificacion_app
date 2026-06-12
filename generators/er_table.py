@@ -10,6 +10,7 @@ import pandas as pd
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.shared import Cm, Pt
+from config_cpa import load_cpa_profile
 from word_helpers import (
     apply_paragraph_style,
     set_vertical_alignment,
@@ -192,15 +193,16 @@ def generar_tabla_er(doc, df_er: pd.DataFrame, df_cert: pd.DataFrame) -> None:
 
     # 7) Bloque de firmas
     doc.add_paragraph()
+    cpa = load_cpa_profile()
     nombre_firma = nombre_completo or (f"{nombre or ''} {apellido or ''}".strip()) or ""
     firma = doc.add_paragraph(
-        f"{nombre_firma}\t\t\t\t\t\t\tYamil René García Laguna"
+        f"{nombre_firma}\t\t\t\t\t\t\t{cpa.nombre}"
     )
     elaborado = doc.add_paragraph(
-        "Elaborado\t\t\t\t\t\t\t\t\tCédula de identidad 001-281186-0054R"
+        f"Elaborado\t\t\t\t\t\t\t\t\tCédula de identidad {cpa.cedula}"
     )
     propietario = doc.add_paragraph(
-        "Propietario\t\t\t\t\t\t\t\t\tContador Público Autorizado N° 3314"
+        f"Propietario\t\t\t\t\t\t\t\t\tContador Público Autorizado N° {cpa.numero_cpa}"
     )
     for p in (firma, elaborado, propietario):
         apply_paragraph_style(

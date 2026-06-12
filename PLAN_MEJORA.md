@@ -199,7 +199,7 @@
 ### FASE 5 — Documento de certificación
 *Independiente; requiere F1 solo para confiar en las cifras.*
 
-- [ ] **F5-T1 — Datos del CPA a configuración** · **IMPORTANTE · S**
+- [x] **F5-T1 — Datos del CPA a configuración** · **IMPORTANTE · S** *(hecho 2026-06-10; `config_cpa.py` + `cpa_profile.json` (override parcial vía archivo o `CERTAPP_CPA_PROFILE`); certificación, ER, ESF y ESF mensual usan el perfil. Test E2E: perfil custom → el DOCX lo refleja y no queda rastro de los valores viejos. Suite: 205 passed)*
   - Qué: extraer nombre, cédula, No. CPA, acuerdo/quinquenio, teléfono y email hardcodeados en [generators/certificacion.py:99-155](generators/certificacion.py:99) a un `config_cpa.py` (dataclass cargada de `cpa_profile.json` con default actual) o a una tabla `cpa_profile`. El generador recibe el perfil como parámetro.
   - Archivos: `config_cpa.py` + `cpa_profile.json` (nuevos), `generators/certificacion.py`, `document_generator.py`.
   - Aceptación: cambiar el teléfono en el JSON y regenerar → el DOCX refleja el cambio sin tocar código.

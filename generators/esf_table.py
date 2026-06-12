@@ -17,6 +17,7 @@ from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.shared import Cm, Pt, RGBColor
 
+from config_cpa import load_cpa_profile
 from word_helpers import (
     apply_paragraph_style,
     set_row_height,
@@ -233,11 +234,12 @@ def generar_tabla_esf(doc, df_esf: pd.DataFrame, df_cert: pd.DataFrame) -> None:
         p_blank.paragraph_format.line_spacing = 1.5
         p_blank.paragraph_format.space_after  = Pt(0)
 
+    cpa = load_cpa_profile()
     nombre_firma = nombre_completo or (f"{nombre or ''} {apellido or ''}".strip()) or ""
     firmas = (
-        f"{nombre_firma}\t\t\t\t\t\t\tYamil René García Laguna",
-        "Elaborado\t\t\t\t\t\t\t\t\tCédula de identidad 001-281186-0054R",
-        "Propietario\t\t\t\t\t\t\t\t\tContador Público Autorizado N° 3314",
+        f"{nombre_firma}\t\t\t\t\t\t\t{cpa.nombre}",
+        f"Elaborado\t\t\t\t\t\t\t\t\tCédula de identidad {cpa.cedula}",
+        f"Propietario\t\t\t\t\t\t\t\t\tContador Público Autorizado N° {cpa.numero_cpa}",
     )
     for line in firmas:
         p = doc.add_paragraph(line)

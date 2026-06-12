@@ -22,6 +22,7 @@ from docx.oxml.ns import qn
 import unicodedata
 
 from .utils import extract_cert_fields
+from config_cpa import load_cpa_profile
 from word_helpers import apply_paragraph_style, set_vertical_alignment, set_cell_border, set_row_height
 
 
@@ -295,11 +296,12 @@ def generar_tabla_esf_mensual(doc, df_esf_m: pd.DataFrame, df_cert: pd.DataFrame
         p_blank.paragraph_format.line_spacing = 1.5
         p_blank.paragraph_format.space_after = Pt(0)
 
+    cpa = load_cpa_profile()
     firma_nombre = nombre_completo or (f"{nombre or ''} {apellido or ''}".strip()) or ""
     firmas = (
-        f"{firma_nombre}\t\t\t\t\t\t\tYamil Rene Garcia Laguna",
-        "Elaborado\t\t\t\t\t\t\t\t\tCedula de identidad 001-281186-0054R",
-        "Propietario\t\t\t\t\t\t\t\t\tContador Publico Autorizado No. 3314",
+        f"{firma_nombre}\t\t\t\t\t\t\t{cpa.nombre_plano}",
+        f"Elaborado\t\t\t\t\t\t\t\t\tCedula de identidad {cpa.cedula}",
+        f"Propietario\t\t\t\t\t\t\t\t\tContador Publico Autorizado No. {cpa.numero_cpa}",
     )
     for line in firmas:
         p = doc.add_paragraph(line)

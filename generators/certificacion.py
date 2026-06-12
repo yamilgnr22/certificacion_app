@@ -7,6 +7,7 @@ from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 from docx.shared import Cm, Pt, RGBColor
 from num2words import num2words
 
+from config_cpa import load_cpa_profile
 from word_helpers import (
     apply_paragraph_style,
     add_paragraph_border,
@@ -36,12 +37,13 @@ def _periodo_certificacion(inicio, fin):
         f"del año {fin.year}"
     )
 
-def generar_certificacion(doc: Document, dfc: pd.DataFrame):
+def generar_certificacion(doc: Document, dfc: pd.DataFrame, profile=None):
     """
     Inserta en `doc` la sección de certificación completa:
     encabezado, cuerpo y pie de página.
     """
     # ————————————————————— Datos básicos (robustos) —————————————————————
+    cpa = profile or load_cpa_profile()
     cert = extract_cert_fields(dfc)
     nombre_cliente = cert.get("nombre")
     apellido_cliente = cert.get("apellido")
@@ -96,12 +98,12 @@ def generar_certificacion(doc: Document, dfc: pd.DataFrame):
             p_h.clear()
         else:
             p_h = header.add_paragraph()
-        run = p_h.add_run("Licenciado Yamil René García Laguna\n")
+        run = p_h.add_run(f"{cpa.titulo_corto} {cpa.nombre}\n")
         run.bold = True
         run.font.name = "Abadi"
         run.font.size = Pt(10)
         run.font.color.rgb = RGBColor(20, 47, 80)
-        run2 = p_h.add_run("Contador Público Autorizado No. 3314")
+        run2 = p_h.add_run(f"Contador Público Autorizado No. {cpa.numero_cpa}")
         run2.font.name = "Abadi Extra Light"
         run2.font.size = Pt(9)
         apply_paragraph_style(p_h, font_name="Arial", font_size=9)
@@ -115,7 +117,7 @@ def generar_certificacion(doc: Document, dfc: pd.DataFrame):
             p_f.clear()
         else:
             p_f = footer.add_paragraph()
-        p_f.add_run("📞 +505 8966 5057   📧 yamilgnr22@gmail.com\t\tPágina ")
+        p_f.add_run(f"📞 {cpa.telefono}   📧 {cpa.email}\t\tPágina ")
         apply_paragraph_style(p_f, font_name="Abadi Extra Light", font_size=8)
         add_paragraph_border(p_f, "top")
         add_page_number(p_f)
@@ -138,7 +140,7 @@ def generar_certificacion(doc: Document, dfc: pd.DataFrame):
 
     # Texto principal
     cuerpo = [
-            f"Yo, Yamil René García Laguna, mayor de edad, soltero, Licenciado en Contaduría Pública y Auditoría, del domicilio de Managua, identificado con cédula de identidad número 001-281186-0054R, en mi calidad de Contador Público Autorizado para ejercer la profesión por el excelentísimo Ministerio de Educación Cultura y Deporte, bajo acuerdo C.P.A. No. 315-2023, fechado 22 de diciembre del 2023, por el quinquenio que finalizará el 21 de diciembre del 2028; expreso a través de este documento, que conforme a las leyes vigentes del país, en mi carácter de profesional de Contaduría Pública y en representación propia, que fui contratado para Certificar el Estado de Situación Financiera y el Estado de Resultados {periodo_certificacion}, preparados por {genero_cliente} {nombre_completo}, mayor de edad, {estado_civil}, {profesion}, quien se identifica con la cédula de identidad No. {cedula}, con domicilio en {domicilio}.",
+            f"Yo, {cpa.nombre}, mayor de edad, {cpa.estado_civil}, {cpa.titulo}, del domicilio de {cpa.domicilio}, identificado con cédula de identidad número {cpa.cedula}, en mi calidad de Contador Público Autorizado para ejercer la profesión por el excelentísimo Ministerio de Educación Cultura y Deporte, bajo acuerdo {cpa.acuerdo_cpa}, fechado {cpa.fecha_acuerdo}, por el quinquenio que finalizará el {cpa.fin_quinquenio}; expreso a través de este documento, que conforme a las leyes vigentes del país, en mi carácter de profesional de Contaduría Pública y en representación propia, que fui contratado para Certificar el Estado de Situación Financiera y el Estado de Resultados {periodo_certificacion}, preparados por {genero_cliente} {nombre_completo}, mayor de edad, {estado_civil}, {profesion}, quien se identifica con la cédula de identidad No. {cedula}, con domicilio en {domicilio}.",
             f"Responsabilidad: {genero_cliente} {nombre_completo}, es responsable sobre la información suministrada y reflejada en los estados financieros presentados para la Certificación, mi responsabilidad consiste en Certificar que las cifras contenidas en dichos estados financieros están conformes con los registros contables llevados {genero_cliente} {nombre_completo}.",
             f"Mi trabajo fue realizado de acuerdo con la Normativa sobre “Trabajo previamente convenidos”, y los objetivos que se persiguieron con dicho trabajo fueron los siguientes:",
             # Estos tres párrafos se mostrarán con viñeta
@@ -152,7 +154,7 @@ def generar_certificacion(doc: Document, dfc: pd.DataFrame):
             f"•\tLas utilidades netas del periodo revisado (después de deducir costos y gastos) fueron de NIO {utilidad_periodo_fmt} ({utilidad_periodo_palabras} córdobas), que da como resultado un promedio mensual de utilidades netas de NIO {utilidad_promedio_fmt} ({utilidad_promedio_palabras} córdobas).",
             f"Se adjuntan a esta Certificación, el Estado de Resultados, el Estado de Situación Financiera y los anexos a los estados financieros, los cuales han sido rubricado y sellado por el suscrito Contador Público Autorizado.",
             f"Esta certificación ha sido solicitada para completar los requisitos bancarios con {banco}, por lo que no debe ser utilizada para otro trámite legal ante cualquier otra institución pública o privada.",
-            f"Dado en la ciudad de Managua, a los {fecha_certificacion_palabras}."
+            f"Dado en la ciudad de {cpa.ciudad_emision}, a los {fecha_certificacion_palabras}."
     ]
     bullets = {3, 4, 5, 8, 9}
 
@@ -207,9 +209,9 @@ def generar_certificacion(doc: Document, dfc: pd.DataFrame):
 
     # ————————————————————— Firmas y salto de página —————————————————————
     for line in [
-        "Yamil René García Laguna",
-        "Cédula de identidad 001-281186-0054R",
-        "Contador Público Autorizado Nº 3314",
+        cpa.nombre,
+        f"Cédula de identidad {cpa.cedula}",
+        f"Contador Público Autorizado Nº {cpa.numero_cpa}",
     ]:
         p = doc.add_paragraph(line)
         apply_paragraph_style(
