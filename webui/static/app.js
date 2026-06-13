@@ -2765,6 +2765,10 @@
   }
 
   async function saveCurrentFinal() {
+    if (!activePeriodoId) {
+      setModelMessage('Guardar una version final requiere un periodo. Crea o selecciona un periodo de un cliente; finalizalo y genera su documento desde la tarjeta del periodo.', 'error');
+      return;
+    }
     try {
       const payload = buildModelPayload();
       setModelMessage('Generando y guardando version final...');
@@ -4079,6 +4083,10 @@
   }
 
   async function onModelGenerate() {
+    if (!activePeriodoId) {
+      setModelMessage('La generacion de documentos requiere un periodo. Crea o selecciona un periodo de un cliente y genera el documento desde la tarjeta del periodo (queda auditado).', 'error');
+      return;
+    }
     try {
       const payload = lastModelPayload || buildModelPayload();
       setModelMessage('Generando documento...');
@@ -4690,6 +4698,10 @@
     el.addEventListener('input', () => markEditorDirty(true));
     el.addEventListener('change', () => markEditorDirty(true));
   });
+  // La app abre en Clientes: es el inicio del flujo (cliente -> plantilla ->
+  // periodo -> editor). El Editor sin periodo es el scratchpad de drafts, que
+  // no debe ser la primera pantalla (F7-T4).
+  activateMode('clientesMode');
   // Cargar periodos editables al inicio y restaurar la ultima seleccion (si hay)
   loadEditablePeriodos({ restoreLast: true });
   qs('#btnUndoLastChatAdjustment')?.addEventListener('click', onUndoLastChatAdjustment);

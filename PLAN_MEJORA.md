@@ -274,7 +274,7 @@ editan en pantallas y endpoints que se pueden pisar.*
   - Aceptación: manual — no hay dos formularios editando los mismos campos del mismo período.
   - Riesgo si no: cambios perdidos según por dónde se guarde.
 
-- [ ] **F7-T4 — Abrir en Clientes y contener el flujo de drafts** · **IMPORTANTE · M**
+- [x] **F7-T4 — Abrir en Clientes y contener el flujo de drafts** · **IMPORTANTE · M** *(hecho 2026-06-13; la app abre en Clientes (HTML + activateMode en bootstrap); `onModelGenerate` y `saveCurrentFinal` exigen período activo o redirigen a la tarjeta del período (vía auditada). Verificado en navegador: landing en Clientes y guard bloquea generación sin período tras un preview. Suite: 213 passed)*
   - Qué: la app abre en Editor (modo drafts) con defaults del ejemplo y botones de generar/guardar habilitados sin período. Abrir en Clientes; esconder o marcar claramente el flujo de drafts sin cliente (segundo camino sin auditoría, hermano del chat legacy ya retirado en F3-T4).
   - Archivos: `webui/templates/index.html`, `webui/static/app.js`.
   - Aceptación: manual — al cargar, pestaña Clientes; generar documento exige período.

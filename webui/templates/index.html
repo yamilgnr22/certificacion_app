@@ -24,7 +24,7 @@
           <div id="sidebarContextEstado" class="sidebar-context-estado"></div>
         </div>
         <nav class="sidebar-nav" aria-label="Modo de trabajo">
-          <button class="mode-tab" type="button" data-mode-target="clientesMode" title="Clientes">
+          <button class="mode-tab active" type="button" data-mode-target="clientesMode" title="Clientes">
             <span class="mode-tab-icon material-symbols-outlined" aria-hidden="true">groups</span>
             <span class="mode-tab-label">Clientes</span>
           </button>
@@ -32,7 +32,7 @@
             <span class="mode-tab-icon material-symbols-outlined" aria-hidden="true">format_list_bulleted</span>
             <span class="mode-tab-label">Catálogo</span>
           </button>
-          <button class="mode-tab active" type="button" data-mode-target="modelMode" title="Editor avanzado">
+          <button class="mode-tab" type="button" data-mode-target="modelMode" title="Editor avanzado">
             <span class="mode-tab-icon material-symbols-outlined" aria-hidden="true">tune</span>
             <span class="mode-tab-label">Editor</span>
           </button>
@@ -48,7 +48,7 @@
 
       <main class="app-main">
 
-      <div id="clientesMode" class="mode-panel hidden">
+      <div id="clientesMode" class="mode-panel">
         <section class="card client-manager">
           <div class="workbench-header">
             <h2>Clientes</h2>
@@ -262,7 +262,7 @@
         </section>
       </div>
 
-      <div id="modelMode" class="mode-panel">
+      <div id="modelMode" class="mode-panel hidden">
         <section class="card">
           <div class="workbench-header">
             <h2>Editor del periodo</h2>
