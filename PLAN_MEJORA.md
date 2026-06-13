@@ -268,7 +268,7 @@ editan en pantallas y endpoints que se pueden pisar.*
   - Aceptación: manual — el stepper refleja el orden real; nota visible junto a la plantilla.
   - Riesgo si no: el usuario configura gastos que no afectan al período que acaba de crear.
 
-- [ ] **F7-T3 — Una sola vía de edición de parámetros** · **IMPORTANTE · M**
+- [x] **F7-T3 — Una sola vía de edición de parámetros** · **IMPORTANTE · M** *(hecho 2026-06-13; el form de período solo crea y al guardar lleva directo al Editor con el período cargado; sección de params del form relabelada "Parámetros iniciales (se ajustan luego en el Editor)". El bare `PUT /periodos/<id>` no lo usaba la UI; el editor (`PUT .../payload`) es la única superficie de edición. Verificado en navegador. Suite: 215 passed)*
   - Qué: ingresos/%costo/variabilidades se editan en el form del período Y en el editor, con dos endpoints (`PUT /periodos/<id>` y `.../payload`) que se pisan. Dejar el form solo para crear; toda edición posterior vive en el editor.
   - Archivos: `webui/static/app.js`, `services/periodo_service.py`.
   - Aceptación: manual — no hay dos formularios editando los mismos campos del mismo período.

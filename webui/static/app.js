@@ -1505,7 +1505,10 @@
       const warning = data.rollforward?.warning;
       setPeriodoFormMessage(`Periodo creado (${data.periodo.mes_inicial}..${data.periodo.mes_final}).${warning ? ' ' + warning : ''}`, warning ? 'warning' : 'success');
       closePeriodoForm();
-      await loadClienteDetail(currentClienteId, { openForm: true });
+      // Una sola superficie de edicion (F7-T3): el form solo CREA; toda edicion
+      // posterior de parametros vive en el Editor, al que llevamos el periodo
+      // recien creado.
+      await openPeriodoInEditor(data.periodo.id);
     } catch (e) {
       setPeriodoFormMessage(String(e.message || e), 'error');
     } finally {
