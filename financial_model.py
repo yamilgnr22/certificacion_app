@@ -61,6 +61,17 @@ DEFAULT_BALANCES_NIO: Dict[str, float] = {
     "retained_earnings": 3_424_750.0,
 }
 
+
+def zero_balances() -> Dict[str, float]:
+    """Saldos iniciales en cero para las 17 cuentas de balance.
+
+    Los callers que crean un modelo desde cero (p.ej. el primer periodo de un
+    cliente sin roll-forward) deben materializar saldos explicitos con esto en
+    vez de mandar {} y heredar DEFAULT_BALANCES_NIO, que son saldos de un
+    negocio de ejemplo.
+    """
+    return {key: 0.0 for key in DEFAULT_BALANCES_NIO}
+
 LEDGER_ACCOUNTS: Dict[str, Dict[str, str]] = {
     "cash": {"label": "Efectivo y Equivalentes de Efectivo", "kind": "asset", "state": "cash"},
     "accounts_receivable": {"label": "Cuentas por Cobrar Clientes", "kind": "asset", "state": "accounts_receivable"},

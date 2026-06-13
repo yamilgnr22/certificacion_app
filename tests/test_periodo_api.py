@@ -84,6 +84,11 @@ class PeriodoApiTest(unittest.TestCase):
         with self.db_session() as session:
             return list(session.scalars(select(AuditLog).order_by(AuditLog.id)))
 
+    def stored_payload(self, periodo_id):
+        with self.db_session() as session:
+            periodo = session.get(PeriodoCertificacion, periodo_id)
+            return json.loads(periodo.payload_json)
+
     # ---------------------------------------------------------------- create
     def test_create_periodo_without_rollforward_persists_borrador(self):
         cliente = self.create_cliente()
@@ -104,6 +109,35 @@ class PeriodoApiTest(unittest.TestCase):
         # audit log create
         actions = [e.action for e in self.audit_entries()]
         self.assertEqual(actions, ["create", "create"])  # cliente + periodo
+
+    def test_create_periodo_without_rollforward_uses_zero_balances(self):
+        # F7-T1: sin roll-forward ni override, el payload guardado tiene saldos
+        # explicitos en cero, no los del negocio de ejemplo (DEFAULT_BALANCES_NIO).
+        cliente = self.create_cliente()
+        periodo = self.create_periodo(cliente["id"])
+
+        balances = self.stored_payload(periodo["id"])["balances"]
+        self.assertEqual(len(balances), 17)
+        self.assertTrue(all(value == 0.0 for value in balances.values()), balances)
+        # El saldo de ejemplo NO debe aparecer.
+        self.assertEqual(balances["inventory"], 0.0)
+        self.assertEqual(balances["retained_earnings"], 0.0)
+        self.assertEqual(periodo["saldos_iniciales_origen"], "manual")
+
+    def test_create_periodo_partial_override_keeps_other_balances_zero(self):
+        # F7-T1: un override parcial solo cambia esa cuenta; el resto queda en
+        # cero (no hereda el ejemplo para las cuentas no especificadas).
+        cliente = self.create_cliente()
+        periodo = self.create_periodo(
+            cliente["id"],
+            balances_override={"cash": 12345.0},
+        )
+
+        balances = self.stored_payload(periodo["id"])["balances"]
+        self.assertEqual(balances["cash"], 12345.0)
+        self.assertEqual(balances["inventory"], 0.0)
+        self.assertEqual(balances["credit_cards"], 0.0)
+        self.assertEqual(balances["retained_earnings"], 0.0)
 
     def test_create_periodo_rejects_invalid_meses(self):
         cliente = self.create_cliente()

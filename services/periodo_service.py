@@ -22,6 +22,7 @@ import pandas as pd
 from sqlalchemy.orm import Session
 
 from db.models import GiroNegocio, PeriodoCertificacion
+from financial_model import zero_balances
 from repositories import ClienteRepository, GiroRepository, PeriodoRepository
 from services.audit_service import AuditService
 from services.periodo_document_adapter import periodo_to_dataframes
@@ -153,7 +154,10 @@ class PeriodoService:
 
         meses = self._validate_meses(data)
         rollforward_info = None
-        saldos_iniciales: dict[str, float] = {}
+        # Baseline en cero explicito: nunca heredar DEFAULT_BALANCES_NIO (saldos
+        # de un negocio de ejemplo). El roll-forward y el override manual se
+        # aplican encima de esta base (F7-T1).
+        saldos_iniciales: dict[str, float] = zero_balances()
         periodo_anterior_id: str | None = None
         saldos_origen = "manual"
 
@@ -162,7 +166,7 @@ class PeriodoService:
                 cliente_id, meses["mes_inicial"]
             )
             if rollforward_info.get("has_anterior"):
-                saldos_iniciales = dict(rollforward_info.get("saldos") or {})
+                saldos_iniciales.update(dict(rollforward_info.get("saldos") or {}))
                 periodo_anterior_id = rollforward_info.get("periodo_anterior_id")
                 saldos_origen = "rollforward"
 

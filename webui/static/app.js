@@ -1415,9 +1415,9 @@
     const subtitle = qs('#periodoFormSubtitle');
     if (subtitle) subtitle.textContent = `Cliente: ${selectedClienteName || ''}`;
     setPeriodoFormMessage('', 'info');
-    qs('#rollforwardPreview')?.classList.add('hidden');
     const rfChk = qs('#periodo_rollforward');
     if (rfChk) rfChk.checked = false;
+    refreshRollforwardPreview();
     panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
@@ -1429,9 +1429,16 @@
     const wrap = qs('#rollforwardPreview');
     if (!wrap) return;
     const checked = qs('#periodo_rollforward')?.checked;
-    if (!checked || !currentClienteId) {
+    if (!currentClienteId) {
       wrap.classList.add('hidden');
       wrap.replaceChildren();
+      return;
+    }
+    if (!checked) {
+      // F7-T1: sin roll-forward, los saldos iniciales arrancan en cero
+      // explicito (no se heredan saldos de ningun negocio de ejemplo).
+      wrap.classList.remove('hidden');
+      wrap.innerHTML = '<div class="info">Saldos iniciales en <strong>C$0</strong> para todas las cuentas. Ajustelos en el Editor despues de crear el periodo.</div>';
       return;
     }
     const mesInicial = qs('#periodo_mes_inicial')?.value || '';

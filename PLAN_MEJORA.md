@@ -250,6 +250,42 @@
   - Aceptación: cada PR deja la UI completamente funcional (smoke test manual del flujo afectado).
   - Riesgo si no: cada cambio de UI es arqueología; riesgo creciente de regresiones.
 
+### FASE 7 — Consistencia del flujo cliente → período → datos
+*Derivada de la auditoría de flujo (2026-06-13). El recorrido cliente/período/datos
+no es consistente: un período nuevo puede heredar saldos de un negocio de ejemplo,
+el stepper promete un orden que el backend no respeta, y los datos financieros se
+editan en pantallas y endpoints que se pueden pisar.*
+
+- [x] **F7-T1 — Período nuevo nunca hereda saldos del ejemplo** · **CRÍTICO · S** *(hecho 2026-06-13; `financial_model.zero_balances()` + `periodo_service.create` materializa baseline cero → roll-forward → override; el form muestra el aviso de saldos C$0. Verificado E2E en navegador: payload guardado con los 17 saldos en 0. Suite: 213 passed)*
+  - Qué: hoy un período sin roll-forward manda `balances: {}` y el motor rellena con `DEFAULT_BALANCES_NIO` (saldos de un negocio de ejemplo: inventario C$5.3M, resultados acumulados C$3.4M, etc.) → el documento puede salir con saldos ajenos. Materializar SIEMPRE saldos explícitos al crear: baseline en cero + roll-forward + override manual, de modo que el payload guardado nunca dependa del default del motor. Mostrar en el form los saldos propuestos (heredados o ceros) antes de crear.
+  - Archivos: `financial_model.py` (helper `zero_balances`), `services/periodo_service.py` (`create`), `webui/templates/index.html` + `webui/static/app.js` (aviso de saldos), `tests/test_periodo_api.py`.
+  - Aceptación: período creado sin roll-forward → `payload["balances"]` tiene los 17 keys en 0 y el ESF no muestra inventario 5,310,538. Override parcial → solo esa cuenta cambia, el resto en 0.
+  - Riesgo si no: el documento legal puede certificar saldos de otro negocio.
+
+- [ ] **F7-T2 — Reordenar el stepper (Plantilla antes de Período)** · **IMPORTANTE · S**
+  - Qué: la plantilla de gastos se copia al payload al CREAR el período; editarla después no afecta períodos existentes. El stepper dice Cliente→Períodos→Plantilla→Editor, orden que rompe esa dependencia. Reordenar a Cliente→Plantilla→Período→Editor y avisar que la plantilla solo aplica a períodos nuevos.
+  - Archivos: `webui/templates/index.html`, `webui/static/app.js`.
+  - Aceptación: manual — el stepper refleja el orden real; nota visible junto a la plantilla.
+  - Riesgo si no: el usuario configura gastos que no afectan al período que acaba de crear.
+
+- [ ] **F7-T3 — Una sola vía de edición de parámetros** · **IMPORTANTE · M**
+  - Qué: ingresos/%costo/variabilidades se editan en el form del período Y en el editor, con dos endpoints (`PUT /periodos/<id>` y `.../payload`) que se pisan. Dejar el form solo para crear; toda edición posterior vive en el editor.
+  - Archivos: `webui/static/app.js`, `services/periodo_service.py`.
+  - Aceptación: manual — no hay dos formularios editando los mismos campos del mismo período.
+  - Riesgo si no: cambios perdidos según por dónde se guarde.
+
+- [ ] **F7-T4 — Abrir en Clientes y contener el flujo de drafts** · **IMPORTANTE · M**
+  - Qué: la app abre en Editor (modo drafts) con defaults del ejemplo y botones de generar/guardar habilitados sin período. Abrir en Clientes; esconder o marcar claramente el flujo de drafts sin cliente (segundo camino sin auditoría, hermano del chat legacy ya retirado en F3-T4).
+  - Archivos: `webui/templates/index.html`, `webui/static/app.js`.
+  - Aceptación: manual — al cargar, pestaña Clientes; generar documento exige período.
+  - Riesgo si no: dos caminos de generación, uno sin auditoría ni cliente.
+
+- [ ] **F7-T5 — Validación del período incluye invariantes de Fase 1** · **DESEABLE · S**
+  - Qué: `_run_and_capture_validation` ([periodo_service.py:738](services/periodo_service.py:738)) solo guarda `er/esf/balance`; el período puede quedar "ok" con `capital`/`ledger_esf`/`overpayments` en rojo. Incluirlos.
+  - Archivos: `services/periodo_service.py`, `tests/test_periodo_api.py`.
+  - Aceptación: período con descuadre de capital → `validation_json["ok"]` es False.
+  - Riesgo si no: los invariantes nuevos no protegen el flujo principal de períodos.
+
 ---
 
 ## 4. Quick wins (menos de 1 hora cada uno, hacer YA)
