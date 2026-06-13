@@ -31,6 +31,65 @@
   const qs = (sel) => document.querySelector(sel);
   const qsa = (sel) => Array.from(document.querySelectorAll(sel));
 
+  // ====================== Auth: token de acceso (F6-T1) ======================
+  // El token se guarda en localStorage y se adjunta a toda llamada a /api/.
+  // Si el servidor no exige token, las llamadas funcionan igual (200) y el
+  // overlay nunca aparece. Un 401 dispara la pantalla de login.
+  const AUTH_KEY = 'certapp_auth_token';
+  const getAuthToken = () => localStorage.getItem(AUTH_KEY) || '';
+  const setAuthToken = (t) => { if (t) localStorage.setItem(AUTH_KEY, t); else localStorage.removeItem(AUTH_KEY); };
+
+  const _origFetch = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    init = init ? { ...init } : {};
+    const url = typeof input === 'string' ? input : (input && input.url) || '';
+    const isApi = url.includes('/api/');
+    const token = getAuthToken();
+    if (isApi && token) {
+      const headers = new Headers(init.headers || (typeof input !== 'string' && input.headers) || {});
+      if (!headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
+      init.headers = headers;
+    }
+    return _origFetch(input, init).then((resp) => {
+      if (isApi && resp.status === 401) showLoginOverlay();
+      return resp;
+    });
+  };
+
+  function showLoginOverlay(message) {
+    const overlay = qs('#loginOverlay');
+    if (!overlay) return;
+    overlay.classList.remove('hidden');
+    const err = qs('#loginError');
+    if (err) {
+      if (message) { err.textContent = message; err.classList.remove('hidden'); }
+      else err.classList.add('hidden');
+    }
+    const input = qs('#loginToken');
+    if (input) { input.value = getAuthToken(); input.focus(); }
+  }
+
+  function hideLoginOverlay() {
+    qs('#loginOverlay')?.classList.add('hidden');
+  }
+
+  async function submitLogin() {
+    const input = qs('#loginToken');
+    const token = input ? input.value.trim() : '';
+    if (!token) { showLoginOverlay('Ingresa el token de acceso.'); return; }
+    setAuthToken(token);
+    try {
+      // Validar contra un endpoint liviano antes de cerrar el overlay.
+      const resp = await _origFetch('/api/giros', { headers: { Authorization: `Bearer ${token}` } });
+      if (resp.status === 401) { showLoginOverlay('Token invalido.'); return; }
+      hideLoginOverlay();
+      activateMode('clientesMode');
+      loadEditablePeriodos({ restoreLast: true });
+    } catch (e) {
+      showLoginOverlay('No se pudo validar el token: ' + (e.message || e));
+    }
+  }
+
   let currentToken = null;
   let es = null; // EventSource
   const lastResults = { er: null, esf: null, docs_cedula: null, docs_matricula: null, llm: null };
@@ -4701,6 +4760,10 @@
     el.addEventListener('input', () => markEditorDirty(true));
     el.addEventListener('change', () => markEditorDirty(true));
   });
+  // Login (F6-T1): el overlay se dispara solo si el servidor responde 401.
+  qs('#loginSubmit')?.addEventListener('click', submitLogin);
+  qs('#loginToken')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') submitLogin(); });
+
   // La app abre en Clientes: es el inicio del flujo (cliente -> plantilla ->
   // periodo -> editor). El Editor sin periodo es el scratchpad de drafts, que
   // no debe ser la primera pantalla (F7-T4).

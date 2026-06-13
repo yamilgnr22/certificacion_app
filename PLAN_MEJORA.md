@@ -220,13 +220,13 @@
 ### FASE 6 — Seguridad y pulido
 *QW-1 (bind localhost) se hace YA como quick win; el resto aquí.*
 
-- [ ] **F6-T1 — Autenticación mínima** · **CRÍTICO · M**
+- [x] **F6-T1 — Autenticación mínima** · **CRÍTICO · M** *(hecho 2026-06-13; `CERTAPP_AUTH_TOKEN` → `before_request` exige `Authorization: Bearer` en `/api/*` (hmac.compare_digest); overlay de login en la UI que guarda el token en localStorage y un fetch-wrapper lo adjunta; `_cpa_user` deriva del CPA configurado, no del header. Sin token configurado la app corre abierta (dev). Verificado E2E en navegador: 401→overlay→token→200. Suite: 221 passed)*
   - Qué: token compartido en `.env` (`CERTAPP_AUTH_TOKEN`); middleware `before_request` que exige `Authorization: Bearer <token>` para `/api/*` (excepto estáticos); pantalla de login simple que lo guarda en `localStorage`; el header `X-CPA-User` pasa a derivarse de la sesión autenticada, no del cliente.
   - Archivos: `web_server.py`, `webui/static/app.js`, `webui/templates/index.html`, `.env.example` (nuevo).
   - Aceptación: request sin token → 401; con token → 200; el audit log registra el usuario de la sesión.
   - Riesgo si no: PII de terceros (cédulas) accesible a cualquiera en la red; audit log falsificable.
 
-- [ ] **F6-T2 — Crear `.env.example` y documentar manejo de la key** · **IMPORTANTE · S**
+- [x] **F6-T2 — Crear `.env.example` y documentar manejo de la key** · **IMPORTANTE · S** *(hecho 2026-06-10 en QW-3; ampliado en F6-T1 con CERTAPP_AUTH_TOKEN y CERTAPP_CPA_USER; README referencia .env.example)*
   - Qué: `.env.example` con todas las vars (`OPENAI_API_KEY`, `OPENAI_MODEL_AGENT`, `OPENAI_MODEL_DOCUMENTS`, `CERTAPP_HOST`, `CERTAPP_AUTH_TOKEN`, `POPPLER_PATH`, etc.) y sección en README. Confirmado en auditoría: `.env` nunca estuvo en git — mantenerlo así.
   - Archivos: `.env.example` (nuevo), `README.md`.
   - Aceptación: clonar en limpio + copiar `.env.example` → `.env` + poner key → la app arranca.

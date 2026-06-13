@@ -11,6 +11,15 @@
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
+    <div id="loginOverlay" class="login-overlay hidden">
+      <div class="login-card">
+        <h2>Acceso restringido</h2>
+        <p>Ingresa el token de acceso para usar la aplicación.</p>
+        <input id="loginToken" type="password" placeholder="Token de acceso" autocomplete="current-password" />
+        <div id="loginError" class="login-error hidden"></div>
+        <button id="loginSubmit" class="btn primary" type="button">Entrar</button>
+      </div>
+    </div>
     <div class="app-shell">
       <aside class="app-sidebar" aria-label="Navegacion principal">
         <div class="sidebar-brand">

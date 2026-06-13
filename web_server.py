@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import hmac
 import json
 import uuid
 import tempfile
@@ -113,6 +114,32 @@ def _is_db_api_path(path: str) -> bool:
     )
 
 
+def _auth_token() -> str:
+    """Token de acceso compartido. Vacio => auth deshabilitada (dev/tests)."""
+    if "AUTH_TOKEN" in app.config:
+        return str(app.config.get("AUTH_TOKEN") or "").strip()
+    return os.getenv("CERTAPP_AUTH_TOKEN", "").strip()
+
+
+@app.before_request
+def _require_auth():
+    """F6-T1: si hay token configurado, /api/* exige Authorization: Bearer <token>.
+
+    El index, los estaticos y la pantalla de login cargan sin token; recien
+    ahi el cliente lo envia. Registrada antes del opener de sesion DB para
+    cortar el 401 sin tocar la base.
+    """
+    token = _auth_token()
+    if not token:
+        return None
+    if not request.path.startswith("/api/"):
+        return None
+    provided = request.headers.get("Authorization", "")
+    if not provided or not hmac.compare_digest(provided, f"Bearer {token}"):
+        return {"ok": False, "error": "No autorizado. Inicia sesion con el token de acceso."}, 401
+    return None
+
+
 @app.before_request
 def _open_db_session_for_api():
     if not _is_db_api_path(request.path):
@@ -149,6 +176,10 @@ def _db_session():
 
 
 def _cpa_user() -> str:
+    # Con auth activa, el usuario es la identidad configurada del CPA, no un
+    # header que el cliente pueda falsificar (F6-T1).
+    if _auth_token():
+        return os.getenv("CERTAPP_CPA_USER", "cpa").strip() or "cpa"
     return request.headers.get("X-CPA-User", "system").strip() or "system"
 
 
