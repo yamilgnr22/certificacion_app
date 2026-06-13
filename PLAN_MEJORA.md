@@ -262,7 +262,7 @@ editan en pantallas y endpoints que se pueden pisar.*
   - Aceptación: período creado sin roll-forward → `payload["balances"]` tiene los 17 keys en 0 y el ESF no muestra inventario 5,310,538. Override parcial → solo esa cuenta cambia, el resto en 0.
   - Riesgo si no: el documento legal puede certificar saldos de otro negocio.
 
-- [ ] **F7-T2 — Reordenar el stepper (Plantilla antes de Período)** · **IMPORTANTE · S**
+- [x] **F7-T2 — Reordenar el stepper (Plantilla antes de Período)** · **IMPORTANTE · S** *(hecho 2026-06-13; stepper Cliente→Plantilla→Periodos→Editor, subcards reordenadas (plantilla primero) con nota "configura los gastos antes de crear un periodo". Verificado en navegador. Suite: 213 passed)*
   - Qué: la plantilla de gastos se copia al payload al CREAR el período; editarla después no afecta períodos existentes. El stepper dice Cliente→Períodos→Plantilla→Editor, orden que rompe esa dependencia. Reordenar a Cliente→Plantilla→Período→Editor y avisar que la plantilla solo aplica a períodos nuevos.
   - Archivos: `webui/templates/index.html`, `webui/static/app.js`.
   - Aceptación: manual — el stepper refleja el orden real; nota visible junto a la plantilla.

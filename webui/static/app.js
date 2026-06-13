@@ -834,18 +834,20 @@
       el.classList.remove('active', 'completed', 'locked');
       if (state) el.classList.add(state);
     };
+    // Orden del flujo: Cliente -> Plantilla -> Periodos -> Editor (F7-T2).
+    // La plantilla va antes del periodo porque se copia al payload al CREARLO.
     setStep(qs('#clienteStepper .step[data-step="cliente"]'), hasClient ? 'completed' : 'active');
     if (!hasClient) {
-      setStep(qs('#clienteStepper .step[data-step="periodos"]'), 'locked');
       setStep(qs('#clienteStepper .step[data-step="plantilla"]'), 'locked');
+      setStep(qs('#clienteStepper .step[data-step="periodos"]'), 'locked');
       setStep(qs('#clienteStepper .step[data-step="editor"]'), 'locked');
     } else if (!hasPeriodos) {
-      setStep(qs('#clienteStepper .step[data-step="periodos"]'), 'active');
-      setStep(qs('#clienteStepper .step[data-step="plantilla"]'), null);
+      setStep(qs('#clienteStepper .step[data-step="plantilla"]'), 'active');
+      setStep(qs('#clienteStepper .step[data-step="periodos"]'), null);
       setStep(qs('#clienteStepper .step[data-step="editor"]'), 'locked');
     } else {
+      setStep(qs('#clienteStepper .step[data-step="plantilla"]'), 'completed');
       setStep(qs('#clienteStepper .step[data-step="periodos"]'), 'completed');
-      setStep(qs('#clienteStepper .step[data-step="plantilla"]'), null);
       setStep(qs('#clienteStepper .step[data-step="editor"]'), 'active');
     }
 

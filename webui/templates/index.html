@@ -79,8 +79,8 @@
           <div id="clienteFormMessages" class="messages"></div>
           <ol id="clienteStepper" class="stepper" aria-label="Pasos">
             <li class="step" data-step="cliente"><span class="step-num">1</span><span class="step-label">Cliente</span></li>
-            <li class="step locked" data-step="periodos"><span class="step-num">2</span><span class="step-label">Periodos</span></li>
-            <li class="step locked" data-step="plantilla"><span class="step-num">3</span><span class="step-label">Plantilla</span></li>
+            <li class="step locked" data-step="plantilla"><span class="step-num">2</span><span class="step-label">Plantilla</span></li>
+            <li class="step locked" data-step="periodos"><span class="step-num">3</span><span class="step-label">Periodos</span></li>
             <li class="step locked" data-step="editor"><span class="step-num">4</span><span class="step-label">Editor</span></li>
           </ol>
 
@@ -152,15 +152,6 @@
           </div>
 
           <div class="client-detail-grid">
-            <div id="clientePeriodosPanel" class="client-periods-panel subcard locked">
-              <div class="subcard-lock-overlay">Guarda el cliente primero</div>
-              <div class="workbench-header compact">
-                <h3><span class="subcard-status" aria-hidden="true">○</span> Periodos</h3>
-                <button id="btnNewPeriodo" class="btn primary" type="button" disabled>Nuevo</button>
-              </div>
-              <div id="periodosMessages" class="messages"></div>
-              <div id="clientePeriodosList" class="saved-list empty-state">Sin periodos.</div>
-            </div>
             <div id="clienteTemplatePanel" class="client-template-panel subcard locked">
               <div class="subcard-lock-overlay">Guarda el cliente primero</div>
               <div class="workbench-header compact">
@@ -171,8 +162,18 @@
                   <button id="btnSaveTemplate" class="btn primary" type="button">Guardar</button>
                 </div>
               </div>
+              <p class="subcard-note">Configura los gastos <strong>antes</strong> de crear un periodo: la plantilla se copia al periodo al crearlo; editarla después no afecta periodos ya creados.</p>
               <p id="clienteTemplateOrigin" class="workbench-subtitle"></p>
               <div id="clienteTemplateEditor" class="template-editor empty-state">Sin plantilla.</div>
+            </div>
+            <div id="clientePeriodosPanel" class="client-periods-panel subcard locked">
+              <div class="subcard-lock-overlay">Guarda el cliente primero</div>
+              <div class="workbench-header compact">
+                <h3><span class="subcard-status" aria-hidden="true">○</span> Periodos</h3>
+                <button id="btnNewPeriodo" class="btn primary" type="button" disabled>Nuevo</button>
+              </div>
+              <div id="periodosMessages" class="messages"></div>
+              <div id="clientePeriodosList" class="saved-list empty-state">Sin periodos.</div>
             </div>
           </div>
         </section>

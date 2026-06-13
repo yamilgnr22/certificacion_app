@@ -1734,3 +1734,15 @@ input[type="checkbox"] {
 }
 .extraction-confirm.pending { background: rgba(255, 213, 79, 0.10); color: var(--warn); border: 1px solid rgba(255, 213, 79, 0.35); }
 .extraction-confirm.confirmed { background: rgba(105, 240, 174, 0.10); color: var(--success); border: 1px solid rgba(105, 240, 174, 0.35); }
+
+/* Nota informativa dentro de subcards (F7-T2) */
+.subcard-note {
+  margin: 4px 0 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  background: rgba(255, 213, 79, 0.08);
+  color: var(--warn);
+  border: 1px solid rgba(255, 213, 79, 0.25);
+}
