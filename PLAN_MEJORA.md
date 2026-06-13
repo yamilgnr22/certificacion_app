@@ -232,7 +232,7 @@
   - Aceptación: clonar en limpio + copiar `.env.example` → `.env` + poner key → la app arranca.
   - Riesgo si no: onboarding a otra máquina por adivinación; tentación de commitear el `.env` real.
 
-- [ ] **F6-T3 — Aviso de envío de PII a OpenAI** · **IMPORTANTE · S**
+- [x] **F6-T3 — Aviso de envío de PII a OpenAI** · **IMPORTANTE · S** *(hecho 2026-06-13; aviso visible en el panel de extracción ("las imágenes se envían a OpenAI...") + sección de Seguridad y datos personales en el README. Verificado en navegador)*
   - Qué: texto visible en la UI de extracción: "Las imágenes se procesan con OpenAI (servidor externo)". Documentar en README la política de datos (las imágenes no se persisten en disco más allá del TTL; F4-T3 cambia eso con consentimiento).
   - Archivos: `webui/templates/index.html`, `README.md`.
   - Aceptación: manual — el aviso es visible antes de subir imágenes.

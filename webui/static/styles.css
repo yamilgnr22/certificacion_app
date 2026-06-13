@@ -1789,3 +1789,15 @@ input[type="checkbox"] {
   color: var(--danger, #ff5252);
 }
 .login-error.hidden { display: none; }
+
+/* Aviso de privacidad en extraccion de documentos (F6-T3) */
+.doc-extract-privacy {
+  margin: 10px 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  background: rgba(255, 213, 79, 0.08);
+  color: var(--warn);
+  border: 1px solid rgba(255, 213, 79, 0.25);
+}

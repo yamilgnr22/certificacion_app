@@ -28,6 +28,18 @@ Nota de fuentes: el encabezado usa "Abadi" por defecto, que debe estar
 instalada en la máquina que abre el DOCX; para máxima portabilidad cambiar
 `font_encabezado`/`font_secundaria` a "Calibri".
 
+## Seguridad y datos personales
+- **Acceso**: por defecto el servidor escucha solo en `127.0.0.1`. Para exponerlo
+  en la red define `CERTAPP_HOST=0.0.0.0` **y** `CERTAPP_AUTH_TOKEN` (la UI pedirá
+  ese token en una pantalla de login y lo exigirá en todas las llamadas `/api/*`).
+  Sin token configurado la app corre abierta — usar solo en `127.0.0.1`.
+- **Extracción por imagen**: las imágenes de cédula/matrícula se envían a OpenAI
+  (servidor externo) para extraer los datos; no se persisten en disco más allá del
+  procesamiento temporal (TTL de subidas: `CERTAPP_UPLOAD_TTL_SECONDS`). Contar con
+  el consentimiento del cliente antes de subir sus documentos.
+- **`.env`** nunca debe commitearse (ya está en `.gitignore`); usar `.env.example`
+  como plantilla.
+
 ## Instalación rápida
 ```
 pip install -r requirements.txt
