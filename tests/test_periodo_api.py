@@ -407,5 +407,48 @@ class PeriodoApiTest(unittest.TestCase):
             self.assertIsNotNone(curr_e.prev_entry_hash)
 
 
+class PeriodoValidationCaptureTest(unittest.TestCase):
+    """F7-T5: validation_json del periodo incluye los invariantes de Fase 1."""
+
+    @staticmethod
+    def _payload(**movements):
+        from financial_model import zero_balances
+        return {
+            "period": {
+                "start_month": "2026-01", "end_month": "2026-03", "months": 3,
+                "exchange_rate": 36.6243, "seed": "f7t5",
+            },
+            "income": {"base_income_usd": 10000, "cost_pct": 70},
+            "balances": zero_balances(),
+            "movements": dict(movements),
+        }
+
+    def test_sane_period_is_ok_and_captures_invariants(self):
+        from services.periodo_service import PeriodoService
+
+        out = PeriodoService._run_and_capture_validation(self._payload())
+
+        self.assertTrue(out["ok"], out)
+        for key in ("er", "esf", "balance", "capital", "ledger_esf", "er_esf"):
+            self.assertIn(key, out, f"falta {key} en validation_json")
+            self.assertTrue(out[key]["ok"], f"{key} deberia estar ok")
+
+    def test_capital_imbalance_makes_period_not_ok(self):
+        from services.periodo_service import PeriodoService
+
+        # Un credit_card_new sin contrapartida descuadra el capital (F1-T1):
+        # el balance_check tradicional no lo ve, pero el invariante de capital si.
+        payload = self._payload(events=[
+            {"month": "2026-02", "account": "tarjeta", "amount": 50000, "currency": "nio"},
+        ])
+
+        out = PeriodoService._run_and_capture_validation(payload)
+
+        self.assertFalse(out["ok"])
+        self.assertFalse(out["capital"]["ok"])
+        # El balance tradicional sigue verde: por eso hacia falta el invariante.
+        self.assertTrue(out["balance"]["ok"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -732,6 +732,11 @@ class PeriodoService:
             payload["expenses"] = {k: float(v) for k, v in expenses_override.items() if v is not None}
         return payload
 
+    # Invariantes que invalidan el periodo si fallan (descuadres reales).
+    HARD_VALIDATIONS = ("er", "esf", "balance", "capital", "ledger_esf", "er_esf")
+    # Avisos que se reportan pero no invalidan (caja negativa, sobrepagos).
+    WARNING_VALIDATIONS = ("cash", "overpayments")
+
     @staticmethod
     def _run_and_capture_validation(payload: Mapping[str, Any]) -> dict[str, Any]:
         from financial_model import build_financial_model
@@ -739,16 +744,16 @@ class PeriodoService:
             result = build_financial_model(payload)
         except Exception as exc:
             return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
-        return {
-            "ok": bool(
-                result.validations.get("er", {}).get("ok")
-                and result.validations.get("esf", {}).get("ok")
-                and result.validations.get("balance", {}).get("ok")
-            ),
-            "er": result.validations.get("er"),
-            "esf": result.validations.get("esf"),
-            "balance": result.validations.get("balance"),
-        }
+        validations = result.validations or {}
+        ok = all(
+            bool((validations.get(key) or {}).get("ok"))
+            for key in PeriodoService.HARD_VALIDATIONS
+        )
+        captured: dict[str, Any] = {"ok": ok}
+        for key in (*PeriodoService.HARD_VALIDATIONS, *PeriodoService.WARNING_VALIDATIONS):
+            if key in validations:
+                captured[key] = validations.get(key)
+        return captured
 
 
 def _opt_float(value: Any) -> float | None:

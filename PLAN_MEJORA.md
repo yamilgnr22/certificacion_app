@@ -280,7 +280,7 @@ editan en pantallas y endpoints que se pueden pisar.*
   - Aceptación: manual — al cargar, pestaña Clientes; generar documento exige período.
   - Riesgo si no: dos caminos de generación, uno sin auditoría ni cliente.
 
-- [ ] **F7-T5 — Validación del período incluye invariantes de Fase 1** · **DESEABLE · S**
+- [x] **F7-T5 — Validación del período incluye invariantes de Fase 1** · **DESEABLE · S** *(hecho 2026-06-13; `_run_and_capture_validation` gatea `ok` con er/esf/balance/capital/ledger_esf/er_esf y reporta cash/overpayments como avisos. Test: período con descuadre de capital → `ok` False mientras balance sigue verde. Suite: 215 passed)*
   - Qué: `_run_and_capture_validation` ([periodo_service.py:738](services/periodo_service.py:738)) solo guarda `er/esf/balance`; el período puede quedar "ok" con `capital`/`ledger_esf`/`overpayments` en rojo. Incluirlos.
   - Archivos: `services/periodo_service.py`, `tests/test_periodo_api.py`.
   - Aceptación: período con descuadre de capital → `validation_json["ok"]` es False.
