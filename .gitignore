@@ -39,6 +39,8 @@ data/models/
 data/*.db
 data/*.db-*
 data/documentos/
+data/soportes/
+data/backups/
 
 # Tools caches
 .pytest_cache/
