@@ -44,7 +44,9 @@ from services import (
     AgentServiceError,
     AgentValidationError,
     ClienteService,
+    DocumentoService,
     GiroService,
+    MotorV2Service,
     PeriodoConflictError,
     PeriodoNotFoundError,
     PeriodoService,
@@ -82,6 +84,7 @@ if os.getenv("CERTAPP_TEMPLATE_CACHE", "0").strip().lower() not in {"1", "true",
 
 # En memoria, simple. Para producción usar almacenamiento persistente o DB.
 JOBS: Dict[str, Dict[str, Any]] = {}
+MAX_JOBS = 50  # F6-T4: tope; al superarlo se desaloja el mas viejo no activo
 _DB_ENGINE = None
 
 
@@ -111,6 +114,11 @@ def _is_db_api_path(path: str) -> bool:
         or path.startswith("/api/audit")
         or path.startswith("/api/agent")
         or path.startswith("/api/catalogo")
+        # Persistencia Motor V2 (el /api/motor/v2/certificar stateless NO abre DB)
+        or path.startswith("/api/motor/v2/periodos")
+        or path.startswith("/api/motor/v2/clientes")
+        # Documentos soporte del cliente (imagenes cedula/matricula)
+        or path.startswith("/api/documentos")
     )
 
 
@@ -221,6 +229,16 @@ def prune_uploads() -> None:
             expired.append(token)
     for t in expired:
         JOBS.pop(t, None)
+    # F6-T4: cap de trabajos en memoria — desalojar los mas viejos no activos
+    # aunque no hayan expirado (sesiones largas no deben crecer sin limite).
+    if len(JOBS) > MAX_JOBS:
+        ordenados = sorted(
+            (t for t, j in JOBS.items() if not j.get("active", False)),
+            key=lambda t: float(JOBS[t].get("created", 0)),
+        )
+        for t in ordenados[: len(JOBS) - MAX_JOBS]:
+            _cleanup_job_files(JOBS[t])
+            JOBS.pop(t, None)
     # Limpiar archivos huérfanos
     try:
         for p in UPLOAD_DIR.glob("*"):
@@ -255,6 +273,12 @@ def _save_upload(file_storage, suffix: str) -> str:
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+@app.route("/motor-v2")
+def motor_v2_page():
+    """Pantalla del motor de certificaciones V2 (Fase 1, Tipo A)."""
+    return render_template("motor_v2.html")
 
 
 def _service_error_response(exc: Exception):
@@ -1112,6 +1136,296 @@ def model_generate_doc():
         return response
 
     return send_file(out_path, as_attachment=True, download_name=safe_filename)
+
+
+@app.post("/api/motor/v2/deudas/extract")
+def motor_v2_extraer_deudas():
+    """Extrae las deudas de un reporte de credito (TransUnion o SIBOIF).
+
+    multipart/form-data con campo `archivo`: PDF (TransUnion, con texto) o
+    imagen JPG/PNG (SIBOIF, foto/captura). Stateless (sin DB): auto-detecta
+    fuente y formato, la IA extrae y Python normaliza al panel DEUDAS. El CPA
+    revisa las filas — la IA solo extrae, nunca decide que deuda entra al ER."""
+    from services.deuda_extraction import DeudaExtractionError, procesar_reporte
+
+    archivo = request.files.get("archivo")
+    if not archivo or not archivo.filename:
+        return {"ok": False, "error": "Adjunta el reporte (PDF de TransUnion o imagen de SIBOIF)"}, 400
+
+    try:
+        data = archivo.stream.read()
+        resultado = procesar_reporte(archivo.filename, data)
+    except DeudaExtractionError as exc:
+        return {"ok": False, "error": str(exc)}, 422
+    except Exception:
+        app.logger.exception("Fallo inesperado extrayendo deudas del reporte")
+        return {"ok": False, "error": "Fallo inesperado al procesar el reporte"}, 500
+
+    return resultado
+
+
+@app.post("/api/motor/v2/certificar")
+def motor_v2_certificar():
+    """Motor de certificaciones V2 (Tipo A y Tipo B), determinista.
+
+    Despacha por periodo.tipo: "A" = balance final ancla dura;
+    "B" = caja oscilante en banda (12 meses max, cuentas_objetivo + seed).
+      - ?format=json (default): cifras + validacion (para comparar cifra a cifra)
+      - ?format=docx: genera y descarga el DOCX certificado
+
+    Con errores de validacion bloqueantes responde 422 salvo allow_errors=true.
+    """
+    from motor.esf import ESFError
+    from motor.json_io import modelo_from_json, validacion_to_json
+
+    try:
+        body = request.get_json(silent=True) or {}
+        modelo = modelo_from_json(body)
+    except ESFError as exc:
+        return {"ok": False, "error": str(exc), "tipo": "ESFError"}, 422
+    except (KeyError, ValueError) as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 400
+
+    allow_errors = bool(body.get("allow_errors", False))
+    fmt = (request.args.get("format") or "json").lower()
+
+    if fmt == "json":
+        def _df_records(df):
+            # Las columnas de meses son pd.Timestamp; a str para serializar JSON.
+            d = df.copy()
+            d.columns = [
+                c.strftime("%Y-%m") if hasattr(c, "strftime") else str(c) for c in d.columns
+            ]
+            return d.astype(object).where(d.notna(), None).to_dict(orient="records")
+
+        from dataclasses import asdict
+
+        return {
+            "ok": modelo.ok,
+            "validacion": validacion_to_json(modelo),
+            "certificacion": _df_records(modelo.df_certificacion),
+            "er": _df_records(modelo.df_er),
+            "esf_corte": _df_records(modelo.df_esf_corte),
+            "esf_mensual": _df_records(modelo.df_esf_mensual),
+            # ER efectivamente usado (clave en er_modo=generado: la serie
+            # producida por base+bandas, para mostrarla en la UI).
+            "er_mensual_efectivo": [asdict(l) for l in modelo.inputs.er_mensual],
+            # Foto del ESF al corte por cuenta (para el boton "usar como
+            # saldos finales" en Tipo A cuando no hay ancla previa).
+            "saldos_corte": {
+                k: round(float(getattr(modelo.esf.corte(), k)), 2)
+                for k in (
+                    "efectivo", "cuentas_por_cobrar", "inventarios", "bienes_inmuebles",
+                    "mobiliario_equipos", "vehiculos", "depreciacion_acumulada",
+                    "tarjetas_credito", "proveedores", "impuestos_por_pagar",
+                    "gastos_acumulados", "creditos_hipotecarios", "creditos_consumo",
+                    "creditos_personales", "creditos_prendarios", "creditos_comerciales",
+                    "resultados_acumulados",
+                )
+            },
+            "resumen": {
+                "ingresos_brutos": modelo.er.total_ingresos(),
+                "ingresos_promedio": modelo.er.promedio_ingresos(),
+                "utilidad_periodo": modelo.er.total_utilidad_neta(),
+                "utilidad_promedio": modelo.er.promedio_utilidad(),
+                "efectivo_corte": modelo.esf.corte().efectivo,
+                "total_activos_corte": modelo.esf.corte().total_activos,
+                "capital_apertura": modelo.esf.capital_apertura,
+            },
+        }
+
+    if not modelo.ok and not allow_errors:
+        return {
+            "ok": False,
+            "error": "El modelo tiene errores de validacion",
+            "validacion": validacion_to_json(modelo),
+        }, 422
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
+        out_path = tmp.name
+
+    from motor.notas import construir_notas
+
+    # Vista del ESF elegida por certificacion: "corte" (foto final, default)
+    # o "mensual" (una columna por mes, como el ER).
+    esf_vista = "mensual" if str(body.get("esf_vista") or "corte").lower() == "mensual" else "corte"
+
+    # Hojas opcionales del Word (checks de la UI). Documentos del cliente
+    # SIEMPRE va; lo opcional son las notas y la hoja de fotos del negocio.
+    incluir_notas = bool(body.get("incluir_notas", True))
+    incluir_fotos = bool(body.get("incluir_fotos_negocio", False))
+
+    # Imagenes de soporte (documentos_ids): este endpoint es stateless y no
+    # abre sesion DB por defecto; si vienen ids, abrimos una efimera solo para
+    # resolver rutas. Si algo falla, el DOCX sale sin imagenes (tabla vacia).
+    docs_imagenes = None
+    fotos_negocio = None
+    doc_ids = list(body.get("documentos_ids") or [])
+    if doc_ids:
+        try:
+            _ses = session_factory(_get_db_engine())()
+            try:
+                soportes = DocumentoService(_ses).soportes_para(doc_ids)
+            finally:
+                _ses.close()
+            docs_imagenes = [s for s in soportes if s["tipo"] != "foto_negocio"] or None
+            fotos_negocio = [s for s in soportes if s["tipo"] == "foto_negocio"] or None
+        except Exception:
+            docs_imagenes = None
+            fotos_negocio = None
+
+    generar_documento_completo(
+        modelo.df_esf_mensual if esf_vista == "mensual" else modelo.df_esf_corte,
+        modelo.df_er,
+        modelo.df_datos,
+        modelo.df_certificacion,
+        out_path,
+        incluir_validacion=False,
+        tolerancia_validacion=1.0,
+        detener_si_error=False,
+        validacion_documentos=None,
+        validacion_llm=None,
+        esf_tipo=esf_vista,
+        notas_data=construir_notas(modelo) if incluir_notas else None,
+        docs_imagenes=docs_imagenes,
+        fotos_negocio=fotos_negocio,
+        incluir_fotos_negocio=incluir_fotos,
+    )
+
+    nombre_full = modelo.inputs.datos.nombre_completo
+    nombre = (nombre_full or "cliente").strip().split()[0] if nombre_full else "cliente"
+    safe = "".join(ch if ch.isalnum() else "_" for ch in nombre)[:40] or "cliente"
+    filename = f"certificacion_motor_v2_{safe}.docx"
+
+    @after_this_request
+    def _remove_motor_v2(response):
+        try:
+            Path(out_path).unlink(missing_ok=True)
+        except Exception:
+            pass
+        return response
+
+    return send_file(out_path, as_attachment=True, download_name=filename)
+
+
+# ---------------------- Persistencia Motor V2 (periodos engine='v2') ----------------------
+
+@app.post("/api/motor/v2/periodos")
+def motor_v2_crear_periodo():
+    """Crea un borrador V2 para un cliente. Body: {cliente_id, inputs:{...}}."""
+    try:
+        body = _json_body()
+        service = MotorV2Service(_db_session())
+        result = service.crear_borrador(
+            str(body.get("cliente_id") or ""), body.get("inputs") or {}, cpa_user=_cpa_user()
+        )
+        return {"ok": True, **result}, 201
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.get("/api/motor/v2/periodos")
+def motor_v2_listar_periodos():
+    try:
+        cliente_id = request.args.get("cliente_id") or ""
+        if not cliente_id:
+            return {"ok": False, "error": "Falta cliente_id"}, 400
+        return {"ok": True, "periodos": MotorV2Service(_db_session()).listar(cliente_id)}
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.get("/api/motor/v2/periodos/<periodo_id>")
+def motor_v2_obtener_periodo(periodo_id: str):
+    try:
+        return {"ok": True, **MotorV2Service(_db_session()).obtener(periodo_id)}
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.put("/api/motor/v2/periodos/<periodo_id>")
+def motor_v2_actualizar_periodo(periodo_id: str):
+    try:
+        body = _json_body()
+        result = MotorV2Service(_db_session()).actualizar(
+            periodo_id, body.get("inputs") or {}, cpa_user=_cpa_user()
+        )
+        return {"ok": True, **result}
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.post("/api/motor/v2/periodos/<periodo_id>/finalizar")
+def motor_v2_finalizar_periodo(periodo_id: str):
+    try:
+        result = MotorV2Service(_db_session()).finalizar(periodo_id, cpa_user=_cpa_user())
+        if not result.get("ok"):
+            return {**result, "error": "El modelo tiene errores de validacion"}, 422
+        return result
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.get("/api/motor/v2/periodos/<periodo_id>/documento")
+def motor_v2_documento(periodo_id: str):
+    try:
+        path = MotorV2Service(_db_session()).documento_path(periodo_id)
+        if not path:
+            return {"ok": False, "error": "Documento no generado; finaliza el periodo primero"}, 404
+        return send_file(path, as_attachment=True, download_name=Path(path).name)
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.get("/api/motor/v2/clientes/<cliente_id>/saldos-rollforward")
+def motor_v2_saldos_rollforward(cliente_id: str):
+    try:
+        return {"ok": True, **MotorV2Service(_db_session()).saldos_rollforward(cliente_id)}
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+# ------------------- Documentos soporte del cliente (imagenes) -------------------
+
+@app.post("/api/clientes/<cliente_id>/documentos")
+def api_subir_documento(cliente_id: str):
+    try:
+        archivo = request.files.get("archivo")
+        tipo = request.form.get("tipo") or "otro"
+        doc = DocumentoService(_db_session()).subir(cliente_id, archivo, tipo, cpa_user=_cpa_user())
+        return {"ok": True, "documento": doc}, 201
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.get("/api/clientes/<cliente_id>/documentos")
+def api_listar_documentos(cliente_id: str):
+    try:
+        return {"ok": True, "documentos": DocumentoService(_db_session()).listar(cliente_id)}
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.get("/api/documentos/<doc_id>/archivo")
+def api_servir_documento(doc_id: str):
+    try:
+        r = DocumentoService(_db_session()).ruta(doc_id)
+        if not r:
+            return {"ok": False, "error": "Documento no encontrado"}, 404
+        path, nombre = r
+        return send_file(path, download_name=nombre)
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
+@app.delete("/api/documentos/<doc_id>")
+def api_eliminar_documento(doc_id: str):
+    try:
+        if not DocumentoService(_db_session()).eliminar(doc_id, cpa_user=_cpa_user()):
+            return {"ok": False, "error": "Documento no encontrado"}, 404
+        return {"ok": True}
+    except Exception as exc:
+        return _service_error_response(exc)
 
 
 @app.post("/api/model/finals")

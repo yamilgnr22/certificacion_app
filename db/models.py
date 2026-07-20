@@ -85,6 +85,8 @@ class PeriodoCertificacion(Base):
     mes_final: Mapped[str] = mapped_column(String(7), nullable=False, index=True)
     mes_inicial: Mapped[str] = mapped_column(String(7), nullable=False)
     estado: Mapped[str] = mapped_column(String(30), nullable=False, index=True, default="borrador")
+    # Motor que interpreta payload_json: 'v1' simulador legado, 'v2' motor determinista.
+    engine: Mapped[str] = mapped_column(String(8), nullable=False, index=True, default="v1")
     tasa_cambio: Mapped[float] = mapped_column(Float, nullable=False)
     ingresos_base_usd: Mapped[float | None] = mapped_column(Float)
     variabilidad_ingresos_pct: Mapped[float | None] = mapped_column(Float)

@@ -1,0 +1,1206 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Motor V2 — Certificación Tipo A</title>
+<style>
+  :root {
+    /* Paleta verde Razer (misma que la UI anterior): acento #00e676 */
+    --bg: #121212; --panel: #1d1d1d; --panel2: #272727; --border: #383838;
+    --text: #e6e8ec; --muted: #9aa0ab; --accent: #00e676; --accent-700: #00c853;
+    --accent-on: #0a1a0e; --ok: #00e676; --err: #ff5252; --warn: #ffd54f;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font-family: system-ui, "Segoe UI", Roboto, sans-serif; font-size: 14px; }
+  header { padding: 16px 24px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 16px; position: sticky; top: 0;
+    background: var(--bg); z-index: 10; }
+  header h1 { font-size: 18px; margin: 0; }
+  header .badge { font-size: 12px; color: var(--muted); border: 1px solid var(--border);
+    padding: 2px 8px; border-radius: 12px; }
+  header a { margin-left: auto; color: var(--accent); text-decoration: none; font-size: 13px; }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px; }
+  .panel { background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px; margin-bottom: 18px; }
+  .panel h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--muted); margin: 0 0 14px; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .grid.g2 { grid-template-columns: repeat(2, 1fr); }
+  .grid.g4 { grid-template-columns: repeat(4, 1fr); }
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  input, select { width: 100%; background: var(--panel2); border: 1px solid var(--border);
+    color: var(--text); border-radius: 6px; padding: 8px; font-size: 13px; }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { border: 1px solid var(--border); padding: 3px; text-align: right; }
+  th { color: var(--muted); font-weight: 500; background: var(--panel2);
+    position: sticky; top: 0; }
+  th:first-child, td:first-child { text-align: left; }
+  td input { border: none; background: transparent; padding: 5px; text-align: right; }
+  td input:focus { background: var(--panel2); }
+  .scroll { overflow-x: auto; }
+  /* ER en orientacion contable: columna de concepto fija al scrollear meses */
+  #erTable th:first-child, #erTable td:first-child {
+    position: sticky; left: 0; background: var(--panel2); z-index: 2; min-width: 120px;
+  }
+  #erTable td input { min-width: 76px; }
+  #erTable td input:disabled { color: var(--muted); background: rgba(255,255,255,.02); }
+  .btn { background: var(--accent); color: #fff; border: none; border-radius: 6px;
+    padding: 9px 16px; font-size: 13px; cursor: pointer; font-weight: 500; }
+  .btn.secondary { background: var(--panel2); border: 1px solid var(--border); color: var(--text); }
+  .btn.small { padding: 5px 10px; font-size: 12px; }
+  .btn:hover { filter: brightness(1.1); }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .actions { position: sticky; bottom: 0; background: var(--bg); padding: 16px 0;
+    border-top: 1px solid var(--border); display: flex; gap: 12px; align-items: center; }
+  #resultado { margin-top: 8px; }
+  .pill { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+  .pill.ok { background: rgba(70,194,107,.15); color: var(--ok); }
+  .pill.err { background: rgba(242,85,90,.15); color: var(--err); }
+  .pill.info { background: rgba(0,230,118,.15); color: var(--accent); }
+  .doc-card { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px; width: 160px; text-align: center; }
+  .doc-card img { max-width: 100%; max-height: 95px; border-radius: 4px; object-fit: contain; }
+  .doc-card .nm { font-size: 10px; color: var(--muted); overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; margin: 4px 0; }
+  .doc-card .fila { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+  .doc-card label { font-size: 11px; margin: 0; display: flex; align-items: center; gap: 4px; color: var(--text); }
+  /* Previsualizacion de estados financieros (tras Validar) */
+  #previewEstados details { background: var(--panel2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 14px; margin-bottom: 10px; }
+  #previewEstados summary { font-weight: 600; color: var(--text); font-size: 13px; }
+  #previewEstados table { margin-top: 10px; }
+  #previewEstados td, #previewEstados th { padding: 4px 8px; }
+  #previewEstados .neg { color: var(--err); }
+  #previewEstados tr.tot td { font-weight: 700; border-top: 1px solid var(--muted); }
+  #previewEstados tr.grp td { font-weight: 700; color: var(--muted); }
+  .msg { padding: 8px 12px; border-radius: 6px; margin: 6px 0; font-size: 12px; }
+  .msg.err { background: rgba(242,85,90,.12); color: var(--err); border: 1px solid rgba(242,85,90,.3); }
+  .msg.warn { background: rgba(230,162,60,.12); color: var(--warn); border: 1px solid rgba(230,162,60,.3); }
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 12px 0; }
+  .kpi { background: var(--panel2); border-radius: 8px; padding: 10px 12px; }
+  .kpi .l { font-size: 11px; color: var(--muted); }
+  .kpi .v { font-size: 16px; font-weight: 600; margin-top: 2px; }
+  details { margin-top: 8px; } summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  .hint { font-size: 12px; color: var(--muted); margin: 4px 0 10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Motor V2 — Certificación Tipo A</h1>
+  <span class="badge">motor determinista · sin simulación</span>
+  <a href="/">← volver a la app</a>
+</header>
+<main>
+  <div class="panel">
+    <h2>Cliente y guardado</h2>
+    <div class="row">
+      <div style="flex:1;min-width:220px"><label>Cliente</label><select id="selCliente"><option value="">— seleccionar cliente —</option></select></div>
+      <div style="flex:1.4;min-width:280px"><label>Certificaciones V2 guardadas</label><select id="selPeriodo"><option value="">— ninguna —</option></select></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn secondary small" id="btnCrearNuevoCliente">➕ Crear nuevo cliente</button>
+      <button class="btn secondary small" id="btnNuevo" title="Empieza una certificación nueva en blanco para el cliente seleccionado">Nueva certificación</button>
+      <button class="btn secondary small" id="btnAbrir" title="Retoma una certificación guardada de la lista de la derecha">Abrir guardada</button>
+      <button class="btn small" id="btnGuardar">Guardar borrador</button>
+      <button class="btn secondary small" id="btnFinalizar">Finalizar → DOCX</button>
+      <span id="persistBadge" class="pill" style="display:none"></span>
+      <span id="persistInfo" class="hint" style="margin:0"></span>
+    </div>
+    <p class="hint" style="margin-top:8px">El borrador se guarda en la base de la app (SQLite), ligado al cliente. "Finalizar" corre el motor, exige los 9 invariantes y deja el periodo inmutable con su DOCX.</p>
+  </div>
+
+  <div class="panel" id="panelNuevoCliente" style="display:none">
+    <h2>Nuevo cliente</h2>
+    <div class="row" style="margin-bottom:10px">
+      <div><label>Cédula — frente (imagen)</label><input type="file" id="ncCedFront" accept="image/*"></div>
+      <div><label>Cédula — reverso</label><input type="file" id="ncCedBack" accept="image/*"></div>
+      <div><label>Matrícula (imagen)</label><input type="file" id="ncMatricula" accept="image/*"></div>
+    </div>
+    <div class="row" style="margin-bottom:12px">
+      <button class="btn secondary small" id="btnExtraerDocs">🔍 Extraer datos de las imágenes</button>
+      <span class="hint" id="ncInfo" style="margin:0"></span>
+    </div>
+    <div class="grid" id="ncForm"></div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn small" id="btnCrearCliente">Crear cliente</button>
+      <button class="btn secondary small" id="btnCancelarCliente">Cancelar</button>
+    </div>
+    <p class="hint" style="margin-top:8px">⚠ Las imágenes se envían a OpenAI para extraer los datos (misma función que la pantalla de Clientes). Revisá lo extraído antes de crear. Los campos con * son obligatorios.</p>
+  </div>
+
+  <div class="panel">
+    <h2>Datos del cliente</h2>
+    <div class="grid" id="datos"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Periodo</h2>
+    <div class="grid g4" id="periodo"></div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn secondary small" id="genMeses">↻ Regenerar filas del ER según periodo</button>
+      <button class="btn secondary small" id="copiaGastos">⇊ Copiar gastos del primer mes a todos</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Estado de Resultados (mensual, en NIO)</h2>
+    <div class="row" style="margin-bottom:10px">
+      <div style="min-width:280px">
+        <label>Modo del ER</label>
+        <select id="selModoER">
+          <option value="manual">Manual — datos reales mes a mes</option>
+          <option value="generado">Generado — base + bandas (reproducible)</option>
+        </select>
+      </div>
+    </div>
+    <div class="grid g4" id="erGenParams" style="display:none;margin-bottom:12px"></div>
+    <p class="hint" id="erHint">Ingresá los números reales del cliente. Gastos Financieros los calcula el motor desde las deudas activas.</p>
+    <div class="scroll"><table id="erTable"></table></div>
+  </div>
+
+  <div class="panel">
+    <h2>Saldos iniciales del balance (apertura, NIO)</h2>
+    <p class="hint">Las cuentas de crédito las define el módulo de deuda; podés dejarlas en 0 acá.</p>
+    <div class="grid g4" id="saldosIni"></div>
+  </div>
+
+  <div class="panel" id="panelDepPPE">
+    <h2>Depreciación de PPE</h2>
+    <p class="hint">Línea recta por componente sobre el <b>saldo inicial</b>: valor × % a depreciar ÷ (vida útil × 12). Activado, el total <b>reemplaza</b> al gasto de depreciación manual del ER en todos los meses.</p>
+    <label style="display:inline-flex;align-items:center;gap:8px;margin:0 0 10px;white-space:nowrap;cursor:pointer">
+      <input type="checkbox" id="chkDepPPE"> Calcular la depreciación desde los componentes de PPE
+    </label>
+    <div id="depPPEGrid" style="display:none">
+      <div class="scroll"><table id="depPPETable"></table></div>
+      <div class="row" style="margin-top:8px;align-items:center">
+        <p class="hint" id="depPPETotal" style="margin:0"></p>
+        <button class="btn secondary small" id="btnAnclaDep" style="display:none"
+          title="Tipo A: pone en saldos finales Depreciación Acum. = inicial − (dep. mensual × meses del periodo), para que el ancla cuadre con el invariante #8">
+          ⇑ Cuadrar Depreciación Acum. final</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" id="panelSaldosFin">
+    <h2>Saldos finales del balance (ancla dura Tipo A, NIO)</h2>
+    <div class="grid g4" id="saldosFin"></div>
+  </div>
+
+  <div class="panel" id="panelObjetivos" style="display:none">
+    <h2>Cuentas objetivo (Tipo B — bandas de oscilación)</h2>
+    <p class="hint">La caja oscila alrededor del objetivo dentro de la banda (±tolerancia); el excedente sale como retiros de patrimonio. Semilla fija = resultado reproducible.</p>
+    <div class="grid g4" id="objetivos"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Deudas <button class="btn secondary small" id="addDeuda" style="margin-left:8px">+ Agregar deuda</button></h2>
+    <p class="hint">incluir_en_er = sí para deuda activa (afecta ER/ESF); no para soporte documental. saldos_mensuales (JSON) solo para tarjetas revolving con saldo variable.</p>
+    <div class="row" style="margin-bottom:10px;align-items:flex-end">
+      <div><label>Reporte de crédito (TransUnion PDF o SIBOIF imagen)</label><input type="file" id="reporteDeudas" accept=".pdf,application/pdf,image/*"></div>
+      <button class="btn secondary small" id="btnExtraerDeudas">📄 Extraer deudas del reporte</button>
+      <span class="hint" id="deudasInfo" style="margin:0"></span>
+    </div>
+    <p class="hint">Detecta solo la fuente: <b>TransUnion</b> (PDF) trae el detalle por deuda; <b>SIBOIF</b> (foto/captura) viene agregado por tipo/moneda — completás número, entidad, cuota y fecha a mano. El reporte se procesa con OpenAI (servidor externo); revisá cada fila y decidí cuáles entran al ER.</p>
+    <div class="scroll"><table id="deudasTable"></table></div>
+  </div>
+
+  <div class="panel" id="panelDocs">
+    <h2>Documentos del cliente (imágenes para el DOCX)</h2>
+    <p class="hint">Biblioteca del cliente: subí una vez (cédula, matrícula de cada año) y marcá con el check cuáles entran en <b>esta</b> certificación. Sin imágenes marcadas, el DOCX lleva la tabla vacía de siempre (pegado manual).</p>
+    <div class="row" style="margin-bottom:10px">
+      <div><label>Imagen</label><input type="file" id="docArchivo" accept="image/*"></div>
+      <div><label>Tipo</label><select id="docTipo">
+        <option value="cedula_front">Cédula — frente</option>
+        <option value="cedula_back">Cédula — reverso</option>
+        <option value="matricula_1">Matrícula 1</option>
+        <option value="soporte_1">Soporte matrícula 1</option>
+        <option value="matricula_2">Matrícula 2</option>
+        <option value="soporte_2">Soporte matrícula 2</option>
+        <option value="matricula_3">Matrícula 3</option>
+        <option value="soporte_3">Soporte matrícula 3</option>
+        <option value="foto_negocio">Foto del negocio</option>
+        <option value="otro">Otro</option>
+      </select></div>
+      <button class="btn secondary small" id="btnSubirDoc">⬆ Subir a la biblioteca</button>
+      <span class="hint" id="docsInfo" style="margin:0"></span>
+    </div>
+    <div id="docsLista" class="row" style="gap:14px;align-items:flex-start"></div>
+  </div>
+
+  <div class="panel" id="panelHojas">
+    <h2>Hojas opcionales del Word</h2>
+    <p class="hint">Los documentos del cliente (cédula, matrículas y soportes) SIEMPRE se imprimen. Acá activás/desactivás las hojas opcionales.</p>
+    <div style="display:flex;gap:32px;flex-wrap:wrap">
+      <label style="display:inline-flex;align-items:center;gap:8px;margin:0;white-space:nowrap;cursor:pointer">
+        <input type="checkbox" id="chkIncluirNotas" checked> Notas a los estados financieros (integraciones)
+      </label>
+      <label style="display:inline-flex;align-items:center;gap:8px;margin:0;white-space:nowrap;cursor:pointer"
+        title="Agrega la hoja 'Fotografías del Negocio'. Subí las fotos del local a la biblioteca con tipo 'Foto del negocio' y marcalas; sin fotos marcadas la hoja sale con la tabla vacía para pegado manual.">
+        <input type="checkbox" id="chkFotosNegocio"> Fotografías del negocio (local del cliente)
+      </label>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button class="btn" id="btnValidar">Validar (calcular)</button>
+    <button class="btn secondary" id="btnDocx">Generar DOCX</button>
+    <button class="btn secondary" id="btnGloria">Cargar ejemplo Gloria (A)</button>
+    <button class="btn secondary" id="btnDemoB">Cargar ejemplo Tipo B</button>
+    <button class="btn secondary" id="btnUsarCorte" style="display:none" title="Copia el ESF calculado al panel de saldos finales (Tipo A sin ancla previa)">⇑ Usar calculados como saldos finales</button>
+    <span id="estado" style="color:var(--muted);font-size:12px"></span>
+  </div>
+
+  <div class="panel" id="resultadoPanel" style="display:none">
+    <h2>Resultado</h2>
+    <div id="resultado"></div>
+    <div id="previewEstados" style="margin-top:14px"></div>
+  </div>
+</main>
+
+<script>
+const ESF_FIELDS = [
+  ["efectivo","Efectivo"],["cuentas_por_cobrar","Cuentas por Cobrar"],["inventarios","Inventarios"],
+  ["bienes_inmuebles","Bienes Inmuebles"],["mobiliario_equipos","Mobiliario y Equipos"],["vehiculos","Vehiculos"],
+  ["depreciacion_acumulada","(-) Depreciacion Acum."],["tarjetas_credito","Tarjetas de Credito"],
+  ["proveedores","Proveedores"],["impuestos_por_pagar","Impuestos por Pagar"],["gastos_acumulados","Gastos Acumulados"],
+  ["creditos_hipotecarios","Creditos Hipotecarios"],["creditos_consumo","Creditos Consumo"],
+  ["creditos_personales","Creditos Personales"],["creditos_prendarios","Creditos Prendarios"],
+  ["creditos_comerciales","Creditos Comerciales"],["resultados_acumulados","Resultados Acumulados"],
+];
+const DATOS_FIELDS = [
+  ["nombre_completo","Nombre completo"],["cedula","Cedula"],["contacto","Contacto"],
+  ["domicilio","Domicilio"],["direccion_negocio","Direccion negocio"],["giro","Giro"],
+  ["regimen","Regimen"],["matricula","Matricula"],["antiguedad","Antiguedad"],["empleados","Empleados"],
+  ["estado_civil","Estado civil"],["profesion","Profesion"],["sexo","Sexo"],["banco","Banco"],
+  ["fecha_certificacion","Fecha certificacion"],
+];
+const PERIODO_FIELDS = [
+  ["mes_inicial","Mes inicial (YYYY-MM)"],["mes_final","Mes final (YYYY-MM)"],
+  ["tasa_cambio","Tasa de cambio"],["tipo","Tipo de certificación"],
+  ["esf_vista","Vista del ESF en el DOCX"],
+];
+const OBJ_FIELDS = [
+  ["caja_objetivo","Caja objetivo (NIO)"],["caja_tolerancia_pct","Caja tolerancia %"],
+  ["inventario_objetivo","Inventario objetivo (0 = no)"],["inventario_tolerancia_pct","Inventario tolerancia %"],
+  ["seed","Semilla (reproducibilidad)"],
+];
+const ERGEN_FIELDS = [
+  ["ingreso_base","Ingreso base (NIO/mes)"],["banda_ingreso_pct","Banda ingresos %"],
+  ["costo_pct_sobre_venta","Costo % sobre venta"],["banda_costo_pct","Banda costo %"],
+  ["gasto_depreciacion_mensual","Depreciación mensual (NIO)"],["seed","Semilla ER"],
+];
+const GASTO_KEYS = ["sueldos_salarios","servicios_publicos","alcaldia_dgi","combustible","publicidad","mantenimientos","renta","seguros","otros_gastos"];
+const ER_COLS = [
+  ["ingresos","Ingresos"],["costo_ventas","Costo ventas"],["sueldos_salarios","Sueldos"],
+  ["servicios_publicos","Servicios"],["alcaldia_dgi","Alcaldia/DGI"],["combustible","Combustible"],
+  ["publicidad","Publicidad"],["mantenimientos","Mantenim."],["renta","Renta"],
+  ["gasto_depreciacion","Depreciacion"],["seguros","Seguros"],["otros_gastos","Otros"],
+];
+
+function el(tag, attrs={}, html){ const e=document.createElement(tag); Object.assign(e,attrs); if(html!=null)e.innerHTML=html; return e; }
+function buildFields(containerId, defs, values={}){
+  const c=document.getElementById(containerId); c.innerHTML="";
+  defs.forEach(([k,l])=>{
+    const w=el("div"); w.appendChild(el("label",{},l));
+    let i;
+    if(k==="tipo"){
+      i=el("select"); ["A","B"].forEach(o=>i.appendChild(el("option",{value:o},o)));
+      i.value=(values[k]||"A"); i.onchange=()=>toggleTipo();
+    } else if(k==="giro_negocio_id"){
+      i=el("select"); i.appendChild(el("option",{value:""},"— seleccionar giro —"));
+      (girosCache||[]).forEach(g=>i.appendChild(el("option",{value:g.id},g.nombre||g.id)));
+      i.value=(values[k]||"");
+    } else if(k==="sexo" && containerId==="ncForm"){
+      // Solo en el formulario de nuevo cliente: el backend valida el catalogo.
+      i=el("select");
+      [["",""],["femenino","Femenino"],["masculino","Masculino"],["otro","Otro"]]
+        .forEach(([v,l])=>i.appendChild(el("option",{value:v},l)));
+      i.value=String(values[k]||"").toLowerCase();
+    } else if(k==="esf_vista"){
+      i=el("select");
+      [["corte","Al corte (foto final)"],["mensual","Mensual (todos los meses)"]]
+        .forEach(([v,l])=>i.appendChild(el("option",{value:v},l)));
+      i.value=(values[k]||"corte");
+    } else {
+      i=el("input",{value: values[k]!=null?values[k]:"", type: (k==="fecha_certificacion")?"date":"text"});
+    }
+    i.dataset.key=k; w.appendChild(i); c.appendChild(w);
+  });
+}
+function readFields(containerId){
+  const o={}; document.querySelectorAll("#"+containerId+" input, #"+containerId+" select").forEach(i=>{ o[i.dataset.key]=i.value; }); return o;
+}
+function toggleTipo(){
+  const p=readFields("periodo"); const esB=(p.tipo||"A").toUpperCase()==="B";
+  document.getElementById("panelSaldosFin").style.display=esB?"none":"";
+  document.getElementById("panelObjetivos").style.display=esB?"":"none";
+}
+function modoER(){ return (document.getElementById("selModoER")||{}).value||"manual"; }
+function toggleModoER(){
+  const gen=modoER()==="generado";
+  document.getElementById("erGenParams").style.display=gen?"":"none";
+  document.getElementById("erHint").textContent = gen
+    ? "Ingresos, costo y depreciación los genera el motor (base + bandas, seed fija); esas filas quedan en solo lectura y se llenan al Validar. Los gastos operativos se toman del PRIMER mes como columna fija; si editás un mes puntual, se guarda como override."
+    : "Ingresá los números reales del cliente. Gastos Financieros los calcula el motor desde las deudas activas.";
+  recalcDepPPE();
+}
+function syncERDisabled(){
+  const gen=modoER()==="generado";
+  ["ingresos","costo_ventas","gasto_depreciacion"].forEach(k=>{
+    const tr=document.querySelector('#erTable tr[data-key="'+k+'"]'); if(!tr) return;
+    const dep=(k==="gasto_depreciacion") && depPPEActivo();
+    tr.querySelectorAll("input").forEach(i=>{ i.disabled=gen||dep; });
+  });
+}
+
+// ---------- Depreciación por componentes de PPE (línea recta) ----------
+const DEP_PPE_CUENTAS=[["bienes_inmuebles","Bienes Inmuebles"],["mobiliario_equipos","Mobiliario y Equipos"],["vehiculos","Vehículos"]];
+function depPPEActivo(){ const c=document.getElementById("chkDepPPE"); return !!(c&&c.checked); }
+function buildDepPPE(vals){
+  vals=vals||{};
+  const t=document.getElementById("depPPETable"); t.innerHTML="";
+  const head=el("tr");
+  ["Componente","Valor (saldo inicial)","% a depreciar","Vida útil (años)","Dep. mensual"].forEach(h=>head.appendChild(el("th",{},h)));
+  t.appendChild(head);
+  DEP_PPE_CUENTAS.forEach(([cuenta,label])=>{
+    const cfg=vals[cuenta]||{};
+    const tr=el("tr"); tr.dataset.cuenta=cuenta;
+    tr.appendChild(el("td",{},label));
+    const tdVal=el("td",{style:"text-align:right;color:var(--muted)"},"0.00"); tdVal.dataset.k="valor"; tr.appendChild(tdVal);
+    const iPct=el("input",{value:cfg.pct_depreciable!=null?cfg.pct_depreciable:"", placeholder:"ej. 20"}); iPct.dataset.k="pct";
+    const iVida=el("input",{value:cfg.vida_util_anios!=null?cfg.vida_util_anios:"", placeholder:"ej. 10"}); iVida.dataset.k="vida";
+    [iPct,iVida].forEach(i=>{ i.style.width="90px"; const td=el("td"); td.appendChild(i); tr.appendChild(td); });
+    const tdMen=el("td",{style:"text-align:right;font-weight:600"},"—"); tdMen.dataset.k="mensual"; tr.appendChild(tdMen);
+    t.appendChild(tr);
+  });
+}
+function leerDepPPE(){
+  const out={};
+  document.querySelectorAll("#depPPETable tr[data-cuenta]").forEach(tr=>{
+    const pct=parseFloat(tr.querySelector('input[data-k="pct"]').value||0)||0;
+    const vida=parseFloat(tr.querySelector('input[data-k="vida"]').value||0)||0;
+    if(pct>0&&vida>0) out[tr.dataset.cuenta]={pct_depreciable:pct, vida_util_anios:vida};
+  });
+  return out;
+}
+function _fmtDep(v){ return v.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function recalcDepPPE(){
+  const activo=depPPEActivo();
+  document.getElementById("depPPEGrid").style.display=activo?"":"none";
+  const saldos=readFields("saldosIni");
+  let total=0;
+  document.querySelectorAll("#depPPETable tr[data-cuenta]").forEach(tr=>{
+    const valor=parseFloat(saldos[tr.dataset.cuenta]||0)||0;
+    tr.querySelector('[data-k="valor"]').textContent=_fmtDep(valor);
+    const pct=parseFloat(tr.querySelector('input[data-k="pct"]').value||0)||0;
+    const vida=parseFloat(tr.querySelector('input[data-k="vida"]').value||0)||0;
+    const mensual=(pct>0&&vida>0)? Math.round(valor*pct/100/(vida*12)*100)/100 : 0;
+    tr.querySelector('[data-k="mensual"]').textContent=(pct>0&&vida>0)?_fmtDep(mensual):"—";
+    total+=mensual;
+  });
+  total=Math.round(total*100)/100;
+  window._depPPETotal=total;
+  document.getElementById("depPPETotal").innerHTML =
+    "Depreciación mensual total: <b>"+_fmtDep(total)+"</b> — este valor va al ER de todos los meses.";
+  // El cuadre del ancla solo aplica en Tipo A (saldos finales como ancla dura)
+  const esA=((readFields("periodo").tipo)||"A").toUpperCase()==="A";
+  document.getElementById("btnAnclaDep").style.display=(activo&&esA)?"":"none";
+  // Espejo en el ER para que se vea lo que manda el cálculo
+  const f=document.querySelector('#erGenParams input[data-key="gasto_depreciacion_mensual"]');
+  if(f){ f.disabled=activo; if(activo) f.value=total; }
+  const trER=document.querySelector('#erTable tr[data-key="gasto_depreciacion"]');
+  if(trER && activo) trER.querySelectorAll("input").forEach(i=>{ i.value=total; });
+  syncERDisabled();
+}
+function erGastosDesdeGrid(){
+  // Columna fija = primer mes; overrides = celdas de otros meses que difieren.
+  const t=document.getElementById("erTable");
+  const meses=JSON.parse(t.dataset.meses||"[]");
+  const filas={};
+  t.querySelectorAll("tr[data-key]").forEach(tr=>{
+    const k=tr.dataset.key; if(!GASTO_KEYS.includes(k)) return;
+    filas[k]={}; tr.querySelectorAll("input").forEach(i=>{ filas[k][i.dataset.mes]=parseFloat(i.value||0); });
+  });
+  const fijos={}; const overrides={};
+  GASTO_KEYS.forEach(k=>{ fijos[k]=(filas[k]&&filas[k][meses[0]])||0; });
+  meses.slice(1).forEach(m=>{
+    GASTO_KEYS.forEach(k=>{
+      const v=(filas[k]&&filas[k][m])||0;
+      if(v!==fijos[k]){ (overrides[m]=overrides[m]||{})[k]=v; }
+    });
+  });
+  return {fijos, overrides};
+}
+function pintarERGenerado(lineas){
+  (lineas||[]).forEach(r=>{
+    ["ingresos","costo_ventas","gasto_depreciacion"].forEach(k=>{
+      const tr=document.querySelector('#erTable tr[data-key="'+k+'"]'); if(!tr) return;
+      tr.querySelectorAll("input").forEach(i=>{ if(i.dataset.mes===r.mes) i.value=r[k]; });
+    });
+  });
+}
+
+function mesesEntre(ini, fin){
+  const out=[]; let [y,m]=ini.split("-").map(Number); const [ey,em]=fin.split("-").map(Number);
+  while(y<ey || (y===ey && m<=em)){ out.push(`${y}-${String(m).padStart(2,"0")}`); m++; if(m>12){m=1;y++;} if(out.length>60)break; }
+  return out;
+}
+
+function buildER(meses, prefill={}){
+  // Orientacion contable: conceptos en filas, meses en columnas (como el ER fuente).
+  const t=document.getElementById("erTable"); t.innerHTML="";
+  t.dataset.meses=JSON.stringify(meses);
+  const head=el("tr"); head.appendChild(el("th",{},"Concepto"));
+  meses.forEach(m=>head.appendChild(el("th",{},m)));
+  t.appendChild(head);
+  ER_COLS.forEach(([k,l])=>{
+    const tr=el("tr"); tr.dataset.key=k;
+    tr.appendChild(el("td",{},l));
+    meses.forEach(m=>{
+      const td=el("td"); const i=el("input",{type:"number", value:(prefill[m]&&prefill[m][k]!=null)?prefill[m][k]:0});
+      i.dataset.mes=m; td.appendChild(i); tr.appendChild(td);
+    });
+    t.appendChild(tr);
+  });
+  if(typeof syncERDisabled==="function") syncERDisabled();
+}
+function readER(){
+  const t=document.getElementById("erTable");
+  const meses=JSON.parse(t.dataset.meses||"[]");
+  const porMes={}; meses.forEach(m=>porMes[m]={mes:m});
+  t.querySelectorAll("tr[data-key]").forEach(tr=>{
+    const k=tr.dataset.key;
+    tr.querySelectorAll("input").forEach(i=>{ porMes[i.dataset.mes][k]=parseFloat(i.value||0); });
+  });
+  return meses.map(m=>porMes[m]);
+}
+
+const DEUDA_COLS = ["numero","entidad","tipo_credito","estrategia","moneda","valor_inicial","saldo_reportado","cuota","fecha_otorgamiento","fecha_vencimiento","saldo_apertura","incluir_en_er","saldos_mensuales"];
+function addDeudaRow(d={}){
+  const t=document.getElementById("deudasTable");
+  if(!t.querySelector("tr")){ const h=el("tr"); DEUDA_COLS.forEach(c=>h.appendChild(el("th",{},c))); h.appendChild(el("th",{},"")); t.appendChild(h); }
+  const tr=el("tr");
+  DEUDA_COLS.forEach(c=>{
+    const td=el("td");
+    if(c==="estrategia"){ const s=el("select"); ["amortizable","bullet","revolving"].forEach(o=>s.appendChild(el("option",{value:o},o))); s.value=d[c]||"amortizable"; s.dataset.key=c; td.appendChild(s); }
+    else if(c==="moneda"){ const s=el("select"); ["NIO","USD"].forEach(o=>s.appendChild(el("option",{value:o},o))); s.value=d[c]||"NIO"; s.dataset.key=c; td.appendChild(s); }
+    else if(c==="incluir_en_er"){ const s=el("select"); [["true","si"],["false","no"]].forEach(([v,l])=>s.appendChild(el("option",{value:v},l))); s.value=(d[c]===false?"false":"true"); s.dataset.key=c; td.appendChild(s); }
+    else {
+      const i=el("input",{value:d[c]!=null?(typeof d[c]==="object"?JSON.stringify(d[c]):d[c]):""});
+      i.dataset.key=c; i.style.minWidth=(c==="saldos_mensuales"?"160px":"80px");
+      if(c==="fecha_otorgamiento"||c==="fecha_vencimiento"){ i.placeholder="AAAA-MM"; i.title="Formato AAAA-MM-DD o AAAA-MM"; }
+      td.appendChild(i);
+    }
+    tr.appendChild(td);
+  });
+  const tdx=el("td"); const b=el("button",{className:"btn secondary small"},"X"); b.onclick=()=>tr.remove(); tdx.appendChild(b); tr.appendChild(tdx);
+  t.appendChild(tr);
+}
+function readDeudas(){
+  const out=[]; document.querySelectorAll("#deudasTable tr").forEach(tr=>{
+    if(tr.querySelector("th"))return; const d={};
+    tr.querySelectorAll("input,select").forEach(i=>{
+      let v=i.value; const k=i.dataset.key;
+      if(["valor_inicial","saldo_reportado","cuota","saldo_apertura"].includes(k)) v = v===""?null:parseFloat(v);
+      else if(k==="incluir_en_er") v = (v==="true");
+      else if(k==="saldos_mensuales") v = v.trim()?JSON.parse(v):null;
+      else if(k==="fecha_vencimiento" && v==="") v=null;
+      d[k]=v;
+    });
+    if(d.numero) out.push(d);
+  }); return out;
+}
+
+function collect(){
+  const p=readFields("periodo");
+  const tipo=(p.tipo||"A").toUpperCase();
+  const out={
+    esf_vista: (p.esf_vista||"corte"),
+    incluir_notas: document.getElementById("chkIncluirNotas").checked,
+    incluir_fotos_negocio: document.getElementById("chkFotosNegocio").checked,
+    documentos_ids: [...docsSeleccion],
+    ...(depPPEActivo() && Object.keys(leerDepPPE()).length ? {depreciacion_ppe: leerDepPPE()} : {}),
+    periodo: {tipo:tipo, mes_inicial:p.mes_inicial, mes_final:p.mes_final, tasa_cambio:parseFloat(p.tasa_cambio||36.6243)},
+    datos: (()=>{ const d=readFields("datos"); d.empleados=parseInt(d.empleados||0); return d; })(),
+    saldos_iniciales: numify(readFields("saldosIni")),
+    deudas: readDeudas(),
+  };
+  if(modoER()==="generado"){
+    const g=readFields("erGenParams");
+    const {fijos, overrides}=erGastosDesdeGrid();
+    out.er_modo="generado";
+    out.er_generado={
+      ingreso_base: parseFloat(g.ingreso_base||0),
+      banda_ingreso_pct: parseFloat(g.banda_ingreso_pct||20),
+      costo_pct_sobre_venta: parseFloat(g.costo_pct_sobre_venta||0),
+      banda_costo_pct: parseFloat(g.banda_costo_pct||5),
+      gasto_depreciacion_mensual: parseFloat(g.gasto_depreciacion_mensual||0),
+      seed: g.seed||"",
+      gastos_fijos: fijos,
+      gastos_overrides: overrides,
+    };
+  } else {
+    out.er_modo="manual";
+    out.er_mensual=readER();
+  }
+  if(tipo==="B"){
+    const o=readFields("objetivos"); const co=[];
+    if(parseFloat(o.caja_objetivo||0)>0) co.push({cuenta:"efectivo", objetivo:parseFloat(o.caja_objetivo), tolerancia_pct:parseFloat(o.caja_tolerancia_pct||20)});
+    if(parseFloat(o.inventario_objetivo||0)>0) co.push({cuenta:"inventarios", objetivo:parseFloat(o.inventario_objetivo), tolerancia_pct:parseFloat(o.inventario_tolerancia_pct||20)});
+    out.cuentas_objetivo=co;
+    if(o.seed) out.seed=o.seed;
+  } else {
+    out.saldos_finales=numify(readFields("saldosFin"));
+  }
+  return out;
+}
+function numify(o){ const r={}; for(const k in o){ r[k]= o[k]===""?0:parseFloat(o[k]); } return r; }
+function fmt(n){ return (n==null||isNaN(n))?"-":Number(n).toLocaleString("es-NI",{maximumFractionDigits:0}); }
+
+// ---- Previsualizacion de estados financieros (sin generar el Word) ----
+function _fmtCelda(v){
+  if(v==null || v==="") return {t:"", neg:false, num:false};
+  if(typeof v === "number"){
+    const neg=v<0;
+    const t=Math.abs(v).toLocaleString("es-NI",{maximumFractionDigits:0});
+    return {t: neg?("("+t+")"):t, neg, num:true};
+  }
+  return {t:String(v), neg:false, num:false};
+}
+function _tablaDesdeRecords(records, opciones){
+  opciones=opciones||{};
+  if(!records || !records.length) return null;
+  const skip=new Set(opciones.skipCols||[]);
+  const cols=Object.keys(records[0]).filter(c=>!skip.has(c));
+  // Flask ordena las claves JSON alfabeticamente ("2026-01" < "Descripcion"):
+  // la columna de etiquetas debe ir SIEMPRE primera.
+  const iDesc=cols.indexOf("Descripcion");
+  if(iDesc>0){ cols.splice(iDesc,1); cols.unshift("Descripcion"); }
+  const tabla=el("table");
+  const thead=el("tr");
+  cols.forEach(c=>thead.appendChild(el("th",{}, c.startsWith("Unnamed")?"":c)));
+  tabla.appendChild(thead);
+  records.forEach(r=>{
+    const vals=cols.map(c=>r[c]);
+    // saltar filas de relleno (todo vacio)
+    if(vals.every(v=>v==null || v==="")) return;
+    const primera=String(vals[0]==null?"":vals[0]).trim();
+    const tr=el("tr");
+    if(/^(Total|\(=\)|Ingresos\/)/.test(primera)) tr.className="tot";
+    else if(/^(Activos|Pasivos|Patrimonio|Corrientes|No Corrientes|Propiedad Planta|\(-\) Gastos operativos)$/.test(primera)
+            && vals.slice(1).every(v=>v==null||v==="")) tr.className="grp";
+    vals.forEach((v,idx)=>{
+      const f=_fmtCelda(v);
+      const td=el("td",{}, f.t);
+      td.style.textAlign=(idx===0 || !f.num)?"left":"right";
+      if(f.neg) td.className="neg";
+      tr.appendChild(td);
+    });
+    tabla.appendChild(tr);
+  });
+  return tabla;
+}
+function renderPreviewEstados(j){
+  const cont=document.getElementById("previewEstados");
+  cont.innerHTML="";
+  if(!j || j.error) return;
+  const bloques=[];
+  const er=_tablaDesdeRecords(j.er, {skipCols:["Base"]});
+  if(er) bloques.push(["📊 Estado de Resultados", er, true]);
+  const vistaMensual=((readFields("periodo").esf_vista)||"corte")==="mensual";
+  const esf=_tablaDesdeRecords(vistaMensual ? j.esf_mensual : j.esf_corte);
+  if(esf) bloques.push(["🏛 Estado de Situación Financiera ("+(vistaMensual?"mensual":"al corte")+")", esf, true]);
+  bloques.forEach(([titulo, tabla, abierto])=>{
+    const det=el("details"); if(abierto) det.open=true;
+    det.appendChild(el("summary",{}, titulo));
+    const scroll=el("div",{className:"scroll"});
+    scroll.appendChild(tabla);
+    det.appendChild(scroll);
+    cont.appendChild(det);
+  });
+}
+
+async function validar(){
+  setEstado("Calculando...");
+  try{
+    const r=await fetch("/api/motor/v2/certificar?format=json",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(collect())});
+    const j=await r.json();
+    renderResultado(j, r.status);
+    if(modoER()==="generado" && j.er_mensual_efectivo){
+      // Red de seguridad: si la tabla quedo desincronizada del periodo, alinearla
+      // a los meses que REALMENTE calculo el motor antes de pintar los valores.
+      const mesesMotor=j.er_mensual_efectivo.map(x=>x.mes);
+      const mesesTabla=JSON.parse(document.getElementById("erTable").dataset.meses||"[]");
+      if(JSON.stringify(mesesMotor)!==JSON.stringify(mesesTabla)){
+        buildER(mesesMotor, erSnapshot()); copiarGastosSilencioso();
+      }
+      pintarERGenerado(j.er_mensual_efectivo);
+    }
+    // Tipo A sin ancla previa: ofrecer copiar el corte calculado a saldos finales
+    ultimoCorte = j.saldos_corte || null;
+    const esA = ((readFields("periodo").tipo)||"A").toUpperCase()==="A";
+    document.getElementById("btnUsarCorte").style.display = (ultimoCorte && esA) ? "" : "none";
+    // Previsualizar los estados financieros como quedarian en el Word
+    renderPreviewEstados(j);
+  }catch(e){ setEstado("Error: "+e.message); }
+}
+let ultimoCorte=null;
+function usarCorteComoFinales(){
+  if(!ultimoCorte){ setEstado("Primero pulsa Validar para calcular el corte."); return; }
+  buildFields("saldosFin", ESF_FIELDS, ultimoCorte);
+  setEstado("Saldos finales tomados del corte calculado. Pulsa Validar de nuevo para confirmar.");
+}
+function renderResultado(j, status){
+  document.getElementById("resultadoPanel").style.display="block";
+  const R=document.getElementById("resultado");
+  if(j.error){ R.innerHTML=`<div class="msg err"><b>${j.tipo||"Error"}:</b> ${j.error}</div>`; setEstado(""); return; }
+  const v=j.validacion||{}; const res=j.resumen||{};
+  let h = `<div class="row"><span class="pill ${v.ok?"ok":"err"}">${v.ok?"VALIDO - los 9 invariantes pasan":"HAY ERRORES"}</span></div>`;
+  h += `<div class="kpis">
+    <div class="kpi"><div class="l">Ingresos Brutos</div><div class="v">${fmt(res.ingresos_brutos)}</div></div>
+    <div class="kpi"><div class="l">Utilidad del Periodo</div><div class="v">${fmt(res.utilidad_periodo)}</div></div>
+    <div class="kpi"><div class="l">Efectivo al corte</div><div class="v">${fmt(res.efectivo_corte)}</div></div>
+    <div class="kpi"><div class="l">Total Activos</div><div class="v">${fmt(res.total_activos_corte)}</div></div>
+  </div>`;
+  (v.errores||[]).forEach(e=> h+=`<div class="msg err">inv#${e.invariante}: ${e.mensaje}</div>`);
+  (v.alertas||[]).forEach(e=> h+=`<div class="msg warn">inv#${e.invariante}: ${e.mensaje}</div>`);
+  R.innerHTML=h; setEstado("");
+}
+async function generarDocx(){
+  setEstado("Generando DOCX...");
+  try{
+    const r=await fetch("/api/motor/v2/certificar?format=docx",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(Object.assign({allow_errors:false},collect()))});
+    if(!r.ok){ const j=await r.json(); renderResultado(j, r.status); setEstado("El DOCX no se genero (hay errores)."); return; }
+    const blob=await r.blob(); const url=URL.createObjectURL(blob);
+    const a=document.createElement("a"); a.href=url; a.download="certificacion_motor_v2.docx"; a.click(); URL.revokeObjectURL(url);
+    setEstado("DOCX descargado.");
+  }catch(e){ setEstado("Error: "+e.message); }
+}
+function setEstado(t){ document.getElementById("estado").textContent=t; }
+
+function cargarGloria(){
+  buildFields("datos", DATOS_FIELDS, {
+    nombre_completo:"Gloria Elena Guillen Robinson", cedula:"601-140998-0002L", contacto:"+505 8510 8735",
+    domicilio:"Residencial Casa Real", direccion_negocio:"Bolonia", giro:"Servicios de envio y paqueteria",
+    regimen:"Cuota Fija", matricula:"RNVD-118495", antiguedad:"05 anios", empleados:1,
+    estado_civil:"soltera", profesion:"Ingeniera Industrial", sexo:"Femenino", banco:"FICOHSA",
+    fecha_certificacion:"2026-06-05",
+  });
+  buildFields("periodo", PERIODO_FIELDS,
+    {mes_inicial:"2025-12", mes_final:"2026-05", tasa_cambio:"36.6243", tipo:"A"});
+  const ING=[332915,543402,301554,325063,298999,425647], COGS=[166524,277026,152888,164774,150127,213888];
+  const meses=mesesEntre("2025-12","2026-05"); const pf={};
+  meses.forEach((m,i)=>pf[m]={ingresos:ING[i],costo_ventas:COGS[i],sueldos_salarios:15016,servicios_publicos:5311,alcaldia_dgi:732,combustible:5311,publicidad:5494,mantenimientos:0,renta:9522,gasto_depreciacion:9003,seguros:0,otros_gastos:1831});
+  buildER(meses, pf);
+  buildFields("saldosIni", ESF_FIELDS, {mobiliario_equipos:366243, vehiculos:695862, tarjetas_credito:62261});
+  buildFields("saldosFin", ESF_FIELDS, {efectivo:841220, mobiliario_equipos:366243, vehiculos:695862, depreciacion_acumulada:-54018, tarjetas_credito:60430, resultados_acumulados:0});
+  document.getElementById("deudasTable").innerHTML="";
+  addDeudaRow({numero:"TARJETA", entidad:"Tarjeta de Credito", tipo_credito:"TARJETA DE CREDITO", estrategia:"revolving", moneda:"NIO", valor_inicial:62261, saldo_reportado:60430, cuota:0, fecha_otorgamiento:"2020-01-01", saldo_apertura:62261, incluir_en_er:true, saldos_mensuales:{"2025-12":40287,"2026-01":38456,"2026-02":43949,"2026-03":45780,"2026-04":47612,"2026-05":60430}});
+  document.getElementById("selModoER").value="manual";
+  toggleTipo();
+  toggleModoER();
+  setEstado("Ejemplo Gloria (Tipo A) cargado. Pulsa Validar.");
+}
+
+function cargarDemoB(){
+  buildFields("datos", DATOS_FIELDS, {
+    nombre_completo:"Cliente Demo Tipo B", cedula:"001-000000-0000X", contacto:"+505 8888 8888",
+    domicilio:"Managua", direccion_negocio:"Managua", giro:"Comercio",
+    regimen:"Cuota Fija", matricula:"DEMO-1", antiguedad:"03 anios", empleados:2,
+    estado_civil:"soltero", profesion:"Comerciante", sexo:"Masculino", banco:"BANPRO",
+    fecha_certificacion:"2027-01-15",
+  });
+  buildFields("periodo", PERIODO_FIELDS,
+    {mes_inicial:"2026-01", mes_final:"2026-12", tasa_cambio:"36.6243", tipo:"B"});
+  const meses=mesesEntre("2026-01","2026-12"); const pf={};
+  meses.forEach(m=>pf[m]={ingresos:200000,costo_ventas:120000,sueldos_salarios:15000,servicios_publicos:0,alcaldia_dgi:0,combustible:0,publicidad:0,mantenimientos:0,renta:8000,gasto_depreciacion:4000,seguros:0,otros_gastos:3000});
+  buildER(meses, pf);
+  buildFields("saldosIni", ESF_FIELDS, {efectivo:20000, inventarios:60000, mobiliario_equipos:240000, resultados_acumulados:100000});
+  buildFields("saldosFin", ESF_FIELDS, {});
+  document.getElementById("deudasTable").innerHTML="";
+  buildFields("objetivos", OBJ_FIELDS, {caja_objetivo:150000, caja_tolerancia_pct:20, inventario_objetivo:80000, inventario_tolerancia_pct:20, seed:"demo-b"});
+  document.getElementById("selModoER").value="manual";
+  toggleTipo();
+  toggleModoER();
+  setEstado("Ejemplo Tipo B cargado (caja objetivo 150k ±20%). Pulsa Validar.");
+}
+
+buildFields("datos", DATOS_FIELDS, {});
+buildFields("periodo", PERIODO_FIELDS, {tipo:"A", tasa_cambio:"36.6243"});
+buildFields("saldosIni", ESF_FIELDS, {});
+buildFields("saldosFin", ESF_FIELDS, {});
+buildFields("objetivos", OBJ_FIELDS, {caja_tolerancia_pct:20, inventario_tolerancia_pct:20});
+buildFields("erGenParams", ERGEN_FIELDS, {banda_ingreso_pct:20, banda_costo_pct:5, gasto_depreciacion_mensual:0});
+buildER(mesesEntre("2025-12","2026-05"), {});
+buildDepPPE({});
+toggleTipo();
+document.getElementById("selModoER").onchange=toggleModoER;
+toggleModoER();
+// Depreciación PPE: recalcular en vivo al tocar %/vida o los saldos iniciales
+document.getElementById("chkDepPPE").addEventListener("change", recalcDepPPE);
+document.getElementById("depPPETable").addEventListener("input", recalcDepPPE);
+document.getElementById("saldosIni").addEventListener("input", recalcDepPPE);
+// El botón depende del tipo (solo A tiene ancla de saldos finales)
+document.getElementById("periodo").addEventListener("change", (e)=>{
+  if(e.target && e.target.dataset && e.target.dataset.key==="tipo") recalcDepPPE();
+});
+document.getElementById("btnAnclaDep").onclick=()=>{
+  const p=readFields("periodo");
+  if(!p.mes_inicial||!p.mes_final){ setEstado("Definí el periodo (mes inicial y final) para cuadrar el ancla."); return; }
+  const nMeses=mesesEntre(p.mes_inicial,p.mes_final).length;
+  const total=window._depPPETotal||0;
+  const depIni=parseFloat(readFields("saldosIni").depreciacion_acumulada||0)||0;
+  const anclaFinal=Math.round((depIni - total*nMeses)*100)/100;
+  const inp=document.querySelector('#saldosFin [data-key="depreciacion_acumulada"]');
+  if(!inp){ setEstado("No encontré el campo de Depreciación Acum. en saldos finales."); return; }
+  inp.value=anclaFinal;
+  inp.dispatchEvent(new Event("input",{bubbles:true}));
+  setEstado("Ancla cuadrada: Depreciación Acum. final = "+_fmtDep(depIni)+" − "+_fmtDep(total)+" × "+nMeses+" meses = "+_fmtDep(anclaFinal)+".");
+};
+document.getElementById("genMeses").onclick=()=>{ const p=readFields("periodo"); if(p.mes_inicial&&p.mes_final){ buildER(mesesEntre(p.mes_inicial,p.mes_final), erSnapshot()); copiarGastosSilencioso(); } };
+// Auto-regenerar la tabla del ER cuando el usuario cambia el periodo (delegacion
+// en el contenedor: sobrevive a la reconstruccion de los inputs).
+document.getElementById("periodo").addEventListener("change", (e)=>{
+  const k=e.target && e.target.dataset ? e.target.dataset.key : "";
+  if(k==="mes_inicial" || k==="mes_final") regenerarER();
+});
+document.getElementById("copiaGastos").onclick=()=>{ copiarGastos(); };
+document.getElementById("addDeuda").onclick=()=>addDeudaRow();
+document.getElementById("btnValidar").onclick=validar;
+document.getElementById("btnDocx").onclick=generarDocx;
+document.getElementById("btnGloria").onclick=cargarGloria;
+document.getElementById("btnDemoB").onclick=cargarDemoB;
+document.getElementById("btnUsarCorte").onclick=usarCorteComoFinales;
+document.getElementById("selCliente").onchange=()=>{ cargarPeriodos(); cargarDocs(null); };
+document.getElementById("btnSubirDoc").onclick=subirDoc;
+document.getElementById("btnExtraerDeudas").onclick=extraerDeudasReporte;
+document.getElementById("btnNuevo").onclick=nuevoDesdeCliente;
+document.getElementById("btnAbrir").onclick=abrirPeriodo;
+document.getElementById("btnGuardar").onclick=guardarBorradorDB;
+document.getElementById("btnFinalizar").onclick=finalizarPeriodo;
+document.getElementById("btnCrearNuevoCliente").onclick=()=>toggleNuevoCliente(true);
+document.getElementById("btnCancelarCliente").onclick=()=>toggleNuevoCliente(false);
+document.getElementById("btnExtraerDocs").onclick=extraerDocs;
+document.getElementById("btnCrearCliente").onclick=crearClienteNuevo;
+cargarClientes();
+cargarGiros();
+
+function erSnapshot(){ const pf={}; readER().forEach(r=>{ const m=r.mes; pf[m]={...r}; delete pf[m].mes; }); return pf; }
+
+// ---------------- Persistencia en la base (SQLite via API) ----------------
+let clientesCache=[];
+let periodoActualId=null;
+
+async function fetchJson(url, opts){
+  const r=await fetch(url, Object.assign({headers:{"Content-Type":"application/json"}}, opts||{}));
+  let j={}; try{ j=await r.json(); }catch(e){}
+  if(!r.ok) throw new Error(j.error || ("HTTP "+r.status));
+  return j;
+}
+function setBadge(texto, clase){
+  const b=document.getElementById("persistBadge");
+  if(!texto){ b.style.display="none"; return; }
+  b.textContent=texto; b.className="pill "+(clase||"info"); b.style.display="";
+}
+async function cargarClientes(){
+  try{
+    const j=await fetchJson("/api/clientes");
+    clientesCache=j.clientes||[];
+    const s=document.getElementById("selCliente");
+    s.innerHTML='<option value="">— seleccionar cliente —</option>';
+    clientesCache.forEach(c=>{
+      const o=el("option",{value:c.id}, (c.nombre_completo||c.id)+(c.cedula?(" ("+c.cedula+")"):""));
+      s.appendChild(o);
+    });
+  }catch(e){ setEstado("No se pudo cargar clientes: "+e.message); }
+}
+async function cargarPeriodos(){
+  const cid=document.getElementById("selCliente").value;
+  const s=document.getElementById("selPeriodo");
+  s.innerHTML='<option value="">— ninguna —</option>';
+  if(!cid) return;
+  try{
+    const j=await fetchJson("/api/motor/v2/periodos?cliente_id="+encodeURIComponent(cid));
+    (j.periodos||[]).forEach(p=>{
+      s.appendChild(el("option",{value:p.id}, p.mes_inicial+".."+p.mes_final+" · "+p.estado));
+    });
+  }catch(e){ setEstado("No se pudo listar certificaciones: "+e.message); }
+}
+async function nuevoDesdeCliente(){
+  const cid=document.getElementById("selCliente").value;
+  if(!cid){ setEstado("Selecciona un cliente primero."); return; }
+  const c=clientesCache.find(x=>x.id===cid)||{};
+  buildFields("datos", DATOS_FIELDS, {
+    nombre_completo:c.nombre_completo||"", cedula:c.cedula||"", contacto:c.telefono||"",
+    domicilio:c.domicilio||c.direccion_domicilio||"", direccion_negocio:c.direccion_negocio||"",
+    giro:(c.giro&&c.giro.nombre)||"", regimen:c.regimen||"", matricula:c.matricula_roc||"",
+    antiguedad:c.antiguedad||"", empleados:(c.empleados!=null?c.empleados:""),
+    estado_civil:c.estado_civil||"", profesion:c.profesion||"", sexo:c.sexo||"", banco:c.banco||"",
+    fecha_certificacion:new Date().toISOString().slice(0,10),
+  });
+  periodoActualId=null; setBadge("nuevo (sin guardar)","info");
+  document.getElementById("persistInfo").textContent="";
+  try{
+    const rf=await fetchJson("/api/motor/v2/clientes/"+encodeURIComponent(cid)+"/saldos-rollforward");
+    if(rf.has_anterior){
+      buildFields("saldosIni", ESF_FIELDS, rf.saldos||{});
+      setEstado("Saldos iniciales propuestos desde el periodo anterior ("+rf.periodo_anterior.mes_inicial+".."+rf.periodo_anterior.mes_final+"). Revisalos.");
+    } else {
+      setEstado("Datos del cliente prellenados. Completa el ER y los saldos.");
+    }
+  }catch(e){ setEstado("Datos del cliente prellenados."); }
+}
+function aplicarInputs(b){
+  b=b||{};
+  buildFields("datos", DATOS_FIELDS, b.datos||{});
+  const p=b.periodo||{};
+  buildFields("periodo", PERIODO_FIELDS, {mes_inicial:p.mes_inicial||"", mes_final:p.mes_final||"", tasa_cambio:p.tasa_cambio!=null?p.tasa_cambio:"36.6243", tipo:(p.tipo||"A"), esf_vista:(b.esf_vista||"corte")});
+  buildFields("saldosIni", ESF_FIELDS, b.saldos_iniciales||{});
+  buildFields("saldosFin", ESF_FIELDS, b.saldos_finales||{});
+  const ov={caja_tolerancia_pct:20, inventario_tolerancia_pct:20};
+  (b.cuentas_objetivo||[]).forEach(c=>{
+    if(c.cuenta==="efectivo"){ ov.caja_objetivo=c.objetivo; ov.caja_tolerancia_pct=c.tolerancia_pct; }
+    if(c.cuenta==="inventarios"){ ov.inventario_objetivo=c.objetivo; ov.inventario_tolerancia_pct=c.tolerancia_pct; }
+  });
+  if(b.seed) ov.seed=b.seed;
+  buildFields("objetivos", OBJ_FIELDS, ov);
+  const esGen=(b.er_modo||"manual")==="generado";
+  document.getElementById("selModoER").value=esGen?"generado":"manual";
+  if(esGen){
+    const g=b.er_generado||{};
+    buildFields("erGenParams", ERGEN_FIELDS, {
+      ingreso_base:g.ingreso_base!=null?g.ingreso_base:"",
+      banda_ingreso_pct:g.banda_ingreso_pct!=null?g.banda_ingreso_pct:20,
+      costo_pct_sobre_venta:g.costo_pct_sobre_venta!=null?g.costo_pct_sobre_venta:"",
+      banda_costo_pct:g.banda_costo_pct!=null?g.banda_costo_pct:5,
+      gasto_depreciacion_mensual:g.gasto_depreciacion_mensual!=null?g.gasto_depreciacion_mensual:0,
+      seed:g.seed||"",
+    });
+    if(p.mes_inicial && p.mes_final){
+      const meses=mesesEntre(p.mes_inicial, p.mes_final); const pf={};
+      meses.forEach(m=>{
+        const fila={...(g.gastos_fijos||{})};
+        Object.assign(fila, (g.gastos_overrides||{})[m]||{});
+        fila.gasto_depreciacion=g.gasto_depreciacion_mensual||0;
+        pf[m]=fila;
+      });
+      buildER(meses, pf);
+    }
+  } else {
+    const er=b.er_mensual||[]; const meses=er.map(r=>r.mes);
+    if(meses.length){ const pf={}; er.forEach(r=>{ pf[r.mes]={...r}; delete pf[r.mes].mes; }); buildER(meses, pf); }
+  }
+  document.getElementById("deudasTable").innerHTML="";
+  (b.deudas||[]).forEach(d=>addDeudaRow(d));
+  // Depreciación por componentes PPE (opcional en los inputs guardados)
+  const dep=b.depreciacion_ppe||{};
+  buildDepPPE(dep);
+  document.getElementById("chkDepPPE").checked = Object.keys(dep).length>0;
+  toggleTipo();
+  toggleModoER();
+  // Hojas opcionales del Word (notas default ON; fotos del negocio default OFF)
+  document.getElementById("chkIncluirNotas").checked = b.incluir_notas!==false;
+  document.getElementById("chkFotosNegocio").checked = b.incluir_fotos_negocio===true;
+  // Restaurar los checks de imagenes elegidas en este borrador
+  cargarDocs(b.documentos_ids||[]);
+}
+async function guardarBorradorDB(){
+  const cid=document.getElementById("selCliente").value;
+  if(!periodoActualId && !cid){ setEstado("Selecciona un cliente para guardar."); return; }
+  document.getElementById("persistInfo").textContent="Guardando...";
+  try{
+    let j;
+    if(periodoActualId){
+      j=await fetchJson("/api/motor/v2/periodos/"+periodoActualId, {method:"PUT", body:JSON.stringify({inputs:collect()})});
+    }else{
+      j=await fetchJson("/api/motor/v2/periodos", {method:"POST", body:JSON.stringify({cliente_id:cid, inputs:collect()})});
+      periodoActualId=j.periodo.id;
+    }
+    setBadge("borrador","info");
+    document.getElementById("persistInfo").textContent="Guardado "+new Date().toLocaleTimeString();
+    await cargarPeriodos();
+    document.getElementById("selPeriodo").value=periodoActualId;
+  }catch(e){
+    document.getElementById("persistInfo").textContent="";
+    setEstado("Error al guardar: "+e.message);
+  }
+}
+async function abrirPeriodo(){
+  const pid=document.getElementById("selPeriodo").value;
+  if(!pid){ setEstado("Selecciona una certificacion guardada."); return; }
+  try{
+    const j=await fetchJson("/api/motor/v2/periodos/"+pid);
+    aplicarInputs(j.inputs||{});
+    periodoActualId=pid;
+    const est=(j.periodo||{}).estado||"";
+    setBadge(est, est==="borrador"?"info":"ok");
+    setEstado(est==="borrador" ? "Borrador abierto; podes seguir editando." : "Periodo "+est+": solo lectura (no se puede guardar encima).");
+  }catch(e){ setEstado("Error al abrir: "+e.message); }
+}
+// ---------- Documentos del cliente (imagenes para el DOCX) ----------
+let docsCache=[];
+let docsSeleccion=new Set();
+function setDocsInfo(t, esError){
+  const s=document.getElementById("docsInfo");
+  s.textContent=t||""; s.style.color=esError?"var(--err)":"var(--muted)";
+}
+async function cargarDocs(preseleccion){
+  // preseleccion: array de ids a marcar (al abrir un borrador guardado);
+  // null => marcar todas (default al empezar una certificacion nueva).
+  const cid=document.getElementById("selCliente").value;
+  const cont=document.getElementById("docsLista");
+  docsCache=[]; docsSeleccion=new Set();
+  if(!cid){ cont.innerHTML='<span class="hint">Seleccioná un cliente para ver/subir sus documentos.</span>'; return; }
+  try{
+    const j=await fetchJson("/api/clientes/"+encodeURIComponent(cid)+"/documentos");
+    docsCache=j.documentos||[];
+    const pre=preseleccion?new Set(preseleccion.map(String)):null;
+    docsCache.forEach(d=>{ if(pre ? pre.has(String(d.id)) : true) docsSeleccion.add(d.id); });
+    renderDocs();
+  }catch(e){ cont.innerHTML='<span class="hint">No se pudieron cargar los documentos: '+e.message+'</span>'; }
+}
+function renderDocs(){
+  const cont=document.getElementById("docsLista"); cont.innerHTML="";
+  if(!docsCache.length){
+    cont.innerHTML='<span class="hint">Este cliente aún no tiene imágenes en su biblioteca. Subí la primera.</span>';
+    return;
+  }
+  docsCache.forEach(d=>{
+    const card=el("div",{className:"doc-card"});
+    const img=el("img"); img.src="/api/documentos/"+d.id+"/archivo"; img.loading="lazy";
+    card.appendChild(img);
+    card.appendChild(el("div",{className:"nm"}, (d.tipo||"")+" · "+(d.original_filename||"")));
+    const fila=el("div",{className:"fila"});
+    const lbl=el("label");
+    const chk=el("input",{type:"checkbox"}); chk.checked=docsSeleccion.has(d.id);
+    chk.onchange=()=>{ if(chk.checked) docsSeleccion.add(d.id); else docsSeleccion.delete(d.id); };
+    lbl.appendChild(chk); lbl.appendChild(document.createTextNode("incluir"));
+    const del=el("button",{className:"btn secondary small"},"✕");
+    del.onclick=async()=>{
+      if(!window.confirm("Esto elimina la imagen de la BIBLIOTECA del cliente (afecta futuras certificaciones). ¿Continuar?")) return;
+      try{
+        const r=await fetch("/api/documentos/"+d.id,{method:"DELETE"});
+        if(!r.ok) throw new Error("HTTP "+r.status);
+        docsSeleccion.delete(d.id);
+        await cargarDocs([...docsSeleccion]);
+      }catch(e){ setDocsInfo("No se pudo eliminar: "+e.message, true); }
+    };
+    fila.appendChild(lbl); fila.appendChild(del);
+    card.appendChild(fila);
+    cont.appendChild(card);
+  });
+}
+async function subirDoc(){
+  const cid=document.getElementById("selCliente").value;
+  if(!cid){ setDocsInfo("Seleccioná un cliente primero.", true); return; }
+  const f=document.getElementById("docArchivo").files[0];
+  if(!f){ setDocsInfo("Elegí una imagen.", true); return; }
+  const fd=new FormData();
+  fd.append("archivo", f);
+  fd.append("tipo", document.getElementById("docTipo").value);
+  const btn=document.getElementById("btnSubirDoc"); btn.disabled=true;
+  setDocsInfo("Subiendo…");
+  try{
+    const r=await fetch("/api/clientes/"+encodeURIComponent(cid)+"/documentos",{method:"POST",body:fd});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(j.error||("HTTP "+r.status));
+    document.getElementById("docArchivo").value="";
+    docsSeleccion.add(j.documento.id);
+    await cargarDocs([...docsSeleccion]);
+    setDocsInfo("Imagen subida a la biblioteca (quedó marcada para esta certificación).");
+  }catch(e){ setDocsInfo("Error al subir: "+e.message, true); }
+  finally{ btn.disabled=false; }
+}
+
+// ---------- Extraccion de deudas desde el reporte TransUnion (PDF) ----------
+function setDeudasInfo(t, esError){
+  const s=document.getElementById("deudasInfo");
+  s.textContent=t||""; s.style.color=esError?"var(--err)":"var(--muted)";
+}
+function _cedNorm(s){ return String(s||"").replace(/[^0-9A-Za-z]/g,"").toUpperCase(); }
+async function extraerDeudasReporte(){
+  const f=document.getElementById("reporteDeudas").files[0];
+  if(!f){ setDeudasInfo("Elegí el reporte (PDF de TransUnion o imagen de SIBOIF).", true); return; }
+  const btn=document.getElementById("btnExtraerDeudas"); btn.disabled=true;
+  setDeudasInfo("Extrayendo deudas con IA (OpenAI)…");
+  try{
+    const fd=new FormData(); fd.append("archivo", f);
+    // OJO: sin Content-Type manual; el navegador arma el multipart.
+    const r=await fetch("/api/motor/v2/deudas/extract",{method:"POST",body:fd});
+    let j={}; try{ j=await r.json(); }catch(e){}
+    if(!r.ok) throw new Error(j.error||("HTTP "+r.status));
+    const deudas=j.deudas||[];
+    if(!deudas.length){ setDeudasInfo("El reporte no tiene obligaciones vigentes con saldo.", true); return; }
+    deudas.forEach(d=>addDeudaRow(d));
+    document.getElementById("reporteDeudas").value="";
+    const fuente=(j.fuente||"").toUpperCase();
+    // Chequeo de seguridad: la cedula del reporte debe ser la del cliente
+    const cedReporte=_cedNorm((j.titular||{}).cedula);
+    const cedCliente=_cedNorm(readFields("datos").cedula);
+    let msg=deudas.length+" deuda(s) de "+(fuente||"reporte")+" ("+((j.titular||{}).nombre||"titular")+"). ";
+    if(j.fuente==="siboif"){
+      const res=j.resumen||{};
+      msg+="SIBOIF es agregado: completá número, entidad, cuota y fecha en cada fila. ";
+      if(res.cuota_mensual_total) msg+="Cuota mensual TOTAL del reporte: "+res.cuota_mensual_total.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})+" (repartila entre las deudas activas). ";
+    } else {
+      msg+="Revisá cada fila y decidí incluir_en_er. ";
+    }
+    const dudosas=deudas.filter(d=>d.confianza==="baja").length;
+    if(dudosas) msg+="⚠ "+dudosas+" con confianza BAJA: verificalas contra el reporte. ";
+    if(cedReporte && cedCliente && cedReporte!==cedCliente){
+      msg="⚠ OJO: la cédula del reporte ("+(j.titular||{}).cedula+") NO coincide con la del cliente cargado. "+msg;
+      setDeudasInfo(msg, true);
+    } else {
+      setDeudasInfo(msg);
+    }
+  }catch(e){ setDeudasInfo("Error al extraer: "+e.message, true); }
+  finally{ btn.disabled=false; }
+}
+
+// ---------- Nuevo cliente desde V2 (con extraccion por imagenes) ----------
+let girosCache=[];
+async function cargarGiros(){
+  try{ const j=await fetchJson("/api/giros"); girosCache=j.giros||[]; }catch(e){ girosCache=[]; }
+}
+const NC_FIELDS=[
+  ["nombre_completo","Nombre completo *"],["cedula","Cédula *"],["nombre_negocio","Nombre del negocio *"],
+  ["direccion_negocio","Dirección del negocio *"],["giro_negocio_id","Giro (catálogo) *"],
+  ["telefono","Teléfono"],["domicilio","Domicilio"],["matricula_roc","Matrícula / ROC"],
+  ["sexo","Sexo"],["estado_civil","Estado civil"],["profesion","Profesión"],
+  ["banco","Banco"],["regimen","Régimen"],["antiguedad","Antigüedad"],["empleados","Empleados"],
+];
+function setNcInfo(t, esError){
+  const s=document.getElementById("ncInfo");
+  s.textContent=t||""; s.style.color=esError?"var(--err)":"var(--muted)";
+}
+function toggleNuevoCliente(mostrar){
+  const p=document.getElementById("panelNuevoCliente");
+  p.style.display=mostrar?"":"none";
+  if(mostrar){
+    buildFields("ncForm", NC_FIELDS, {regimen:"Cuota Fija"});
+    setNcInfo("");
+    ["ncCedFront","ncCedBack","ncMatricula"].forEach(id=>{ document.getElementById(id).value=""; });
+    p.scrollIntoView({behavior:"smooth"});
+  }
+}
+async function extraerDocs(){
+  const fd=new FormData();
+  const f1=document.getElementById("ncCedFront").files[0];
+  const f2=document.getElementById("ncCedBack").files[0];
+  const f3=document.getElementById("ncMatricula").files[0];
+  if(f1) fd.append("cedula_front", f1);
+  if(f2) fd.append("cedula_back", f2);
+  if(f3) fd.append("matricula", f3);
+  if(!f1 && !f2 && !f3){ setNcInfo("Adjuntá al menos una imagen (cédula o matrícula).", true); return; }
+  const btn=document.getElementById("btnExtraerDocs"); btn.disabled=true;
+  setNcInfo("Extrayendo datos desde las imágenes (OpenAI)…");
+  try{
+    // OJO: sin Content-Type manual; el navegador arma el multipart.
+    const r=await fetch("/api/clientes/extract-from-docs", {method:"POST", body:fd});
+    let j={}; try{ j=await r.json(); }catch(e){}
+    if(!r.ok) throw new Error(j.error||("HTTP "+r.status));
+    const patch=j.client_patch||{};
+    const setV=(k,v)=>{ if(v==null||v==="") return; const inp=document.querySelector('#ncForm [data-key="'+k+'"]'); if(inp) inp.value=v; };
+    setV("nombre_completo", patch.nombre_completo);
+    setV("cedula", patch.cedula);
+    setV("direccion_negocio", patch.direccion_negocio);
+    setV("matricula_roc", patch.matricula);
+    setV("domicilio", patch.domicilio || patch.direccion_personal);
+    setV("estado_civil", patch.estado_civil);
+    setV("profesion", patch.profesion);
+    if(patch.sexo){
+      const s=String(patch.sexo).toLowerCase();
+      setV("sexo", s.startsWith("f")?"femenino":(s.startsWith("m")?"masculino":"otro"));
+    }
+    setNcInfo("Datos extraídos y cargados. Revisá antes de crear.");
+  }catch(e){ setNcInfo("Extracción falló: "+e.message+" — podés llenar a mano.", true); }
+  finally{ btn.disabled=false; }
+}
+async function crearClienteNuevo(){
+  const d=readFields("ncForm");
+  if(d.empleados!=null && d.empleados!==""){ d.empleados=parseInt(d.empleados)||0; }
+  Object.keys(d).forEach(k=>{ if(d[k]==="") delete d[k]; });
+  const btn=document.getElementById("btnCrearCliente"); btn.disabled=true;
+  setNcInfo("Creando cliente…");
+  try{
+    const j=await fetchJson("/api/clientes", {method:"POST", body:JSON.stringify(d)});
+    const nuevo=j.cliente;
+    // Las fotos usadas para la extraccion quedan guardadas en la biblioteca
+    // del cliente (persistidas), listas para incrustar en el DOCX.
+    const fotos=[["ncCedFront","cedula_front"],["ncCedBack","cedula_back"],["ncMatricula","matricula_1"]];
+    for(const [inputId, tipo] of fotos){
+      const f=document.getElementById(inputId).files[0];
+      if(!f) continue;
+      try{
+        const fd=new FormData(); fd.append("archivo", f); fd.append("tipo", tipo);
+        await fetch("/api/clientes/"+encodeURIComponent(nuevo.id)+"/documentos",{method:"POST",body:fd});
+      }catch(e){ /* no bloquear la creacion por una foto */ }
+    }
+    toggleNuevoCliente(false);
+    await cargarClientes();
+    document.getElementById("selCliente").value=nuevo.id;
+    await cargarPeriodos();
+    await nuevoDesdeCliente();
+    await cargarDocs(null);
+    setEstado('Cliente "'+(nuevo.nombre_completo||"")+'" creado y seleccionado (sus fotos quedaron en la biblioteca). Completá la certificación y Guardá.');
+  }catch(e){ setNcInfo("No se pudo crear: "+e.message, true); }
+  finally{ btn.disabled=false; }
+}
+
+async function finalizarPeriodo(){
+  if(!periodoActualId){ setEstado("Guarda el borrador antes de finalizar."); return; }
+  if(!window.confirm("Finalizar corre el motor, exige los 9 invariantes y deja el periodo INMUTABLE con su DOCX. ¿Continuar?")) return;
+  setEstado("Finalizando...");
+  try{
+    const r=await fetch("/api/motor/v2/periodos/"+periodoActualId+"/finalizar", {method:"POST"});
+    let j={}; try{ j=await r.json(); }catch(e){}
+    if(!r.ok || !j.ok){
+      if(j.validacion) renderResultado({ok:false, validacion:j.validacion, resumen:{}}, r.status);
+      setEstado(j.error||"No se pudo finalizar.");
+      return;
+    }
+    setBadge("finalizado","ok");
+    renderResultado({ok:true, validacion:j.validacion, resumen:{}}, 200);
+    await cargarPeriodos();
+    document.getElementById("selPeriodo").value=periodoActualId;
+    const rd=await fetch("/api/motor/v2/periodos/"+periodoActualId+"/documento");
+    if(rd.ok){
+      const blob=await rd.blob(); const url=URL.createObjectURL(blob);
+      const a=document.createElement("a"); a.href=url; a.download="certificacion_v2.docx"; a.click(); URL.revokeObjectURL(url);
+    }
+    setEstado("Periodo finalizado y DOCX descargado.");
+  }catch(e){ setEstado("Error al finalizar: "+e.message); }
+}
+function copiarGastosSilencioso(){
+  // Copia el valor del primer mes de cada fila de gasto hacia el resto de meses.
+  const gastoKeys=["sueldos_salarios","servicios_publicos","alcaldia_dgi","combustible","publicidad","mantenimientos","renta","gasto_depreciacion","seguros","otros_gastos"];
+  document.querySelectorAll("#erTable tr[data-key]").forEach(tr=>{
+    if(!gastoKeys.includes(tr.dataset.key)) return;
+    const inputs=[...tr.querySelectorAll("input")]; if(inputs.length<2) return;
+    inputs.slice(1).forEach(i=>{ i.value=inputs[0].value; });
+  });
+}
+function copiarGastos(){
+  copiarGastosSilencioso();
+  setEstado("Gastos del primer mes copiados a todos los meses.");
+}
+// Regenera la tabla del ER segun el periodo actual, preservando los datos ya
+// cargados (via snapshot) y propagando los gastos del primer mes a los meses
+// nuevos, para que un mes agregado no quede en cero.
+function regenerarER(){
+  const p=readFields("periodo");
+  if(!p.mes_inicial || !p.mes_final) return;
+  const meses=mesesEntre(p.mes_inicial, p.mes_final);
+  if(!meses.length) return;
+  const actuales=JSON.parse((document.getElementById("erTable").dataset.meses)||"[]");
+  // Solo regenerar si el conjunto de meses cambio (evita reescribir en cada tecla).
+  if(actuales.length===meses.length && actuales.every((m,i)=>m===meses[i])) return;
+  buildER(meses, erSnapshot());
+  copiarGastosSilencioso();
+}
+</script>
+</body>
+</html>

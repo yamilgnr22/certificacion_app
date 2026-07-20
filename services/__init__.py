@@ -13,6 +13,8 @@ from services.agent_service import (
 )
 from services.cliente_service import ClienteService, ServiceConflictError, ServiceValidationError
 from services.giro_service import GiroService
+from services.documento_service import DocumentoService
+from services.motor_v2_service import MotorV2Service
 from services.periodo_service import (
     PeriodoConflictError,
     PeriodoNotFoundError,
@@ -33,7 +35,9 @@ __all__ = [
     "AgentServiceError",
     "AgentValidationError",
     "ClienteService",
+    "DocumentoService",
     "GiroService",
+    "MotorV2Service",
     "PeriodoConflictError",
     "PeriodoNotFoundError",
     "PeriodoService",

@@ -87,6 +87,7 @@ def periodo_to_basic_dict(periodo: PeriodoCertificacion) -> dict[str, Any]:
         "mes_inicial": periodo.mes_inicial,
         "mes_final": periodo.mes_final,
         "estado": periodo.estado,
+        "engine": getattr(periodo, "engine", "v1"),
         "saldos_iniciales_origen": periodo.saldos_iniciales_origen,
         "documento_generado_at": iso(periodo.documento_generado_at),
         "created_at": iso(periodo.created_at),

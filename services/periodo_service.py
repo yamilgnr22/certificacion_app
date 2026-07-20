@@ -100,6 +100,7 @@ class PeriodoService:
             select(Per, ClienteModel)
             .join(ClienteModel, Per.cliente_id == ClienteModel.id)
             .where(ClienteModel.activo == 1)
+            .where(Per.engine == "v1")  # los periodos Motor V2 se editan en /motor-v2
             .order_by(Per.updated_at.desc())
         )
         rows = list(self.session.execute(stmt))
@@ -129,6 +130,15 @@ class PeriodoService:
             "periodo": self._full_dict(periodo),
             "cliente": cliente_to_dict(cliente, include_giro=True) if cliente else None,
         }
+
+    def _reject_v2(self, periodo: PeriodoCertificacion) -> None:
+        """El editor clasico no interpreta payloads del Motor V2: bloquear
+        toda mutacion/calculo para no corromper esos periodos."""
+        if getattr(periodo, "engine", "v1") == "v2":
+            raise PeriodoConflictError(
+                "Este periodo pertenece al Motor V2. Gestionalo desde /motor-v2; "
+                "el editor clasico no puede modificarlo."
+            )
 
     # --------------------------------------------------------------- create
     def create(
@@ -261,6 +271,7 @@ class PeriodoService:
         periodo = self.periodos.get(periodo_id)
         if not periodo:
             raise PeriodoNotFoundError("Periodo no encontrado")
+        self._reject_v2(periodo)
         if periodo.estado != "borrador":
             raise PeriodoConflictError(
                 f"No se puede editar un periodo en estado '{periodo.estado}'. "
@@ -359,6 +370,7 @@ class PeriodoService:
         periodo = self.periodos.get(periodo_id)
         if not periodo:
             raise PeriodoNotFoundError("Periodo no encontrado")
+        self._reject_v2(periodo)
         if periodo.estado != "borrador":
             raise PeriodoConflictError(
                 f"Solo se puede editar el payload de un borrador. Estado actual: '{periodo.estado}'."
@@ -438,6 +450,7 @@ class PeriodoService:
         periodo = self.periodos.get(periodo_id)
         if not periodo:
             raise PeriodoNotFoundError("Periodo no encontrado")
+        self._reject_v2(periodo)
         payload = parse_json_object(periodo.payload_json)
         from financial_model import build_financial_model, result_to_json
         result = build_financial_model(payload)
@@ -448,6 +461,7 @@ class PeriodoService:
         periodo = self.periodos.get(periodo_id)
         if not periodo:
             raise PeriodoNotFoundError("Periodo no encontrado")
+        self._reject_v2(periodo)
         if periodo.estado not in ("borrador",):
             raise PeriodoConflictError(
                 f"Solo se puede finalizar un periodo en estado 'borrador'. Estado actual: '{periodo.estado}'."
@@ -482,6 +496,7 @@ class PeriodoService:
         original = self.periodos.get(periodo_id)
         if not original:
             raise PeriodoNotFoundError("Periodo no encontrado")
+        self._reject_v2(original)
 
         try:
             clone = self.periodos.create(
@@ -568,6 +583,7 @@ class PeriodoService:
         periodo = self.periodos.get(periodo_id)
         if not periodo:
             raise PeriodoNotFoundError("Periodo no encontrado")
+        self._reject_v2(periodo)
         if periodo.estado not in ("finalizado", "certificado"):
             raise PeriodoConflictError(
                 "Solo se puede generar el documento de un periodo finalizado. "
