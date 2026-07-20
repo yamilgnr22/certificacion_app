@@ -1,0 +1,129 @@
+{
+  "_meta": {
+    "descripcion": "Fixture de deudas vigentes extraidas del reporte TransUnion. Input crudo para motor/amortizacion.py. Las tablas de amortizacion NO van aqui: las construye el motor anclando al saldo_reportado.",
+    "fuente": "TUReport2026621114639.pdf",
+    "metodo_amortizacion": "estandar: abono_capital = cuota - (saldo_inicial * tasa_mensual). Tasa inferida de valor_inicial + cuota + plazo.",
+    "ancla": "saldo_reportado (no valor_inicial). El saldo de la cuenta de pasivo del ESF debe pegar EXACTO a este valor en el mes de corte, via abono extraordinario de capital si la amortizacion estandar no aterriza.",
+    "abono_extraordinario": "Si saldo_calculado[corte] != saldo_reportado, el motor mete un abono extraordinario de capital en el ultimo mes (pago real contra caja en Mov). Siempre ajusta hasta pegar. Alerta no bloqueante si |abono| > 2 x cuota.",
+    "meses_intermedios": "Estimados por amortizacion estandar, NO exactos. Solo el mes de cierre pega exacto al saldo_reportado.",
+    "regla_ventana": "Filtrar por fecha_otorgamiento: un credito solo entra si ya existia dentro del periodo certificado.",
+    "nota_temporal": "saldo_reportado = saldo al mes de corte. En uso real el reporte viene actualizado a la fecha de cierre, asi que fecha_actualizado = fecha de corte (sin reconstruccion hacia atras). En ESTE fixture de ejemplo el reporte es 2026-05 y el periodo de Thelma cierra 2025-12 solo porque fue un PDF de prueba."
+  },
+  "persona": {
+    "nombre": "THELMA ALANIZ GARCIA",
+    "identificacion": "241-151084-0002K",
+    "fecha_reporte": "2026-06-21"
+  },
+  "anclas_totales": {
+    "NIO": 62774.62,
+    "USD": 212048.53,
+    "_comentario": "Σ saldo_reportado por moneda. Invariante #1: Σ saldo_final de los planes en ventana debe reconciliar contra estos totales."
+  },
+  "deudas": [
+    {
+      "numero": "5220",
+      "entidad": "BANCO LAFISE BANCENTRO",
+      "tipo_credito": "TARJETA DE CRÉDITO INTERNACIONAL",
+      "estrategia": "revolving",
+      "moneda": "NIO",
+      "valor_inicial": 36624.30,
+      "saldo_reportado": 4672.88,
+      "cuota": 197.00,
+      "fecha_otorgamiento": "2018-02-09",
+      "fecha_vencimiento": null,
+      "fecha_actualizado": "2026-05-31",
+      "tasa_mensual": null,
+      "notas": "Sin vencimiento → revolving. No amortiza con cuota fija: modelar saldo + interes corriente + pago. Mapea a pasivo corriente (Tarjetas de Credito) en ESF."
+    },
+    {
+      "numero": "1571",
+      "entidad": "CREDI Q INVERSIONES NICARAGUA",
+      "tipo_credito": "CARTERA DE VEHICULOS",
+      "estrategia": "amortizable",
+      "moneda": "USD",
+      "valor_inicial": 36596.40,
+      "saldo_reportado": 14318.60,
+      "cuota": 682.00,
+      "fecha_otorgamiento": "2024-03-22",
+      "fecha_vencimiento": "2032-05-04",
+      "fecha_actualizado": "2026-01-31",
+      "tasa_mensual": null,
+      "notas": "Amortizable estandar. Plazo ~98 meses. Caso limpio para inferir tasa. Mapea a Creditos Consumo/Prendarios (no corriente) en ESF."
+    },
+    {
+      "numero": "5561",
+      "entidad": "BANCO DE AMERICA CENTRAL",
+      "tipo_credito": "CARTERA HIPOTECARIA",
+      "estrategia": "amortizable",
+      "moneda": "USD",
+      "valor_inicial": 114400.00,
+      "saldo_reportado": 56715.92,
+      "cuota": 484.00,
+      "fecha_otorgamiento": "2025-10-07",
+      "fecha_vencimiento": "2050-10-05",
+      "fecha_actualizado": "2026-05-31",
+      "tasa_mensual": null,
+      "notas": "Saldo cayo ~50% en ~8 meses con cuota 484 → el valor_inicial (limite/refinanciamiento) NO es el desembolso real, asi que la tasa inferida sera imprecisa. RESUELTO: anclar a saldo_reportado; los meses intermedios son estimados y el abono extraordinario de cierre cuadra la diferencia. Probablemente dispare la alerta (>2x cuota); es esperado en este credito."
+    },
+    {
+      "numero": "2421",
+      "entidad": "BANCO DE AMERICA CENTRAL",
+      "tipo_credito": "CARTERA COMERCIAL",
+      "estrategia": "amortizable",
+      "moneda": "USD",
+      "valor_inicial": 23485.11,
+      "saldo_reportado": 22964.64,
+      "cuota": 498.00,
+      "fecha_otorgamiento": "2026-03-03",
+      "fecha_vencimiento": "2031-03-16",
+      "fecha_actualizado": "2026-05-31",
+      "tasa_mensual": null,
+      "notas": "Otorgado 03/2026 → FUERA de la ventana 2023-2025 de Thelma. Incluido en fixture; el motor lo filtra por fecha_otorgamiento."
+    },
+    {
+      "numero": "6006",
+      "entidad": "BANCO FICOHSA NICARAGUA, S.A",
+      "tipo_credito": "CARTERA HIPOTECARIA",
+      "estrategia": "bullet",
+      "moneda": "USD",
+      "valor_inicial": 59248.00,
+      "saldo_reportado": 59234.82,
+      "cuota": 510.00,
+      "fecha_otorgamiento": "2026-04-22",
+      "fecha_vencimiento": "2026-08-17",
+      "fecha_actualizado": "2026-05-31",
+      "tasa_mensual": null,
+      "notas": "Bullet/puente: plazo ~4 meses, saldo ≈ valor inicial (capital intacto). Cuota = interes; capital al vencimiento. NO amortizar con cuota fija. Ademas FUERA de ventana (otorgado 04/2026)."
+    },
+    {
+      "numero": "1735",
+      "entidad": "BANCO FICOHSA NICARAGUA, S.A",
+      "tipo_credito": "CARTERA HIPOTECARIA",
+      "estrategia": "bullet",
+      "moneda": "USD",
+      "valor_inicial": 59248.00,
+      "saldo_reportado": 58814.55,
+      "cuota": 510.00,
+      "fecha_otorgamiento": "2025-08-22",
+      "fecha_vencimiento": "2026-08-17",
+      "fecha_actualizado": "2026-05-31",
+      "tasa_mensual": null,
+      "notas": "Bullet/puente: plazo ~12 meses, capital casi intacto (59,248 → 58,814 en 9 meses con cuota 510 → cuota es casi puro interes). Modelar interest-only + capital al vencimiento."
+    },
+    {
+      "numero": "9535",
+      "entidad": "UNICOMER",
+      "tipo_credito": "CARTERA DE CONSUMO",
+      "estrategia": "amortizable",
+      "moneda": "NIO",
+      "valor_inicial": 104361.60,
+      "saldo_reportado": 58101.74,
+      "cuota": 9061.00,
+      "fecha_otorgamiento": "2026-01-08",
+      "fecha_vencimiento": "2028-01-08",
+      "fecha_actualizado": "2026-05-31",
+      "tasa_mensual": null,
+      "notas": "Amortizable estandar, plazo 24 meses. Otorgado 01/2026 → FUERA de la ventana 2023-2025 de Thelma."
+    }
+  ]
+}
