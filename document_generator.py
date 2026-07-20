@@ -47,6 +47,10 @@ def generar_documento_completo(
     validacion_llm: Optional[dict] = None,
     statement_blocks: Optional[list] = None,
     esf_tipo: str = "corte",
+    notas_data: Optional[list] = None,
+    docs_imagenes: Optional[list] = None,
+    fotos_negocio: Optional[list] = None,
+    incluir_fotos_negocio: bool = False,
 ):
     """
     Genera el documento final y lo guarda en `output_path`.
@@ -54,9 +58,12 @@ def generar_documento_completo(
         1) Certificación
         2) Estado de Resultados
         3) Estado de Situación Financiera
-        4) Datos
-        5) Documentos del cliente (tabla vacía)
-        6) Plantilla SmartArt (última página)
+        4) Notas integradoras (opcional: se omite si notas_data es None)
+        5) Datos
+        6) Documentos del cliente (SIEMPRE va: con imágenes las incrusta,
+           sin imágenes tabla vacía para pegado manual)
+        7) Fotografías del Negocio (opcional: solo si incluir_fotos_negocio)
+        8) Plantilla SmartArt (última página)
     """
     doc = Document()
 
@@ -176,10 +183,23 @@ def generar_documento_completo(
             generar_tabla_esf_mensual(doc, df_esf, df_cert)
         else:
             generar_tabla_esf(doc, df_esf, df_cert)
+
+    # -------- Notas integradoras (motor V2) --------
+    if notas_data:
+        from generators.notas import generar_notas
+        generar_notas(doc, notas_data)
+
     generar_tabla_datos(doc, df_datos)
 
-    # -------- NUEVA SECCIÓN --------
-    generar_tabla_docs_cliente(doc)          # ← aquí insertamos la tabla vacía
+    # -------- Documentos del cliente (siempre) --------
+    # Con imágenes (motor V2) las incrusta; sin imágenes, tabla vacía de siempre.
+    generar_tabla_docs_cliente(doc, imagenes=docs_imagenes)
+
+    # -------- Fotografías del Negocio (hoja opcional) --------
+    if incluir_fotos_negocio:
+        from generators.docs_table import generar_fotos_negocio
+
+        generar_fotos_negocio(doc, imagenes=fotos_negocio)
 
     # -------- Plantilla SmartArt --------
     tpl = plantilla_path or _PLANTILLA_PATH

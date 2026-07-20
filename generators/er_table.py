@@ -114,7 +114,7 @@ def generar_tabla_er(doc, df_er: pd.DataFrame, df_cert: pd.DataFrame) -> None:
         )
 
     # 4b) Filas de datos
-    no_indent = ["Descripción", "(=) Ingresos Brutos", "Total gastos operativos"]
+    no_indent = ["Descripción", "(=) Ingresos Brutos", "(=) Utilidad Bruta", "Total gastos operativos"]
     in_gastos_detalle = False                                       # ← bandera sangría
     for i, row in df.iterrows():
         key = str(row.iloc[0]).strip()
@@ -161,7 +161,7 @@ def generar_tabla_er(doc, df_er: pd.DataFrame, df_cert: pd.DataFrame) -> None:
     # 5) Bordes especiales
     for row in table.rows[1:]:
         first = row.cells[0].text.strip()
-        if first in ["(=) Ingresos Brutos", "Total gastos operativos"]:
+        if first in ["(=) Ingresos Brutos", "(=) Utilidad Bruta", "Total gastos operativos"]:
             for cell in row.cells:
                 set_cell_border(cell, top={"sz": "3", "val": "single", "color": "000000"})
     for cell in table.rows[n_rows].cells:                          # borde doble final
