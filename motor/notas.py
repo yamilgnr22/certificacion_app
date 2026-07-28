@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import calendar
 from dataclasses import dataclass
+from typing import Any, Mapping, Sequence
 
 
 @dataclass(frozen=True)
@@ -28,8 +29,13 @@ class Nota:
     total: list        # fila de total (label + montos)
 
 
+class NotasError(ValueError):
+    """Error bloqueante al construir las notas (p.ej. caja negativa)."""
+
+
 def _redondear(x: float) -> float:
-    return round(float(x), 2)
+    # Cordobas enteros (ver motor/er._redondear): cuadre exacto para el banco.
+    return round(float(x), 0)
 
 
 def _fecha_corte(mes_final: str) -> str:
@@ -38,17 +44,66 @@ def _fecha_corte(mes_final: str) -> str:
     return f"{d:02d}/{m:02d}/{y}"
 
 
-def construir_notas(modelo) -> list[Nota]:
-    """modelo: ModeloCertificacion (Tipo A o B)."""
+def _filas_efectivo(
+    efectivo_corte: float,
+    cuentas: Sequence[Mapping[str, Any]],
+    tasa_cambio: float,
+) -> list[list]:
+    """Desglose de la Nota 1: cuentas bancarias + 'Efectivo en Caja' residuo.
+
+    Regla del CPA: la caja NO se teclea — es la diferencia entre el efectivo
+    del ESF y la suma de las cuentas (en NIO, enteros). Si da negativa, las
+    cuentas suman mas que el efectivo reportado: error BLOQUEANTE (una caja
+    negativa nunca debe llegar al banco)."""
+    filas_cuentas: list[list] = []
+    suma = 0.0
+    for c in cuentas:
+        saldo = float(c.get("saldo") or 0)
+        moneda = str(c.get("moneda") or "NIO").upper()
+        saldo_nio = _redondear(saldo * tasa_cambio if moneda == "USD" else saldo)
+        banco = str(c.get("banco") or "").strip()
+        tipo = str(c.get("tipo") or "").strip()
+        numero = str(c.get("numero") or "").strip()
+        partes = [p for p in (banco, tipo, moneda) if p]
+        desc = " ".join(partes) + (f" No. {numero}" if numero else "")
+        filas_cuentas.append([desc or "Cuenta bancaria", saldo_nio])
+        suma = _redondear(suma + saldo_nio)
+
+    caja = _redondear(_redondear(efectivo_corte) - suma)
+    if caja < 0:
+        raise NotasError(
+            f"Las cuentas bancarias suman {suma:,.0f} NIO pero el efectivo del "
+            f"ESF al corte es {_redondear(efectivo_corte):,.0f} NIO: el 'Efectivo en Caja' "
+            f"daria {caja:,.0f} (negativo). Revisa los saldos de las cuentas o el "
+            "efectivo del balance antes de generar la nota."
+        )
+    filas: list[list] = []
+    if caja > 0:
+        filas.append(["Efectivo en Caja", caja])
+    filas.extend(filas_cuentas)
+    return filas or [["Efectivo en Caja y Bancos", _redondear(efectivo_corte)]]
+
+
+def construir_notas(modelo, cuentas_bancarias: Sequence[Mapping[str, Any]] | None = None) -> list[Nota]:
+    """modelo: ModeloCertificacion (Tipo A o B).
+
+    cuentas_bancarias (opcional): [{banco, tipo, moneda, numero, saldo}] para
+    desglosar la Nota 1; sin ellas, una sola linea como siempre."""
     corte = modelo.esf.corte()
     fecha = _fecha_corte(modelo.inputs.periodo.mes_final)
 
-    # ---- 1. Efectivo
+    # ---- 1. Efectivo (desglose por cuenta si el CPA cargo las cuentas)
+    if cuentas_bancarias:
+        filas_efectivo = _filas_efectivo(
+            corte.efectivo, cuentas_bancarias, modelo.inputs.periodo.tasa_cambio
+        )
+    else:
+        filas_efectivo = [["Efectivo en Caja y Bancos", _redondear(corte.efectivo)]]
     nota1 = Nota(
         numero=1,
         titulo="INTEGRACION DEL EFECTIVO Y EQUIVALENTES DE EFECTIVO",
         columnas=["DESCRIPCION", "SALDO NIO"],
-        filas=[["Efectivo en Caja y Bancos", _redondear(corte.efectivo)]],
+        filas=filas_efectivo,
         total=[f"Total Efectivo y Equivalentes al {fecha}", _redondear(corte.efectivo)],
     )
 

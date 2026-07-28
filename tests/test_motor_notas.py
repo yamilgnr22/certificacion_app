@@ -79,6 +79,58 @@ class NotasTipoBTest(unittest.TestCase):
         self.assertEqual(self.notas[3].filas, [["Sin pasivos al corte", 0.0]])
 
 
+class NotasCuentasBancariasTest(unittest.TestCase):
+    """Nota 1 desglosada: cuentas bancarias + 'Efectivo en Caja' residuo.
+
+    Regla del CPA: caja = efectivo ESF - suma de cuentas (determinista);
+    negativa = BLOQUEANTE. USD se convierte con la tasa del periodo."""
+
+    def setUp(self):
+        self.m = certificar_tipo_a(_inputs_gloria())  # efectivo corte = 841,220
+        self.tc = self.m.inputs.periodo.tasa_cambio
+
+    def test_desglose_con_caja_residual(self):
+        cuentas = [
+            {"banco": "LAFISE", "tipo": "Cuenta de Ahorro", "moneda": "NIO",
+             "numero": "106012140", "saldo": 500_000},
+            {"banco": "BAC", "tipo": "Cuenta Corriente", "moneda": "USD",
+             "numero": "367157328", "saldo": 5_000},
+        ]
+        notas = construir_notas(self.m, cuentas_bancarias=cuentas)
+        n1 = notas[0]
+        usd_nio = round(5_000 * self.tc)
+        # Fila 1 = Efectivo en Caja (residuo), luego las cuentas
+        self.assertEqual(n1.filas[0][0], "Efectivo en Caja")
+        self.assertEqual(n1.filas[0][1], 841_220 - 500_000 - usd_nio)
+        self.assertEqual(n1.filas[1][0], "LAFISE Cuenta de Ahorro NIO No. 106012140")
+        self.assertEqual(n1.filas[1][1], 500_000)
+        self.assertEqual(n1.filas[2][0], "BAC Cuenta Corriente USD No. 367157328")
+        self.assertEqual(n1.filas[2][1], usd_nio)
+        # La suma de filas = total = efectivo del ESF, EXACTO
+        self.assertEqual(sum(f[1] for f in n1.filas), 841_220)
+        self.assertEqual(n1.total[-1], 841_220)
+
+    def test_cuentas_igual_al_efectivo_omite_caja(self):
+        cuentas = [{"banco": "LAFISE", "tipo": "Cuenta de Ahorro", "moneda": "NIO",
+                    "numero": "1", "saldo": 841_220}]
+        n1 = construir_notas(self.m, cuentas_bancarias=cuentas)[0]
+        self.assertEqual(len(n1.filas), 1)  # sin fila de caja (residuo 0)
+        self.assertEqual(sum(f[1] for f in n1.filas), 841_220)
+
+    def test_caja_negativa_es_bloqueante(self):
+        from motor.notas import NotasError
+
+        cuentas = [{"banco": "LAFISE", "tipo": "Cuenta de Ahorro", "moneda": "NIO",
+                    "numero": "1", "saldo": 900_000}]  # > 841,220
+        with self.assertRaises(NotasError) as ctx:
+            construir_notas(self.m, cuentas_bancarias=cuentas)
+        self.assertIn("negativo", str(ctx.exception))
+
+    def test_sin_cuentas_linea_unica_de_siempre(self):
+        n1 = construir_notas(self.m)[0]
+        self.assertEqual(n1.filas, [["Efectivo en Caja y Bancos", 841_220.0]])
+
+
 class NotasDocxE2ETest(unittest.TestCase):
     def test_docx_incluye_seccion_de_notas(self):
         from docx import Document
