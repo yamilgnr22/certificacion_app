@@ -45,12 +45,6 @@ from motor.inputs import InputsTipoB, PlanResuelto
 from motor.mov import _GASTOS_OPER_NO_DEPR_LABELS, CalculoMov, MovMes, _delta_principal_por_mes
 
 
-# Banda de oscilacion de proveedores. Conservadora como la del inventario:
-# el pasivo esta atado a la caja (lo que no se paga queda a credito), asi que
-# una banda amplia mueve fuerte el efectivo mes a mes.
-PROVEEDORES_BANDA_PCT = 10.0
-
-
 def _redondear(x: float) -> float:
     # Cordobas enteros (ver motor/er._redondear): cuadre exacto para el banco.
     return round(float(x), 0)
@@ -114,7 +108,7 @@ def construir_tipo_b(
 
         prov_mensual = trayectoria_con_ancla(
             si.proveedores, si.proveedores, list(meses),
-            banda_pct=PROVEEDORES_BANDA_PCT, seed=seed_base + "|prov",
+            banda_pct=inputs.bandas.proveedores_pct, seed=seed_base + "|prov",
         )
 
     # Cuentas de credito declaradas que ningun credito del reporte alimenta
@@ -134,7 +128,7 @@ def construir_tipo_b(
             continue
         cred_sin_plan[cuenta] = _tray(
             saldo, saldo, list(meses),
-            banda_pct=PROVEEDORES_BANDA_PCT, seed=f"{seed_base}|{cuenta}",
+            banda_pct=inputs.bandas.creditos_pct, seed=f"{seed_base}|{cuenta}",
         )
     cred_prev = {c: _redondear(getattr(si, c, 0.0) or 0.0) for c in cred_sin_plan}
 

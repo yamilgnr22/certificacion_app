@@ -251,6 +251,28 @@ class PlanResuelto:
 # --------------------------------------------------------- Inputs por regimen
 
 @dataclass(frozen=True)
+class Bandas:
+    """Amplitud de la oscilacion mensual de cada concepto, en %.
+
+    Las cuentas no quedan planas mes a mes: oscilan dentro de su banda y
+    anclan en el saldo del corte. Defaults conservadores salvo tarjetas (que
+    por naturaleza se consumen y pagan con mas variacion); inventario,
+    proveedores y creditos mueven la caja, asi que una banda amplia puede
+    dejar el efectivo corto en el mes de mayor compra o pago."""
+
+    tarjetas_pct: float = 20.0      # tarjetas del reporte de deuda (revolving)
+    creditos_pct: float = 10.0      # cuentas de credito declaradas sin plan
+    inventario_pct: float = 10.0    # inventario (Tipo A)
+    proveedores_pct: float = 10.0   # proveedores
+
+    def __post_init__(self) -> None:
+        for campo in ("tarjetas_pct", "creditos_pct", "inventario_pct", "proveedores_pct"):
+            v = getattr(self, campo)
+            if not (0 <= v <= 50):
+                raise ValueError(f"{campo} debe estar en [0, 50], no {v}")
+
+
+@dataclass(frozen=True)
 class InputsTipoA:
     """Inputs para certificacion Tipo A (~6 meses, balance final ancla dura)."""
 
@@ -260,6 +282,7 @@ class InputsTipoA:
     saldos_iniciales: ESF_Saldos
     saldos_finales: ESF_Saldos
     deudas: list[DeudaInput] = field(default_factory=list)
+    bandas: Bandas = field(default_factory=Bandas)
 
     def __post_init__(self) -> None:
         if self.periodo.tipo != "A":
@@ -308,6 +331,7 @@ class InputsTipoB:
     cuentas_objetivo: list[CuentaObjetivo]
     deudas: list[DeudaInput] = field(default_factory=list)
     seed: str = ""
+    bandas: Bandas = field(default_factory=Bandas)
 
     def __post_init__(self) -> None:
         if self.periodo.tipo != "B":

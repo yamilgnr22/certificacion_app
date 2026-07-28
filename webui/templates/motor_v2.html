@@ -206,6 +206,17 @@
     <div class="grid g4" id="objetivos"></div>
   </div>
 
+  <div class="panel" id="panelBandas">
+    <h2>Bandas de oscilación mensual (%)</h2>
+    <p class="hint">Cuánto se mueve cada cuenta mes a mes alrededor de su tendencia. <b>El saldo del corte no cambia</b>: siempre ancla en la cifra dura (reporte de deuda o balance final). Banda 0 = línea plana sin oscilación. Subir la banda mueve más la caja: si el efectivo queda corto en algún mes, bajala.</p>
+    <div class="grid g4" id="bandas">
+      <div><label>Tarjetas de crédito</label><input id="bandaTarjetas" value="20" placeholder="20"></div>
+      <div><label>Otros créditos (sin plan)</label><input id="bandaCreditos" value="10" placeholder="10"></div>
+      <div><label>Inventario <span class="hint" style="margin:0">(Tipo A)</span></label><input id="bandaInventario" value="10" placeholder="10"></div>
+      <div><label>Proveedores</label><input id="bandaProveedores" value="10" placeholder="10"></div>
+    </div>
+  </div>
+
   <div class="panel">
     <h2>Deudas <button class="btn secondary small" id="addDeuda" style="margin-left:8px">+ Agregar deuda</button></h2>
     <p class="hint">incluir_en_er = sí para deuda activa (afecta ER/ESF); no para soporte documental. saldos_mensuales (JSON) solo para tarjetas revolving con saldo variable.</p>
@@ -672,6 +683,24 @@ async function extraerEstadoCuenta(){
   finally{ btn.disabled=false; }
 }
 
+// Bandas de oscilacion: input vacio => se usa el default del motor.
+const BANDAS_CAMPOS={tarjetas_pct:["bandaTarjetas",20], creditos_pct:["bandaCreditos",10],
+                     inventario_pct:["bandaInventario",10], proveedores_pct:["bandaProveedores",10]};
+function leerBandas(){
+  const out={};
+  for(const k in BANDAS_CAMPOS){
+    const v=(document.getElementById(BANDAS_CAMPOS[k][0]).value||"").trim();
+    out[k]= v===""? BANDAS_CAMPOS[k][1] : (parseFloat(v)||0);
+  }
+  return out;
+}
+function aplicarBandas(b){
+  b=b||{};
+  for(const k in BANDAS_CAMPOS){
+    const [id, def]=BANDAS_CAMPOS[k];
+    document.getElementById(id).value = b[k]!=null? b[k] : def;
+  }
+}
 function collect(){
   const p=readFields("periodo");
   const tipo=(p.tipo||"A").toUpperCase();
@@ -686,6 +715,7 @@ function collect(){
     datos: (()=>{ const d=readFields("datos"); d.empleados=parseInt(d.empleados||0); return d; })(),
     saldos_iniciales: numify(readFields("saldosIni")),
     deudas: readDeudas(),
+    bandas: leerBandas(),
   };
   if(modoER()==="generado"){
     const g=readFields("erGenParams");
@@ -1035,6 +1065,7 @@ function aplicarInputs(b){
   });
   if(b.seed) ov.seed=b.seed;
   buildFields("objetivos", OBJ_FIELDS, ov);
+  aplicarBandas(b.bandas);
   const esGen=(b.er_modo||"manual")==="generado";
   document.getElementById("selModoER").value=esGen?"generado":"manual";
   if(esGen){

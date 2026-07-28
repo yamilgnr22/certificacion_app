@@ -363,7 +363,9 @@ def _resolver_desde_saldos_mensuales(
 
 # ---------------------------------------------------------------- Plan revolving
 
-def _resolver_revolving(deuda: DeudaInput, periodo: PeriodoSpec) -> PlanResuelto:
+def _resolver_revolving(
+    deuda: DeudaInput, periodo: PeriodoSpec, banda_pct: float = 20.0
+) -> PlanResuelto:
     """Tarjeta/linea revolving. El saldo OSCILA en banda +-20% alrededor del
     saldo reportado (como caja/inventario en Tipo B), terminando en el saldo
     reportado (ancla dura). Si el CPA da saldos_mensuales, se respetan."""
@@ -374,7 +376,7 @@ def _resolver_revolving(deuda: DeudaInput, periodo: PeriodoSpec) -> PlanResuelto
         saldos = {m: float(v) for m, v in deuda.saldos_mensuales.items()}
     else:
         saldos = trayectoria_revolving(
-            deuda.saldo_reportado, meses_periodo, banda_pct=20.0,
+            deuda.saldo_reportado, meses_periodo, banda_pct=banda_pct,
             seed=_seed_deuda(deuda, periodo),
         )
     return _resolver_desde_saldos_mensuales(deuda, periodo, "tarjetas_credito", saldos)
@@ -472,6 +474,7 @@ def resolver_planes(
     deudas: Sequence[DeudaInput],
     periodo: PeriodoSpec,
     saldos_iniciales=None,
+    bandas=None,
 ) -> list[PlanResuelto]:
     """Filtra por ventana y resuelve TODOS los planes vigentes (activos +
     documentales). Usar planes_activos() para los que impactan ER/Mov/ESF.
@@ -479,7 +482,7 @@ def resolver_planes(
     saldos_iniciales (opcional): si trae saldos declarados en las cuentas de
     credito (tipico cuando hay una certificacion previa), esos montos son el
     ancla de apertura y las deudas se recalibran contra ellos."""
-    planes = _resolver_planes_base(deudas, periodo)
+    planes = _resolver_planes_base(deudas, periodo, bandas)
     if saldos_iniciales is None:
         return planes
     ajustes = _calibrar_aperturas(planes, saldos_iniciales, periodo)
@@ -493,10 +496,12 @@ def resolver_planes(
         else d
         for d in deudas
     ]
-    return _resolver_planes_base(recalibradas, periodo)
+    return _resolver_planes_base(recalibradas, periodo, bandas)
 
 
-def _resolver_planes_base(deudas: Sequence[DeudaInput], periodo: PeriodoSpec) -> list[PlanResuelto]:
+def _resolver_planes_base(
+    deudas: Sequence[DeudaInput], periodo: PeriodoSpec, bandas=None
+) -> list[PlanResuelto]:
     activos = filtrar_por_ventana(deudas, periodo)
     out: list[PlanResuelto] = []
     for d in activos:
@@ -511,6 +516,9 @@ def _resolver_planes_base(deudas: Sequence[DeudaInput], periodo: PeriodoSpec) ->
             and not d.saldos_mensuales
         ):
             plan = _resolver_credito_nuevo(d, periodo)
+        elif d.estrategia == "revolving":
+            banda = getattr(bandas, "tarjetas_pct", 20.0) if bandas else 20.0
+            plan = _resolver_revolving(d, periodo, banda)
         else:
             plan = resolver(d, periodo)
         if plan.cuenta_esf not in CUENTAS_PASIVO_VALIDAS:

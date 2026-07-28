@@ -17,6 +17,7 @@ from datetime import date
 from typing import Any, Mapping
 
 from motor.inputs import (
+    Bandas,
     CuentaObjetivo,
     DatosCliente,
     DeudaInput,
@@ -198,6 +199,16 @@ def _er_lineas(body: Mapping, periodo: PeriodoSpec) -> list[ER_LineaMes]:
     return generar_er_mensual(params, periodo, cedula=cedula)
 
 
+def _bandas(d: Mapping | None) -> Bandas:
+    """Amplitud de oscilacion por concepto; sin bloque, los defaults."""
+    d = d or {}
+    base = Bandas()
+    return Bandas(**{
+        campo: float(d[campo]) if d.get(campo) is not None else getattr(base, campo)
+        for campo in ("tarjetas_pct", "creditos_pct", "inventario_pct", "proveedores_pct")
+    })
+
+
 def inputs_from_json(body: Mapping) -> InputsTipoA:
     periodo = _periodo(body["periodo"])
     return InputsTipoA(
@@ -207,6 +218,7 @@ def inputs_from_json(body: Mapping) -> InputsTipoA:
         saldos_iniciales=_esf(body.get("saldos_iniciales")),
         saldos_finales=_esf(body.get("saldos_finales")),
         deudas=[_deuda(x) for x in (body.get("deudas") or [])],
+        bandas=_bandas(body.get("bandas")),
     )
 
 
@@ -228,6 +240,7 @@ def inputs_tipo_b_from_json(body: Mapping) -> InputsTipoB:
         cuentas_objetivo=[_cuenta_objetivo(x) for x in (body.get("cuentas_objetivo") or [])],
         deudas=[_deuda(x) for x in (body.get("deudas") or [])],
         seed=str(body.get("seed", "") or ""),
+        bandas=_bandas(body.get("bandas")),
     )
 
 

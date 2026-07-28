@@ -20,16 +20,7 @@ from motor.mov import CalculoMov, construir_mov
 from motor.tipo_b import construir_tipo_b
 from motor.validar import ResultadoValidacion, validar_tipo_a, validar_tipo_b
 
-# Banda de oscilacion del inventario en Tipo A. Mas conservadora que la de
-# tarjetas (20%): el inventario es un activo atado a la caja — cada subida es
-# una compra que consume efectivo, asi que una banda amplia puede dejar la
-# caja negativa en el mes de compra fuerte.
-INVENTARIO_BANDA_PCT = 10.0
-
-# Banda de las cuentas de credito que se declaran en el balance pero ningun
-# credito del reporte alimenta (tarjeta que el reporte no lista, deuda vieja
-# que ya no aparece). Conservadora: el pasivo mueve la caja.
-CREDITO_BANDA_PCT = 10.0
+# Las amplitudes de banda viven en inputs.Bandas (configurables desde la UI).
 
 
 @dataclass(frozen=True)
@@ -88,7 +79,7 @@ def _creditos_sin_plan_tipo_a(
             f"{inputs.periodo.mes_final}|{cuenta}"
         )
         out[cuenta] = trayectoria_con_ancla(
-            inicial, final, meses, banda_pct=CREDITO_BANDA_PCT, seed=seed
+            inicial, final, meses, banda_pct=inputs.bandas.creditos_pct, seed=seed
         )
     return out
 
@@ -110,15 +101,15 @@ def _trayectoria_cuenta_tipo_a(
         f"{inputs.datos.cedula}|{inputs.periodo.mes_inicial}|"
         f"{inputs.periodo.mes_final}|{sufijo_seed}"
     )
-    return trayectoria_con_ancla(
-        inicial, final, meses, banda_pct=INVENTARIO_BANDA_PCT, seed=seed
-    )
+    banda = (inputs.bandas.proveedores_pct if cuenta == "proveedores"
+             else inputs.bandas.inventario_pct)
+    return trayectoria_con_ancla(inicial, final, meses, banda_pct=banda, seed=seed)
 
 
 def certificar_tipo_a(inputs: InputsTipoA) -> ModeloCertificacion:
     # Los saldos iniciales declarados (vienen del ESF de la certificacion
     # anterior) son el ancla de apertura de las cuentas de credito.
-    todos = resolver_planes(inputs.deudas, inputs.periodo, inputs.saldos_iniciales)
+    todos = resolver_planes(inputs.deudas, inputs.periodo, inputs.saldos_iniciales, inputs.bandas)
     activos = planes_activos(todos)
     soporte = planes_documentales(todos)
     er = construir_er(inputs.er_mensual, activos, inputs.periodo)
@@ -147,7 +138,7 @@ def certificar_tipo_a(inputs: InputsTipoA) -> ModeloCertificacion:
 
 
 def certificar_tipo_b(inputs: InputsTipoB) -> ModeloCertificacion:
-    todos = resolver_planes(inputs.deudas, inputs.periodo, inputs.saldos_iniciales)
+    todos = resolver_planes(inputs.deudas, inputs.periodo, inputs.saldos_iniciales, inputs.bandas)
     activos = planes_activos(todos)
     soporte = planes_documentales(todos)
     er = construir_er(inputs.er_mensual, activos, inputs.periodo)
