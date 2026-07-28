@@ -136,6 +136,30 @@ class NormalizacionTest(unittest.TestCase):
         deudas = _normalizar_deudas(raw)
         self.assertEqual(len(deudas), 1)  # no desaparece del panel
 
+    def test_vencimiento_igual_a_actualizado_se_anula(self):
+        # Bug real (Jose David): el LLM puso 'Actualizado' (05/2026) como
+        # vencimiento -> mismo mes -> se anula y baja la confianza.
+        raw = {"deudas": [
+            {"numero": "8120", "entidad": "BDF", "tipo_credito": "CARTERA COMERCIAL",
+             "moneda": "USD", "limite": 60000, "saldo": 42238.99, "cuota": 956,
+             "fecha_otorgamiento": "22/09/2021", "fecha_vencimiento": "01/05/2026",
+             "fecha_actualizado": "05/2026"},
+        ]}
+        d = _normalizar_deudas(raw)[0]
+        self.assertIsNone(d["fecha_vencimiento"])
+        self.assertEqual(d["confianza"], "baja")
+
+    def test_vencimiento_real_se_conserva(self):
+        raw = {"deudas": [
+            {"numero": "8120", "entidad": "BDF", "tipo_credito": "CARTERA COMERCIAL",
+             "moneda": "USD", "limite": 60000, "saldo": 42238.99, "cuota": 956,
+             "fecha_otorgamiento": "22/09/2021", "fecha_vencimiento": "04/09/2031",
+             "fecha_actualizado": "05/2026", "confianza": "alta"},
+        ]}
+        d = _normalizar_deudas(raw)[0]
+        self.assertEqual(d["fecha_vencimiento"], "2031-09-04")
+        self.assertEqual(d["confianza"], "alta")
+
 
 class ExtraerDeudasTest(unittest.TestCase):
     def test_flujo_completo_con_provider_fake(self):
@@ -213,6 +237,25 @@ class NormalizarSiboifTest(unittest.TestCase):
             deuda = _deuda(d)
             self.assertEqual(deuda.saldo_reportado, d["saldo_reportado"])
             self.assertEqual(deuda.estrategia, d["estrategia"])
+
+    def test_deudas_anidadas_en_resumen_se_rescatan(self):
+        # Bug real (SIBOIF foto/vision): el modelo mete las deudas dentro de
+        # 'resumen' en vez del arreglo 'deudas' de primer nivel.
+        from services.deuda_extraction import _rescatar_deudas
+
+        raw = {"fuente": "siboif", "deudas": [], "resumen": {"deudas": [
+            {"tipo_credito": "Consumo", "destino": "Tarjetas", "moneda": "NIO",
+             "cant_instituciones": 1, "saldo": 16251.90, "interes_corriente": 296.89},
+        ]}}
+        rescatado = _rescatar_deudas(raw)
+        self.assertEqual(len(rescatado["deudas"]), 1)
+        self.assertEqual(_normalizar_siboif(rescatado)[0]["saldo_reportado"], 16251.90)
+
+    def test_rescatar_no_toca_si_deudas_ya_estan(self):
+        from services.deuda_extraction import _rescatar_deudas
+
+        raw = {"deudas": [{"numero": "1"}], "resumen": {"deudas": [{"numero": "X"}]}}
+        self.assertEqual(_rescatar_deudas(raw)["deudas"], [{"numero": "1"}])
 
 
 class EndpointTest(unittest.TestCase):

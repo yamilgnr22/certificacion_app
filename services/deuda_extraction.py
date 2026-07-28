@@ -100,8 +100,15 @@ ni cuota, emite UNA entrada con saldo y cuota en 0.
 2. Los montos salen de "Saldos y Cupos"; copialos tal cual, sin calcular.
 3. Fechas de otorgamiento/vencimiento salen de "Historico Vigentes"; casa por \
 Entidad + Numero.
-4. Si el texto viene duplicado (paginas repetidas), NO dupliques entradas.
-5. confianza: "alta"/"media"/"baja".
+4. CRITICO - Vencimiento vs Actualizado: en la linea del Tipo de credito \
+aparecen DOS fechas al final. La PRIMERA (formato completo DD/MM/AAAA, o \
+--/--/---- si no tiene) es el VENCIMIENTO. La SEGUNDA (formato corto MM/AAAA, \
+sin dia) es el ACTUALIZADO. Ejemplo: 'CARTERA COMERCIAL ... 04/09/2031 05/2026' \
+=> fecha_vencimiento=04/09/2031, fecha_actualizado=05/2026. NUNCA pongas la \
+fecha corta MM/AAAA (Actualizado) como fecha_vencimiento. Si el vencimiento es \
+--/--/---- (tipico de tarjetas), deja fecha_vencimiento vacio.
+5. Si el texto viene duplicado (paginas repetidas), NO dupliques entradas.
+6. confianza: "alta"/"media"/"baja".
 
 Responde exactamente:
 {
@@ -151,22 +158,46 @@ Responde exactamente:
   ]
 }"""
 
-_SYSTEM_PROMPT_VISION = (
-    "Eres un asistente que lee reportes de credito de Nicaragua a partir de "
-    "imagenes (fotos o capturas) para una contadora publica. El reporte puede "
-    "ser de dos fuentes:\n"
-    "- SIBOIF: titulo 'REPORTE SIBOIF' o seccion 'Informacion de Creditos' con "
-    "columnas Tipo Credito / Destino / Moneda / Situacion / Cant. Instit / Saldo. "
-    "Es AGREGADO (una fila por tipo+moneda, sin numero ni cuota por deuda).\n"
-    "- TransUnion (TUCA): 'Reporte de Historial Crediticio', obligaciones "
-    "individuales con numero y entidad.\n\n"
-    "Identifica la fuente y extrae SOLO un objeto JSON. Si es SIBOIF usa el "
-    "formato de _SYSTEM_PROMPT_SIBOIF (fuente='siboif', con 'resumen' y deudas "
-    "de tipo_credito/destino/moneda/cant_instituciones/saldo/interes_corriente). "
-    "Si es TransUnion usa fuente='tuca' con deudas "
-    "numero/entidad/tipo_credito/moneda/limite/saldo/cuota/fecha_otorgamiento. "
-    "Copia los numeros tal cual; marca confianza 'baja' si la foto es dudosa."
-)
+_SYSTEM_PROMPT_VISION = """Eres un asistente que lee reportes de credito de \
+Nicaragua a partir de IMAGENES (fotos o capturas) para una contadora publica. \
+El reporte puede ser de dos fuentes:
+- SIBOIF: titulo 'REPORTE SIBOIF' o seccion 'Informacion de Creditos' con \
+columnas Fecha / Tipo Credito / Destino / Moneda / Situacion / Cant. Instit / \
+Int. Corrientes / Saldo. Es AGREGADO (una fila por tipo+moneda).
+- TransUnion (TUCA): 'Reporte de Historial Crediticio', obligaciones \
+individuales con numero de 4 digitos y entidad.
+
+Identifica la fuente y devuelve SOLO un objeto JSON. Copia los numeros tal \
+cual; marca confianza 'baja' si la foto es dudosa.
+
+IMPORTANTE: las deudas van SIEMPRE en el arreglo 'deudas' de PRIMER NIVEL, \
+NUNCA dentro de 'resumen'.
+
+Si es SIBOIF, responde exactamente:
+{
+  "fuente": "siboif",
+  "titular": {"nombre": str, "cedula": str},
+  "resumen": {"saldo_general": num, "interes_general": num, "cuota_mensual_total": num},
+  "deudas": [
+    {"tipo_credito": str, "destino": str, "moneda": "NIO"|"USD",
+     "cant_instituciones": num, "saldo": num, "interes_corriente": num,
+     "confianza": "alta"|"media"|"baja"}
+  ]
+}
+(moneda: 'Nacional con Mantenimiento de Valor' -> 'NIO'; 'Extranjera (US$ \
+Dolares)' -> 'USD'. La cedula esta en 'Identificacion'.)
+
+Si es TransUnion, responde exactamente:
+{
+  "fuente": "tuca",
+  "titular": {"nombre": str, "cedula": str},
+  "deudas": [
+    {"numero": str, "entidad": str, "tipo_credito": str, "moneda": "NIO"|"USD",
+     "limite": num, "saldo": num, "cuota": num,
+     "fecha_otorgamiento": "DD/MM/AAAA", "fecha_vencimiento": "DD/MM/AAAA o vacio",
+     "confianza": "alta"|"media"|"baja"}
+  ]
+}"""
 
 
 def _provider_default() -> LLMProvider:
@@ -238,6 +269,17 @@ def _normalizar_tuca(raw: Mapping[str, Any]) -> list[dict[str, Any]]:
             continue
         vistas.add(clave)
         tipo = str(d.get("tipo_credito") or "").strip()
+        venc = _fecha_iso(d.get("fecha_vencimiento"))
+        actualizado = _fecha_iso(d.get("fecha_actualizado"))
+        confianza = str(d.get("confianza") or "media")
+        # Defensa: si el vencimiento cae en el MISMO mes que 'Actualizado', casi
+        # seguro el LLM confundio los dos campos (el vencimiento real de un
+        # prestamo es a anios; 'Actualizado' es el mes del reporte). Lo anulamos
+        # para que el motor estime el plazo por cuota en vez de usar una fecha
+        # falsa y corta, y bajamos la confianza para que el CPA revise.
+        if venc and actualizado and venc[:7] == actualizado[:7]:
+            venc = None
+            confianza = "baja"
         out.append({
             "numero": numero,
             "entidad": entidad,
@@ -248,10 +290,10 @@ def _normalizar_tuca(raw: Mapping[str, Any]) -> list[dict[str, Any]]:
             "saldo_reportado": _num(d.get("saldo")),
             "cuota": _num(d.get("cuota")),
             "fecha_otorgamiento": _fecha_iso(d.get("fecha_otorgamiento")),
-            "fecha_vencimiento": _fecha_iso(d.get("fecha_vencimiento")),
-            "fecha_actualizado": _fecha_iso(d.get("fecha_actualizado")),
+            "fecha_vencimiento": venc,
+            "fecha_actualizado": actualizado,
             "incluir_en_er": True,
-            "confianza": str(d.get("confianza") or "media"),
+            "confianza": confianza,
             "fuente": "tuca",
         })
     return _filtrar_lineas_vacias(out)
@@ -314,7 +356,27 @@ def _normalizar_siboif(raw: Mapping[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+def _rescatar_deudas(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """Defensa: algunos modelos (sobre todo en vision) anidan las deudas
+    dentro de 'resumen' u otra clave en vez del arreglo 'deudas' de primer
+    nivel. Si 'deudas' viene vacio pero hay una lista de deudas en otro lado,
+    la subimos para que la normalizacion la vea."""
+    if raw.get("deudas"):
+        return dict(raw)
+    d = dict(raw)
+    for clave in ("resumen", "creditos", "obligaciones", "cuentas"):
+        anidado = raw.get(clave)
+        if isinstance(anidado, Mapping) and isinstance(anidado.get("deudas"), list):
+            d["deudas"] = anidado["deudas"]
+            break
+        if isinstance(anidado, list) and anidado and isinstance(anidado[0], Mapping):
+            d["deudas"] = anidado
+            break
+    return d
+
+
 def _resultado(raw: Mapping[str, Any], fuente: str, retries: int) -> dict[str, Any]:
+    raw = _rescatar_deudas(raw)
     titular = raw.get("titular") or {}
     deudas = _normalizar_siboif(raw) if fuente == "siboif" else _normalizar_tuca(raw)
     out = {
