@@ -152,15 +152,46 @@ def _invariantes_comunes(
             ))
 
 
+def _invariantes_solver(r: ResultadoValidacion, inputs, solver) -> None:
+    """#10 Caja: el efectivo nunca baja del piso configurado.
+
+    Si el solver no alcanzo a cubrir el deficit con las palancas disponibles
+    es ERROR bloqueante: el periodo, tal como esta parametrizado, no se puede
+    financiar. El mensaje dice cuanto falta y por donde salir.
+    Los ajustes que SI pudo hacer se informan como alerta, para que el CPA
+    vea que el motor movio cuentas y cuanto."""
+    if solver is None:
+        return
+    piso = float(getattr(inputs.minimos, "caja", 0.0))
+    etiqueta = f"el piso de caja ({piso:,.0f} NIO)" if piso > 0 else "cero"
+    for a in solver.ajustes:
+        if a.faltante > TOLERANCIA:
+            r.add(10, "error", (
+                f"Mes {a.mes}: la caja no llega a {etiqueta}, faltan "
+                f"{a.faltante:,.2f} NIO y las cuentas disponibles ya estan en su "
+                f"limite. Salidas: subir el efectivo inicial, bajar el minimo de "
+                f"inventario, ampliar las bandas o revisar los objetivos."
+            ))
+    if solver.aporte_total:
+        r.add(10, "alerta", (
+            f"El periodo necesito {solver.aporte_total:,.2f} NIO de aporte del "
+            f"propietario para sostener la caja."
+        ))
+    for linea in solver.resumen():
+        r.add(10, "alerta", f"Ajuste del solver - {linea}")
+
+
 def validar_tipo_a(
     inputs: InputsTipoA,
     planes: list[PlanResuelto],
     calculo_er: CalculoER,
     calculo_mov: CalculoMov,
     calculo_esf: CalculoESF,
+    solver=None,
 ) -> ResultadoValidacion:
     r = ResultadoValidacion()
     _invariantes_comunes(r, inputs, planes, calculo_er, calculo_mov, calculo_esf)
+    _invariantes_solver(r, inputs, solver)
 
     # ---- #2 Tipo A: ESF corte = saldos finales dados (por cuenta)
     corte = calculo_esf.corte()
@@ -183,9 +214,11 @@ def validar_tipo_b(
     calculo_er: CalculoER,
     calculo_mov: CalculoMov,
     calculo_esf: CalculoESF,
+    solver=None,
 ) -> ResultadoValidacion:
     r = ResultadoValidacion()
     _invariantes_comunes(r, inputs, planes, calculo_er, calculo_mov, calculo_esf)
+    _invariantes_solver(r, inputs, solver)
 
     # ---- #3 Bandas de oscilacion
     obj_caja = inputs.objetivo("efectivo")

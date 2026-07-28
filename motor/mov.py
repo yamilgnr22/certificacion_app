@@ -43,6 +43,7 @@ class MovMes:
     # Solo Tipo B (en Tipo A quedan en 0)
     pago_compras_inventario: float = 0.0  # compras totales pagadas (incluyen cogs)
     retiro_patrimonio: float = 0.0  # excedente de caja retirado (contra Result. Acumulados)
+    aporte_propietario: float = 0.0  # plata que mete el dueño cuando la caja no da
 
 
 @dataclass(frozen=True)

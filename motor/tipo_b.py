@@ -50,19 +50,34 @@ def _redondear(x: float) -> float:
     return round(float(x), 0)
 
 
+# Fuerza con que cada mes vuelve hacia el centro de la banda. Sin ella la
+# caminata es un paseo aleatorio libre que deriva hasta el borde y ahi se
+# QUEDA (el recorte la deja pegada, y salen meses con la cifra repetida,
+# que es justo lo que un balance real nunca muestra). Con reversion a la
+# media el camino se aleja y vuelve solo, como la caja de un negocio.
+_REVERSION = 0.35
+
+
 def _trayectoria(seed: str, n: int, tolerancia_pct: float) -> list[float]:
     """Camino de oscilacion determinista dentro de la banda.
 
-    Devuelve fracciones osc[t] con |osc| <= 0.85 * tolerancia y paso maximo
-    0.35 * tolerancia entre meses (coherencia, sin saltos)."""
+    Proceso con reversion a la media: cada mes el desvio se encoge hacia 0 y
+    recibe un golpe aleatorio. Mismo seed = mismo camino, siempre.
+    Devuelve fracciones osc[t] con |osc| <= 0.85 * tolerancia; el tope se
+    respeta REBOTANDO (no recortando) para que nunca se estanque."""
     tol = tolerancia_pct / 100.0
     rng = random.Random(seed)
     max_amp = 0.85 * tol
     step = 0.35 * tol
     osc = [rng.uniform(-0.5 * tol, 0.5 * tol)]
     for _ in range(1, n):
-        siguiente = osc[-1] + rng.uniform(-step, step)
-        osc.append(max(-max_amp, min(max_amp, siguiente)))
+        siguiente = osc[-1] * (1.0 - _REVERSION) + rng.uniform(-step, step)
+        # Rebote: si se pasa del tope, rebota hacia adentro en vez de pegarse.
+        if siguiente > max_amp:
+            siguiente = 2 * max_amp - siguiente
+        elif siguiente < -max_amp:
+            siguiente = -2 * max_amp - siguiente
+        osc.append(siguiente)
     return osc
 
 
@@ -84,7 +99,19 @@ def construir_tipo_b(
     inputs: InputsTipoB,
     calculo_er: CalculoER,
     planes: list[PlanResuelto],
+    correcciones: dict[str, dict[str, float]] | None = None,
+    aportes: dict[str, float] | None = None,
 ) -> tuple[CalculoMov, CalculoESF]:
+    """correcciones / aportes: los devuelve el solver de caja en una segunda
+    pasada. correcciones pisa el saldo deseado de una cuenta en los meses que
+    hizo falta mover; aportes es plata que mete el dueño ese mes (entra a
+    caja y sube el capital, simetrico al retiro). Sin ellos, el modelo corre
+    con sus trayectorias naturales."""
+    corr = correcciones or {}
+    _c_inv = corr.get("inventarios") or {}
+    _c_prov = corr.get("proveedores") or {}
+    _c_cxc = corr.get("cuentas_por_cobrar") or {}
+    aportes = aportes or {}
     meses = calculo_er.meses
     aperturas = _aperturas_credito(planes)
     si = _saldos_iniciales_efectivos(inputs.saldos_iniciales, aperturas)
@@ -151,6 +178,7 @@ def construir_tipo_b(
     cxc_prev = _redondear(si.cuentas_por_cobrar)
     ra0 = _redondear(si.resultados_acumulados)
     retiros_acum = 0.0
+    aportes_acum = 0.0
     depr_acum_periodo = 0.0
 
     for idx, mes in enumerate(meses):
@@ -170,6 +198,9 @@ def construir_tipo_b(
         else:
             compras = cogs
             inv_mes = inv_prev
+        if mes in _c_inv:  # el solver recorto la compra para salvar la caja
+            inv_mes = _redondear(_c_inv[mes])
+            compras = _redondear(max(0.0, cogs + (inv_mes - inv_prev)))
 
         gastos_oper = _redondear(
             sum(calculo_er.gastos_por_label_mes[lbl][mes] for lbl in _GASTOS_OPER_NO_DEPR_LABELS)
@@ -189,11 +220,15 @@ def construir_tipo_b(
 
         # Pago efectivo de las compras = compras - lo que quedo a credito.
         prov_mes = _redondear(prov_mensual.get(mes, prov_prev)) if prov_mensual else prov_prev
+        if mes in _c_prov:
+            prov_mes = _redondear(_c_prov[mes])
         pago_compras = _redondear(compras - (prov_mes - prov_prev))
         prov_prev = prov_mes
 
         # Cobranza neta: la venta que quedo en cartera no entra a caja.
         cxc_mes = _redondear(cxc_mensual.get(mes, cxc_prev)) if cxc_mensual else cxc_prev
+        if mes in _c_cxc:
+            cxc_mes = _redondear(_c_cxc[mes])
         cobro_cartera = _redondear(-(cxc_mes - cxc_prev))
         cxc_prev = cxc_mes
 
@@ -203,10 +238,14 @@ def construir_tipo_b(
         )
         caja_deseada = _redondear(obj_caja.objetivo * (1.0 + osc_caja[idx]))
         retiro = _redondear(max(0.0, caja_natural - caja_deseada))
-        caja_fin = _redondear(caja_natural - retiro)
+        # El aporte se suma DESPUES del retiro: son palancas opuestas y no
+        # pueden anularse entre si en el mismo mes.
+        aporte = _redondear(aportes.get(mes, 0.0))
+        caja_fin = _redondear(caja_natural - retiro + aporte)
         retiros_acum = _redondear(retiros_acum + retiro)
+        aportes_acum = _redondear(aportes_acum + aporte)
 
-        total_cobros = _redondear(ventas + financiamiento + cobro_cartera)
+        total_cobros = _redondear(ventas + financiamiento + cobro_cartera + aporte)
         total_pagos = _redondear(pago_compras + gastos_oper + financieros + abonos + retiro)
 
         movs.append(MovMes(
@@ -224,6 +263,7 @@ def construir_tipo_b(
             cobro_cartera=cobro_cartera,
             pago_compras_inventario=pago_compras,
             retiro_patrimonio=retiro,
+            aporte_propietario=aporte,
         ))
 
         # ----- ESF del mes
@@ -261,7 +301,7 @@ def construir_tipo_b(
         # mostrado = capital de apertura - retiros acumulados; no hay linea
         # separada de retiros en el ESF.
         resultados_acum = ra0
-        capital_neto = _redondear(capital - retiros_acum)
+        capital_neto = _redondear(capital - retiros_acum + aportes_acum)
         total_patrimonio = _redondear(
             capital_neto + resultados_acum + resultados_ejercicio
         )
@@ -316,6 +356,8 @@ def construir_tipo_b(
     # Solo si hay cartera en movimiento (ver motor/mov.construir_mov).
     if any(m.cobro_cartera for m in movs):
         rows.append(_fila("Cobranza neta de cartera", lambda x: x.cobro_cartera))
+    if any(m.aporte_propietario for m in movs):
+        rows.append(_fila("Aporte del propietario", lambda x: x.aporte_propietario))
     rows += [
         _fila("Total entradas de efectivo", lambda x: x.total_cobros),
         _fila("Compras de inventario (incluye costo de ventas)", lambda x: -x.pago_compras_inventario),
