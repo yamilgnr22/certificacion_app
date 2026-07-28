@@ -100,6 +100,7 @@ def construir_mov(
     saldos_iniciales: ESF_Saldos,
     inventario_mensual: dict[str, float] | None = None,
     proveedores_mensual: dict[str, float] | None = None,
+    creditos_sin_plan: dict[str, dict[str, float]] | None = None,
 ) -> CalculoMov:
     """inventario_mensual (opcional): trayectoria del inventario. Si se da, las
     COMPRAS del mes = costo de ventas + variacion del inventario (subir stock
@@ -110,9 +111,20 @@ def construir_mov(
     PAGO en efectivo = compras - variacion de proveedores: si el pasivo sube
     (compre a credito) sale menos caja; si baja (pague deuda vieja) sale mas.
     Debe ser la MISMA trayectoria que reciba construir_esf o el balance
-    descuadra."""
+    descuadra.
+
+    creditos_sin_plan (opcional): {cuenta: {mes: saldo}} de las cuentas de
+    credito declaradas que ningun credito del reporte alimenta. Su variacion
+    entra al mismo mecanismo que la deuda con plan: sube el pasivo -> entra
+    efectivo; baja -> se pago."""
     # planes ya vienen filtrados a activos por el orquestador
     delta_principal = _delta_principal_por_mes(planes, calculo_er.meses)
+    for cuenta, saldos in (creditos_sin_plan or {}).items():
+        prev = _redondear(getattr(saldos_iniciales, cuenta, 0.0) or 0.0)
+        for mes in calculo_er.meses:
+            s = _redondear(saldos.get(mes, prev))
+            delta_principal[mes] = _redondear(delta_principal[mes] + (s - prev))
+            prev = s
 
     movs: list[MovMes] = []
     saldo = _redondear(saldos_iniciales.efectivo)

@@ -136,6 +136,70 @@ class ProveedoresEnBandaTest(unittest.TestCase):
             self.assertEqual(_descuadre_balance(e), 0.0, f"mes {e.mes}")
 
 
+class CreditoSinPlanOscilaTest(unittest.TestCase):
+    """Cuenta de credito DECLARADA en el balance que ningun credito del
+    reporte alimenta (caso real: tarjeta con 35,526 en el ESF de cierre que el
+    reporte de deuda no lista). Antes quedaba plana; ahora oscila en banda y
+    ancla en el saldo final, moviendo la caja como cualquier pasivo."""
+
+    MESES = ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"]
+    ER = [{"mes": m, "ingresos": 21_000_000, "costo_ventas": 19_000_000} for m in MESES]
+    SI = {"efectivo": 2_095_487, "inventarios": 21_892_008, "mobiliario_equipos": 915_610,
+          "tarjetas_credito": 35_526}
+
+    def _tipo_a(self, tarjetas_final=35_526):
+        from motor.json_io import inputs_from_json
+
+        return certificar_tipo_a(inputs_from_json({
+            "periodo": {"tipo": "A", "mes_inicial": "2026-01", "mes_final": "2026-06",
+                        "tasa_cambio": 36.6243},
+            "datos": {"nombre_completo": "D", "cedula": "443", "empleados": 1,
+                      "fecha_certificacion": "2026-07-26"},
+            "er_mensual": self.ER, "saldos_iniciales": self.SI,
+            "saldos_finales": {"efectivo": 0, "inventarios": 21_892_008,
+                               "mobiliario_equipos": 915_610, "tarjetas_credito": tarjetas_final},
+            "deudas": [],
+        }))
+
+    def _tipo_b(self):
+        from motor.json_io import inputs_tipo_b_from_json
+
+        return certificar_tipo_b(inputs_tipo_b_from_json({
+            "periodo": {"tipo": "B", "mes_inicial": "2026-01", "mes_final": "2026-06",
+                        "tasa_cambio": 36.6243},
+            "datos": {"nombre_completo": "D", "cedula": "443", "empleados": 1,
+                      "fecha_certificacion": "2026-07-26"},
+            "er_mensual": self.ER, "saldos_iniciales": self.SI,
+            "cuentas_objetivo": [{"cuenta": "efectivo", "objetivo": 2_000_000,
+                                  "tolerancia_pct": 20}],
+            "seed": "sin-plan", "deudas": [],
+        }))
+
+    def test_tipo_a_oscila_y_ancla_al_final(self):
+        m = self._tipo_a()
+        tj = [e.tarjetas_credito for e in m.esf.meses]
+        self.assertGreater(len(set(tj)), 1, "debe oscilar, no quedar plana")
+        self.assertEqual(tj[-1], 35_526.0, "ancla en el saldo final declarado")
+        for e in m.esf.meses:
+            self.assertEqual(_descuadre_balance(e), 0.0, f"mes {e.mes}")
+
+    def test_tipo_b_oscila_alrededor_de_la_apertura(self):
+        m = self._tipo_b()
+        tj = [e.tarjetas_credito for e in m.esf.meses]
+        self.assertGreater(len(set(tj)), 1, "debe oscilar, no quedar plana")
+        for v in tj:  # dentro de la banda +-10%
+            self.assertLessEqual(v, 35_526 * 1.10 + 1)
+            self.assertGreaterEqual(v, 35_526 * 0.90 - 1)
+        for e in m.esf.meses:
+            self.assertEqual(_descuadre_balance(e), 0.0, f"mes {e.mes}")
+
+    def test_sin_saldo_declarado_no_inventa_deuda(self):
+        m = self._tipo_a(tarjetas_final=0)
+        # Declarada al inicio y 0 al final: baja hasta cancelarse.
+        self.assertEqual(m.esf.meses[-1].tarjetas_credito, 0.0)
+        self.assertTrue(all(e.creditos_hipotecarios == 0 for e in m.esf.meses))
+
+
 class CreditoNuevoDelPeriodoTest(unittest.TestCase):
     """Credito otorgado DENTRO del periodo (caso real Jose Daniel): no existia
     al inicio, asi que arranca en 0, aparece con su desembolso el mes del
@@ -234,11 +298,14 @@ class AperturaDeclaradaMandaTest(unittest.TestCase):
         m = self._modelo(1_053_347, saldo_corte=850_000)
         self.assertEqual(m.planes[0].cuotas[-1].saldo_final_nio, 850_000.0)
 
-    def test_cuenta_declarada_sin_credito_que_la_respalde_se_conserva(self):
+    def test_cuenta_declarada_sin_credito_que_la_respalde_no_se_pierde(self):
         # Personales 659,237 viene del ESF anterior pero no hay credito de esa
-        # cuenta en el reporte (se cancelo): el saldo declarado no se pierde.
+        # cuenta en el reporte: el saldo no se pierde y sigue una trayectoria
+        # hasta el saldo final declarado (aca 0 = se pago en el periodo).
         m = self._modelo(1_053_347)
-        self.assertEqual(m.esf.meses[0].creditos_personales, 659_237.0)
+        saldos = [e.creditos_personales for e in m.esf.meses]
+        self.assertGreater(saldos[0], 0.0, "el saldo declarado no debe desaparecer")
+        self.assertEqual(saldos[-1], 0.0, "ancla en el saldo final declarado")
 
     def test_sin_declarar_el_motor_deriva_como_siempre(self):
         m = self._modelo(0)

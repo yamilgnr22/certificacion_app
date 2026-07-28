@@ -168,6 +168,7 @@ def construir_esf(
     planes: list[PlanResuelto],
     inventario_mensual: dict[str, float] | None = None,
     proveedores_mensual: dict[str, float] | None = None,
+    creditos_sin_plan: dict[str, dict[str, float]] | None = None,
 ) -> CalculoESF:
     """inventario_mensual / proveedores_mensual (opcionales): trayectorias mes
     a mes (banda oscilante que ancla en el saldo final). Deben ser las MISMAS
@@ -190,6 +191,10 @@ def construir_esf(
                         total += c.saldo_final_nio
                         encontrado = True
         if not encontrado:
+            # Sin credito del reporte que la alimente: sigue su trayectoria
+            # generada si la hay (misma que uso Mov), o queda constante.
+            if creditos_sin_plan and cuenta in creditos_sin_plan:
+                return _redondear(creditos_sin_plan[cuenta].get(mes, getattr(si, cuenta)))
             return _redondear(getattr(si, cuenta))
         return _redondear(total)
 

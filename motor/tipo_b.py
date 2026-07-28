@@ -117,6 +117,27 @@ def construir_tipo_b(
             banda_pct=PROVEEDORES_BANDA_PCT, seed=seed_base + "|prov",
         )
 
+    # Cuentas de credito declaradas que ningun credito del reporte alimenta
+    # (p.ej. una tarjeta que el reporte no lista): oscilan alrededor de su
+    # apertura en vez de quedar planas. Tipo B no tiene balance final que
+    # anclar, asi que la banda gira sobre el saldo inicial.
+    from motor.deuda_generada import trayectoria_con_ancla as _tray
+    from motor.esf import _CUENTAS_CREDITO
+
+    con_plan = {p.cuenta_esf for p in planes}
+    cred_sin_plan: dict[str, dict[str, float]] = {}
+    for cuenta in sorted(_CUENTAS_CREDITO):
+        if cuenta in con_plan:
+            continue
+        saldo = _redondear(getattr(si, cuenta, 0.0) or 0.0)
+        if saldo <= 0:
+            continue
+        cred_sin_plan[cuenta] = _tray(
+            saldo, saldo, list(meses),
+            banda_pct=PROVEEDORES_BANDA_PCT, seed=f"{seed_base}|{cuenta}",
+        )
+    cred_prev = {c: _redondear(getattr(si, c, 0.0) or 0.0) for c in cred_sin_plan}
+
     movs: list[MovMes] = []
     esf_meses: list[ESFMes] = []
     caja = _redondear(si.efectivo)
@@ -149,6 +170,14 @@ def construir_tipo_b(
         )
         financieros = _redondear(calculo_er.gastos_financieros_mes[mes])
         delta = delta_principal[mes]
+        # Las cuentas de credito sin plan tambien mueven la caja: si el pasivo
+        # sube entra efectivo, si baja se pago.
+        cred_mes: dict[str, float] = {}
+        for cuenta, saldos in cred_sin_plan.items():
+            s = _redondear(saldos.get(mes, cred_prev[cuenta]))
+            delta = _redondear(delta + (s - cred_prev[cuenta]))
+            cred_prev[cuenta] = s
+            cred_mes[cuenta] = s
         financiamiento = _redondear(max(0.0, delta))
         abonos = _redondear(max(0.0, -delta))
 
@@ -192,12 +221,19 @@ def construir_tipo_b(
         vehiculos = _redondear(si.vehiculos)
         depr_acumulada = _redondear(si.depreciacion_acumulada - depr_acum_periodo)
 
-        tarjetas = _saldo_credito_mes(planes, si, "tarjetas_credito", mes)
-        hipotecarios = _saldo_credito_mes(planes, si, "creditos_hipotecarios", mes)
-        consumo = _saldo_credito_mes(planes, si, "creditos_consumo", mes)
-        personales = _saldo_credito_mes(planes, si, "creditos_personales", mes)
-        prendarios = _saldo_credito_mes(planes, si, "creditos_prendarios", mes)
-        comerciales = _saldo_credito_mes(planes, si, "creditos_comerciales", mes)
+        def _cred(cuenta: str) -> float:
+            # La trayectoria generada manda para las cuentas sin plan (la
+            # misma que ya movio la caja arriba).
+            if cuenta in cred_mes:
+                return cred_mes[cuenta]
+            return _saldo_credito_mes(planes, si, cuenta, mes)
+
+        tarjetas = _cred("tarjetas_credito")
+        hipotecarios = _cred("creditos_hipotecarios")
+        consumo = _cred("creditos_consumo")
+        personales = _cred("creditos_personales")
+        prendarios = _cred("creditos_prendarios")
+        comerciales = _cred("creditos_comerciales")
         proveedores = prov_mes
         impuestos = _redondear(si.impuestos_por_pagar)
         gastos_acum = _redondear(si.gastos_acumulados)

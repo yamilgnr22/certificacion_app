@@ -26,6 +26,11 @@ from motor.validar import ResultadoValidacion, validar_tipo_a, validar_tipo_b
 # caja negativa en el mes de compra fuerte.
 INVENTARIO_BANDA_PCT = 10.0
 
+# Banda de las cuentas de credito que se declaran en el balance pero ningun
+# credito del reporte alimenta (tarjeta que el reporte no lista, deuda vieja
+# que ya no aparece). Conservadora: el pasivo mueve la caja.
+CREDITO_BANDA_PCT = 10.0
+
 
 @dataclass(frozen=True)
 class ModeloCertificacion:
@@ -54,6 +59,38 @@ class ModeloCertificacion:
     @property
     def ok(self) -> bool:
         return self.validacion.ok
+
+
+def _creditos_sin_plan_tipo_a(
+    inputs: InputsTipoA, meses: list[str], planes: list[PlanResuelto]
+) -> dict[str, dict[str, float]]:
+    """Cuentas de credito DECLARADAS en el balance que ningun credito del
+    reporte alimenta (p.ej. una tarjeta que el reporte de deuda no lista).
+
+    Sin esto quedan planas todo el periodo. Como cualquier otro pasivo,
+    oscilan en banda entre el saldo inicial y el final declarados y anclan en
+    el final; el movimiento pasa por la caja (sube el pasivo = entra
+    efectivo; baja = se pago)."""
+    from motor.deuda_generada import trayectoria_con_ancla
+    from motor.esf import _CUENTAS_CREDITO
+
+    con_plan = {p.cuenta_esf for p in planes}
+    out: dict[str, dict[str, float]] = {}
+    for cuenta in sorted(_CUENTAS_CREDITO):
+        if cuenta in con_plan:
+            continue  # el modulo de deuda ya la mueve
+        inicial = float(getattr(inputs.saldos_iniciales, cuenta) or 0.0)
+        final = float(getattr(inputs.saldos_finales, cuenta) or 0.0)
+        if inicial <= 0 and final <= 0:
+            continue
+        seed = (
+            f"{inputs.datos.cedula}|{inputs.periodo.mes_inicial}|"
+            f"{inputs.periodo.mes_final}|{cuenta}"
+        )
+        out[cuenta] = trayectoria_con_ancla(
+            inicial, final, meses, banda_pct=CREDITO_BANDA_PCT, seed=seed
+        )
+    return out
 
 
 def _trayectoria_cuenta_tipo_a(
@@ -87,10 +124,12 @@ def certificar_tipo_a(inputs: InputsTipoA) -> ModeloCertificacion:
     er = construir_er(inputs.er_mensual, activos, inputs.periodo)
     inv_mensual = _trayectoria_cuenta_tipo_a(inputs, er.meses, "inventarios", "inv")
     prov_mensual = _trayectoria_cuenta_tipo_a(inputs, er.meses, "proveedores", "prov")
+    cred_sin_plan = _creditos_sin_plan_tipo_a(inputs, er.meses, activos)
     mov = construir_mov(
-        er, activos, inputs.periodo, inputs.saldos_iniciales, inv_mensual, prov_mensual
+        er, activos, inputs.periodo, inputs.saldos_iniciales,
+        inv_mensual, prov_mensual, cred_sin_plan,
     )
-    esf = construir_esf(inputs, er, mov, activos, inv_mensual, prov_mensual)
+    esf = construir_esf(inputs, er, mov, activos, inv_mensual, prov_mensual, cred_sin_plan)
     validacion = validar_tipo_a(inputs, activos, er, mov, esf)
     df_cert = construir_certificacion(inputs.datos, inputs.periodo, er)
     df_datos = construir_datos(inputs.datos)
