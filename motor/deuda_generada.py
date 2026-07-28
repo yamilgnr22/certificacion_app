@@ -88,6 +88,44 @@ def trayectoria_con_ancla(
     return saldos
 
 
+def trayectoria_credito_nuevo(
+    valor_inicial: float,
+    saldo_reportado: float,
+    meses: list[str],
+    mes_otorgamiento: str,
+    ) -> dict[str, float]:
+    """Credito OTORGADO DENTRO del periodo certificado.
+
+    Antes del desembolso el credito NO EXISTE (saldo 0, no contamina el
+    balance de apertura); el mes del otorgamiento aparece con el monto
+    desembolsado (valor_inicial) y de ahi amortiza hasta anclar en el saldo
+    reportado al corte. El aumento del pasivo el mes del desembolso lo toma
+    Mov como financiamiento: entra efectivo, que es plata que el banco
+    deposito al cliente."""
+    n = len(meses)
+    if n == 0:
+        return {}
+    idx = next((i for i, m in enumerate(meses) if m >= mes_otorgamiento), None)
+    if idx is None:  # otorgado despues del corte (filtrar_por_ventana ya lo excluye)
+        return {m: 0.0 for m in meses}
+
+    monto = valor_inicial if valor_inicial > 0 else saldo_reportado
+    ultimo = n - 1
+    tramo = ultimo - idx  # meses entre el desembolso y el corte
+    saldos: dict[str, float] = {}
+    for i, mes in enumerate(meses):
+        if i < idx:
+            saldos[mes] = 0.0            # aun no existia
+        elif i == ultimo:
+            saldos[mes] = saldo_reportado  # ancla dura EXACTA del corte
+        elif i == idx:
+            saldos[mes] = _redondear(monto)  # desembolso
+        else:
+            # Amortiza parejo entre el desembolso y el saldo del corte.
+            saldos[mes] = _redondear(monto + (saldo_reportado - monto) * (i - idx) / tramo)
+    return saldos
+
+
 def trayectoria_amortizable(
     saldo_reportado: float,
     meses: list[str],

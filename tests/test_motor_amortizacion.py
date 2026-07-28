@@ -51,11 +51,12 @@ class AmortizableSinCuotaTest(unittest.TestCase):
 
     def test_amortiza_hasta_el_reportado_en_su_cuenta(self):
         # Sin valor_inicial (SIBOIF): baja lineal desde una apertura estimada
-        # hasta el saldo reportado, en su cuenta ESF por tipo.
+        # hasta el saldo reportado, en su cuenta ESF por tipo. Otorgado ANTES
+        # del periodo (si fuera de dentro, arrancaria en 0 hasta el desembolso).
         d = [{"numero": "3", "entidad": "X", "tipo_credito": "Personales",
               "estrategia": "amortizable", "moneda": "NIO", "valor_inicial": 0,
               "saldo_reportado": 15591.33, "cuota": 0,
-              "fecha_otorgamiento": "2026-05-01", "fecha_actualizado": "2026-05-01"}]
+              "fecha_otorgamiento": "2024-05-01", "fecha_actualizado": "2026-05-01"}]
         plan = resolver_planes(deudas_from_json(d), self._periodo())[0]
         self.assertEqual(plan.cuenta_esf, "creditos_personales")
         saldos = [c.saldo_final_nio for c in plan.cuotas]
@@ -249,29 +250,35 @@ class PlanesTests(unittest.TestCase):
         self.assertAlmostEqual(saldos[-1], 4672.88, places=2)
         self.assertIsNone(plan.alerta)
 
-    def test_1735_bullet_cuota_es_puro_interes(self):
-        plan = self.por_numero["1735"]
-        # Todos los meses excepto el ultimo: cuota = interes, abono = 0
-        for c in plan.cuotas[:-1]:
-            self.assertAlmostEqual(c.abono_capital_nio, 0.0, places=2)
-        # Bullet vence 2026-08-17 → fuera del periodo → no hay pago de capital normal
-        # El abono extraordinario en mes_final cierra el saldo a saldo_reportado
-        ultima = plan.cuotas[-1]
-        self.assertAlmostEqual(ultima.saldo_final_nio, 58814.55 * TC, places=2)
+    def test_creditos_nuevos_arrancan_en_cero_hasta_su_desembolso(self):
+        """1571 (2024-03), 5561 (2025-10) y 1735 (2025-08) fueron otorgados
+        DENTRO del periodo 2023-01..2025-12: en enero 2023 no existian, asi
+        que su saldo debe ser 0 hasta el mes del desembolso."""
+        casos = {"1571": "2024-03", "5561": "2025-10", "1735": "2025-08"}
+        for numero, mes_otorg in casos.items():
+            plan = self.por_numero[numero]
+            self.assertEqual(plan.saldo_apertura_nio, 0.0,
+                             f"{numero}: no existia al inicio, apertura debe ser 0")
+            for c in plan.cuotas:
+                if c.mes < mes_otorg:
+                    self.assertEqual(c.saldo_final_nio, 0.0,
+                                     f"{numero}: saldo en {c.mes} (antes del desembolso)")
+            # El mes del desembolso ya tiene saldo
+            desembolso = next(c for c in plan.cuotas if c.mes == mes_otorg)
+            self.assertGreater(desembolso.saldo_final_nio, 0.0, f"{numero}: desembolso")
 
-    def test_5561_dispara_alerta_porque_tasa_imprecisa(self):
-        plan = self.por_numero["5561"]
-        # El valor_inicial (114,400 USD) no es el desembolso real; abono extra grande esperado
-        self.assertIsNotNone(plan.alerta)
-        self.assertIn("5561", plan.alerta)
-
-    def test_1571_amortizable_limpio_sin_alerta_grande(self):
+    def test_credito_nuevo_desembolso_entra_como_financiamiento(self):
+        # El aumento del pasivo el mes del desembolso es plata que entra:
+        # abono_capital = 0 ese mes (no se paga, se recibe).
         plan = self.por_numero["1571"]
-        # Caso "limpio" segun el fixture: tasa inferida razonable
-        self.assertGreater(plan.tasa_mensual_inferida, 0.0)
-        # No verificamos ausencia de alerta porque la fecha_actualizado del fixture
-        # (2026-01-31) no coincide con mes_final del periodo (2025-12), generando
-        # un pequeño ajuste; lo que importa es que el saldo_final cuadre (cubierto arriba)
+        desembolso = next(c for c in plan.cuotas if c.mes == "2024-03")
+        self.assertEqual(desembolso.abono_capital_nio, 0.0)
+        self.assertGreater(desembolso.saldo_final_nio, 0.0)
+
+    def test_5220_anterior_al_periodo_conserva_su_apertura(self):
+        # Otorgado 2018: SI existia al inicio -> apertura > 0 (no se toca).
+        plan = self.por_numero["5220"]
+        self.assertGreater(plan.saldo_apertura_nio, 0.0)
 
     def test_cuenta_esf_asignada_para_todos(self):
         cuentas_validas = {

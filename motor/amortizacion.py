@@ -389,6 +389,33 @@ _RESOLVERS: dict[Estrategia, callable] = {
 }
 
 
+def es_credito_nuevo(deuda: DeudaInput, periodo: PeriodoSpec) -> bool:
+    """True si el credito fue OTORGADO DENTRO del periodo certificado.
+
+    Un credito nuevo no existia al inicio: su saldo debe ser 0 hasta el mes
+    del desembolso (si no, contamina el balance de apertura y aparece con su
+    monto completo desde el primer mes)."""
+    mes_otorg = f"{deuda.fecha_otorgamiento.year:04d}-{deuda.fecha_otorgamiento.month:02d}"
+    return mes_otorg > periodo.mes_inicial
+
+
+def _mes_otorgamiento(deuda: DeudaInput) -> str:
+    return f"{deuda.fecha_otorgamiento.year:04d}-{deuda.fecha_otorgamiento.month:02d}"
+
+
+def _resolver_credito_nuevo(deuda: DeudaInput, periodo: PeriodoSpec) -> PlanResuelto:
+    """Credito otorgado dentro del periodo: 0 antes del desembolso, monto
+    desembolsado el mes del otorgamiento, y amortiza hasta el saldo del corte."""
+    from motor.deuda_generada import trayectoria_credito_nuevo
+
+    saldos = trayectoria_credito_nuevo(
+        deuda.valor_inicial, deuda.saldo_reportado,
+        _meses_del_periodo(periodo), _mes_otorgamiento(deuda),
+    )
+    cuenta = "tarjetas_credito" if deuda.estrategia == "revolving" else mapear_cuenta_esf(deuda)
+    return _resolver_desde_saldos_mensuales(deuda, periodo, cuenta, saldos)
+
+
 def resolver_planes(deudas: Sequence[DeudaInput], periodo: PeriodoSpec) -> list[PlanResuelto]:
     """Filtra por ventana y resuelve TODOS los planes vigentes (activos +
     documentales). Usar planes_activos() para los que impactan ER/Mov/ESF."""
@@ -398,7 +425,16 @@ def resolver_planes(deudas: Sequence[DeudaInput], periodo: PeriodoSpec) -> list[
         resolver = _RESOLVERS.get(d.estrategia)
         if resolver is None:
             raise ValueError(f"Estrategia desconocida {d.estrategia!r} en credito {d.numero}")
-        plan = resolver(d, periodo)
+        # Credito nuevo del periodo: trayectoria propia (0 -> desembolso ->
+        # amortiza). Si el CPA dio apertura o saldos mensuales, manda el.
+        if (
+            es_credito_nuevo(d, periodo)
+            and d.saldo_apertura is None
+            and not d.saldos_mensuales
+        ):
+            plan = _resolver_credito_nuevo(d, periodo)
+        else:
+            plan = resolver(d, periodo)
         if plan.cuenta_esf not in CUENTAS_PASIVO_VALIDAS:
             raise ValueError(
                 f"Credito {d.numero}: cuenta_esf {plan.cuenta_esf!r} no es pasivo valido"
