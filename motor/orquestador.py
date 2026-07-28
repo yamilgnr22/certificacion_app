@@ -87,7 +87,7 @@ def _creditos_sin_plan_tipo_a(
 def _trayectoria_cuenta_tipo_a(
     inputs: InputsTipoA, meses: list[str], cuenta: str, sufijo_seed: str
 ) -> dict[str, float] | None:
-    """Trayectoria de una cuenta operativa (inventarios / proveedores) en
+    """Trayectoria de una cuenta operativa (inventarios / proveedores / CxC) en
     Tipo A: oscila en banda alrededor de la tendencia inicial->final y ANCLA
     en el saldo final del balance. None si la cuenta esta en cero (nada que
     mover)."""
@@ -101,8 +101,9 @@ def _trayectoria_cuenta_tipo_a(
         f"{inputs.datos.cedula}|{inputs.periodo.mes_inicial}|"
         f"{inputs.periodo.mes_final}|{sufijo_seed}"
     )
-    banda = (inputs.bandas.proveedores_pct if cuenta == "proveedores"
-             else inputs.bandas.inventario_pct)
+    banda = {"proveedores": inputs.bandas.proveedores_pct,
+             "cuentas_por_cobrar": inputs.bandas.cxc_pct}.get(
+                 cuenta, inputs.bandas.inventario_pct)
     return trayectoria_con_ancla(inicial, final, meses, banda_pct=banda, seed=seed)
 
 
@@ -115,12 +116,15 @@ def certificar_tipo_a(inputs: InputsTipoA) -> ModeloCertificacion:
     er = construir_er(inputs.er_mensual, activos, inputs.periodo)
     inv_mensual = _trayectoria_cuenta_tipo_a(inputs, er.meses, "inventarios", "inv")
     prov_mensual = _trayectoria_cuenta_tipo_a(inputs, er.meses, "proveedores", "prov")
+    cxc_mensual = _trayectoria_cuenta_tipo_a(inputs, er.meses, "cuentas_por_cobrar", "cxc")
     cred_sin_plan = _creditos_sin_plan_tipo_a(inputs, er.meses, activos)
     mov = construir_mov(
         er, activos, inputs.periodo, inputs.saldos_iniciales,
-        inv_mensual, prov_mensual, cred_sin_plan,
+        inv_mensual, prov_mensual, cred_sin_plan, cxc_mensual,
     )
-    esf = construir_esf(inputs, er, mov, activos, inv_mensual, prov_mensual, cred_sin_plan)
+    esf = construir_esf(
+        inputs, er, mov, activos, inv_mensual, prov_mensual, cred_sin_plan, cxc_mensual,
+    )
     validacion = validar_tipo_a(inputs, activos, er, mov, esf)
     df_cert = construir_certificacion(inputs.datos, inputs.periodo, er)
     df_datos = construir_datos(inputs.datos)

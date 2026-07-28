@@ -17,6 +17,7 @@ from datetime import date
 from typing import Any, Mapping
 
 from motor.inputs import (
+    CAMPOS_BANDA,
     Bandas,
     CuentaObjetivo,
     DatosCliente,
@@ -205,7 +206,7 @@ def _bandas(d: Mapping | None) -> Bandas:
     base = Bandas()
     return Bandas(**{
         campo: float(d[campo]) if d.get(campo) is not None else getattr(base, campo)
-        for campo in ("tarjetas_pct", "creditos_pct", "inventario_pct", "proveedores_pct")
+        for campo in CAMPOS_BANDA
     })
 
 

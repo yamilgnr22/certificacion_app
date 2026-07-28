@@ -146,6 +146,82 @@ class BandaCeroEsPlanaTest(unittest.TestCase):
         self.assertEqual(len(set(round(v) for v in serie)), 1, f"deberia ser plana: {serie}")
 
 
+def _inputs_cxc(cxc_final: float, banda: float = 10.0) -> InputsTipoA:
+    """Caso que cuadra por construccion:
+      capital apertura = 100k caja + 150k cartera = 250k
+      utilidad = 6 x (100k - 60k - 10k) = 180k
+      caja final = 100k + 600k ventas - 420k pagos + (150k - cxc_final) cobrado
+    """
+    er = [
+        ER_LineaMes(mes=m, ingresos=100_000.0, costo_ventas=60_000.0, sueldos_salarios=10_000.0)
+        for m in MESES
+    ]
+    si = ESF_Saldos(efectivo=100_000.0, cuentas_por_cobrar=150_000.0)
+    caja_final = 100_000.0 + 600_000.0 - 420_000.0 + (150_000.0 - cxc_final)
+    sf = ESF_Saldos(efectivo=caja_final, cuentas_por_cobrar=cxc_final)
+    return InputsTipoA(
+        periodo=PeriodoSpec(tipo="A", mes_inicial=MESES[0], mes_final=MESES[-1], tasa_cambio=36.6243),
+        datos=_datos(),
+        er_mensual=er,
+        saldos_iniciales=si,
+        saldos_finales=sf,
+        deudas=[],
+        bandas=Bandas(cxc_pct=banda),
+    )
+
+
+class CuentasPorCobrarEnBandaTest(unittest.TestCase):
+    """La cartera oscila y ancla en el saldo final; lo cobrado entra a caja."""
+
+    def setUp(self):
+        # Cartera que baja: el cliente cobro 60k netos en el periodo.
+        self.modelo = certificar_tipo_a(_inputs_cxc(90_000.0))
+
+    def test_validacion_ok(self):
+        errores = [h.mensaje for h in self.modelo.validacion.errores]
+        self.assertTrue(self.modelo.ok, f"Errores: {errores}")
+
+    def test_ancla_en_el_saldo_final(self):
+        self.assertAlmostEqual(self.modelo.esf.corte().cuentas_por_cobrar, 90_000.0, delta=1.0)
+
+    def test_oscila_en_los_meses_intermedios(self):
+        serie = _serie(self.modelo, "cuentas_por_cobrar")
+        self.assertGreater(len(set(round(v) for v in serie)), 1, f"quedo plana: {serie}")
+
+    def test_balance_cuadra_todos_los_meses(self):
+        for e in self.modelo.esf.meses:
+            self.assertLessEqual(abs(e.diferencia), 1.0, f"Mes {e.mes} descuadra {e.diferencia}")
+
+    def test_lo_cobrado_entra_a_caja(self):
+        # Bajar la cartera 60k deja 60k mas de efectivo que dejarla igual.
+        plano = certificar_tipo_a(_inputs_cxc(150_000.0))
+        self.assertAlmostEqual(
+            self.modelo.esf.corte().efectivo - plano.esf.corte().efectivo, 60_000.0, delta=1.0
+        )
+
+    def test_la_banda_no_mueve_el_corte(self):
+        ancho = certificar_tipo_a(_inputs_cxc(90_000.0, banda=35.0))
+        self.assertAlmostEqual(ancho.esf.corte().cuentas_por_cobrar, 90_000.0, delta=1.0)
+        self.assertAlmostEqual(
+            ancho.esf.corte().efectivo, self.modelo.esf.corte().efectivo, delta=1.0
+        )
+
+    def test_banda_ancha_oscila_mas(self):
+        ancho = certificar_tipo_a(_inputs_cxc(90_000.0, banda=35.0))
+        self.assertGreater(
+            _amplitud(_serie(ancho, "cuentas_por_cobrar")),
+            _amplitud(_serie(self.modelo, "cuentas_por_cobrar")),
+        )
+
+    def test_fila_de_cartera_en_el_flujo_de_caja(self):
+        conceptos = self.modelo.mov.df["Concepto"].tolist()
+        self.assertIn("Cobranza neta de cartera", conceptos)
+
+    def test_sin_cartera_no_ensucia_el_flujo(self):
+        sin = certificar_tipo_a(_inputs(Bandas(), con_tarjeta=False))
+        self.assertNotIn("Cobranza neta de cartera", sin.mov.df["Concepto"].tolist())
+
+
 class BandasDesdeJSONTest(unittest.TestCase):
     def _body(self, bandas=None) -> dict:
         body = {

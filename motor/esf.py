@@ -169,12 +169,13 @@ def construir_esf(
     inventario_mensual: dict[str, float] | None = None,
     proveedores_mensual: dict[str, float] | None = None,
     creditos_sin_plan: dict[str, dict[str, float]] | None = None,
+    cxc_mensual: dict[str, float] | None = None,
 ) -> CalculoESF:
-    """inventario_mensual / proveedores_mensual (opcionales): trayectorias mes
-    a mes (banda oscilante que ancla en el saldo final). Deben ser las MISMAS
-    que se pasaron a construir_mov, para que la caja refleje esas compras y
-    pagos y el balance cuadre. Sin ellas, ambas cuentas quedan constantes en
-    su saldo inicial."""
+    """inventario_mensual / proveedores_mensual / cxc_mensual (opcionales):
+    trayectorias mes a mes (banda oscilante que ancla en el saldo final).
+    Deben ser las MISMAS que se pasaron a construir_mov, para que la caja
+    refleje esas compras, pagos y cobranzas y el balance cuadre. Sin ellas,
+    las cuentas quedan constantes en su saldo inicial."""
     aperturas = _aperturas_credito(planes)
     si = _saldos_iniciales_efectivos(inputs.saldos_iniciales, aperturas)
     capital = _capital_apertura(si)
@@ -201,9 +202,12 @@ def construir_esf(
     meses_esf: list[ESFMes] = []
     for mes in calculo_er.meses:
         efectivo = _redondear(calculo_mov.saldo_final_mes(mes))
-        # CxC no se mueve (todo contado). El inventario sigue su trayectoria
-        # si se dio (banda que ancla en el saldo final); si no, constante.
-        cxc = _redondear(si.cuentas_por_cobrar)
+        # CxC e inventario siguen su trayectoria si se dio (banda que ancla en
+        # el saldo final); si no, constantes (todo contado, stock fijo).
+        cxc = _redondear(
+            cxc_mensual.get(mes, si.cuentas_por_cobrar) if cxc_mensual
+            else si.cuentas_por_cobrar
+        )
         inventarios = _redondear(
             inventario_mensual.get(mes, si.inventarios) if inventario_mensual
             else si.inventarios

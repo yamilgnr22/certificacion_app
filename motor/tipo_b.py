@@ -111,6 +111,17 @@ def construir_tipo_b(
             banda_pct=inputs.bandas.proveedores_pct, seed=seed_base + "|prov",
         )
 
+    # Cuentas por cobrar: misma logica que proveedores, del otro lado del
+    # balance. Cartera que sube = venta no cobrada (entra menos efectivo).
+    cxc_mensual = None
+    if _redondear(si.cuentas_por_cobrar) > 0:
+        from motor.deuda_generada import trayectoria_con_ancla
+
+        cxc_mensual = trayectoria_con_ancla(
+            si.cuentas_por_cobrar, si.cuentas_por_cobrar, list(meses),
+            banda_pct=inputs.bandas.cxc_pct, seed=seed_base + "|cxc",
+        )
+
     # Cuentas de credito declaradas que ningun credito del reporte alimenta
     # (p.ej. una tarjeta que el reporte no lista): oscilan alrededor de su
     # apertura en vez de quedar planas. Tipo B no tiene balance final que
@@ -137,6 +148,7 @@ def construir_tipo_b(
     caja = _redondear(si.efectivo)
     inv_prev = _redondear(si.inventarios)
     prov_prev = _redondear(si.proveedores)
+    cxc_prev = _redondear(si.cuentas_por_cobrar)
     ra0 = _redondear(si.resultados_acumulados)
     retiros_acum = 0.0
     depr_acum_periodo = 0.0
@@ -180,15 +192,21 @@ def construir_tipo_b(
         pago_compras = _redondear(compras - (prov_mes - prov_prev))
         prov_prev = prov_mes
 
+        # Cobranza neta: la venta que quedo en cartera no entra a caja.
+        cxc_mes = _redondear(cxc_mensual.get(mes, cxc_prev)) if cxc_mensual else cxc_prev
+        cobro_cartera = _redondear(-(cxc_mes - cxc_prev))
+        cxc_prev = cxc_mes
+
         caja_natural = _redondear(
-            caja + ventas + financiamiento - pago_compras - gastos_oper - financieros - abonos
+            caja + ventas + cobro_cartera + financiamiento
+            - pago_compras - gastos_oper - financieros - abonos
         )
         caja_deseada = _redondear(obj_caja.objetivo * (1.0 + osc_caja[idx]))
         retiro = _redondear(max(0.0, caja_natural - caja_deseada))
         caja_fin = _redondear(caja_natural - retiro)
         retiros_acum = _redondear(retiros_acum + retiro)
 
-        total_cobros = _redondear(ventas + financiamiento)
+        total_cobros = _redondear(ventas + financiamiento + cobro_cartera)
         total_pagos = _redondear(pago_compras + gastos_oper + financieros + abonos + retiro)
 
         movs.append(MovMes(
@@ -203,13 +221,14 @@ def construir_tipo_b(
             total_cobros=total_cobros,
             total_pagos=total_pagos,
             saldo_final=caja_fin,
+            cobro_cartera=cobro_cartera,
             pago_compras_inventario=pago_compras,
             retiro_patrimonio=retiro,
         ))
 
         # ----- ESF del mes
         depr_acum_periodo = _redondear(depr_acum_periodo + calculo_er.depreciacion_mes[mes])
-        cxc = _redondear(si.cuentas_por_cobrar)
+        cxc = cxc_mes
         bienes = _redondear(si.bienes_inmuebles)
         mobiliario = _redondear(si.mobiliario_equipos)
         vehiculos = _redondear(si.vehiculos)
@@ -293,6 +312,11 @@ def construir_tipo_b(
         _fila("Saldo inicial de caja", lambda x: x.saldo_inicial),
         _fila("Ventas de contado (cobros)", lambda x: x.ventas_contado),
         _fila("Financiamiento de creditos", lambda x: x.financiamiento_credito),
+    ]
+    # Solo si hay cartera en movimiento (ver motor/mov.construir_mov).
+    if any(m.cobro_cartera for m in movs):
+        rows.append(_fila("Cobranza neta de cartera", lambda x: x.cobro_cartera))
+    rows += [
         _fila("Total entradas de efectivo", lambda x: x.total_cobros),
         _fila("Compras de inventario (incluye costo de ventas)", lambda x: -x.pago_compras_inventario),
         _fila("Pago gastos operativos", lambda x: -x.pago_gastos_operativos),

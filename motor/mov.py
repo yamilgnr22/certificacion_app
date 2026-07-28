@@ -37,6 +37,9 @@ class MovMes:
     total_cobros: float
     total_pagos: float
     saldo_final: float
+    # Cobranza neta de cartera: + cuando la CxC baja (se cobro), - cuando sube
+    # (se vendio a credito). 0 si la CxC no se mueve.
+    cobro_cartera: float = 0.0
     # Solo Tipo B (en Tipo A quedan en 0)
     pago_compras_inventario: float = 0.0  # compras totales pagadas (incluyen cogs)
     retiro_patrimonio: float = 0.0  # excedente de caja retirado (contra Result. Acumulados)
@@ -101,6 +104,7 @@ def construir_mov(
     inventario_mensual: dict[str, float] | None = None,
     proveedores_mensual: dict[str, float] | None = None,
     creditos_sin_plan: dict[str, dict[str, float]] | None = None,
+    cxc_mensual: dict[str, float] | None = None,
 ) -> CalculoMov:
     """inventario_mensual (opcional): trayectoria del inventario. Si se da, las
     COMPRAS del mes = costo de ventas + variacion del inventario (subir stock
@@ -116,7 +120,12 @@ def construir_mov(
     creditos_sin_plan (opcional): {cuenta: {mes: saldo}} de las cuentas de
     credito declaradas que ningun credito del reporte alimenta. Su variacion
     entra al mismo mecanismo que la deuda con plan: sube el pasivo -> entra
-    efectivo; baja -> se pago."""
+    efectivo; baja -> se pago.
+
+    cxc_mensual (opcional): trayectoria de las cuentas por cobrar. El COBRO
+    del mes = ventas - variacion de la CxC: si la cartera sube, vendi y no
+    cobre (entra menos efectivo); si baja, cobre cartera vieja (entra mas).
+    Sin ella la CxC es constante y todo se cobra de contado."""
     # planes ya vienen filtrados a activos por el orquestador
     delta_principal = _delta_principal_por_mes(planes, calculo_er.meses)
     for cuenta, saldos in (creditos_sin_plan or {}).items():
@@ -130,9 +139,16 @@ def construir_mov(
     saldo = _redondear(saldos_iniciales.efectivo)
     inv_prev = _redondear(saldos_iniciales.inventarios)
     prov_prev = _redondear(saldos_iniciales.proveedores)
+    cxc_prev = _redondear(saldos_iniciales.cuentas_por_cobrar)
 
     for mes in calculo_er.meses:
         cobros_ventas = _redondear(calculo_er.ingresos_mes[mes])
+        cobro_cartera = 0.0
+        if cxc_mensual:
+            cxc_mes = _redondear(cxc_mensual.get(mes, cxc_prev))
+            # Cartera que sube = venta no cobrada (entra menos efectivo).
+            cobro_cartera = _redondear(-(cxc_mes - cxc_prev))
+            cxc_prev = cxc_mes
         pago_cogs = _redondear(calculo_er.costo_ventas_mes[mes])
         if inventario_mensual:
             inv_mes = _redondear(inventario_mensual.get(mes, inv_prev))
@@ -153,7 +169,7 @@ def construir_mov(
         financiamiento = _redondear(max(0.0, delta))   # sube pasivo -> entra caja
         pago_abonos = _redondear(max(0.0, -delta))      # baja pasivo -> sale caja
 
-        total_cobros = _redondear(cobros_ventas + financiamiento)
+        total_cobros = _redondear(cobros_ventas + financiamiento + cobro_cartera)
         total_pagos = _redondear(pago_cogs + pago_gastos_oper + pago_financieros + pago_abonos)
         nuevo_saldo = _redondear(saldo + total_cobros - total_pagos)
 
@@ -161,6 +177,7 @@ def construir_mov(
             mes=mes,
             saldo_inicial=saldo,
             ventas_contado=cobros_ventas,
+            cobro_cartera=cobro_cartera,
             financiamiento_credito=financiamiento,
             pago_costo_ventas=pago_cogs,
             pago_gastos_operativos=pago_gastos_oper,
@@ -181,6 +198,12 @@ def construir_mov(
         _fila("Saldo inicial de caja", lambda x: x.saldo_inicial),
         _fila("Ventas de contado (cobros)", lambda x: x.ventas_contado),
         _fila("Financiamiento de creditos", lambda x: x.financiamiento_credito),
+    ]
+    # La fila de cartera solo aparece si hay CxC en movimiento (la mayoria de
+    # los clientes vende de contado; no ensuciamos el flujo con ceros).
+    if any(m.cobro_cartera for m in movs):
+        rows.append(_fila("Cobranza neta de cartera", lambda x: x.cobro_cartera))
+    rows += [
         _fila("Total entradas de efectivo", lambda x: x.total_cobros),
         _fila("Pago costo de ventas", lambda x: -x.pago_costo_ventas),
         _fila("Pago gastos operativos", lambda x: -x.pago_gastos_operativos),

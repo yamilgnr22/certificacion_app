@@ -65,6 +65,7 @@ def _inputs(
     seed: str = "test-b-1",
     con_inventario: bool = False,
     deudas: list | None = None,
+    cxc: float = 0.0,
 ) -> InputsTipoB:
     objetivos = [CuentaObjetivo(cuenta="efectivo", objetivo=150_000.0, tolerancia_pct=20.0)]
     si_kwargs = dict(
@@ -75,6 +76,8 @@ def _inputs(
     if con_inventario:
         objetivos.append(CuentaObjetivo(cuenta="inventarios", objetivo=80_000.0, tolerancia_pct=20.0))
         si_kwargs["inventarios"] = 60_000.0
+    if cxc:
+        si_kwargs["cuentas_por_cobrar"] = cxc
     return InputsTipoB(
         periodo=PeriodoSpec(tipo="B", mes_inicial="2026-01", mes_final="2026-12", tasa_cambio=36.6243),
         datos=_datos(),
@@ -201,6 +204,34 @@ class TipoBConDeudaTest(unittest.TestCase):
     def test_balance_cuadra_con_deuda(self):
         for e in self.m.esf.meses:
             self.assertLessEqual(abs(e.diferencia), 1.0, f"Mes {e.mes} descuadra {e.diferencia}")
+
+
+class TipoBCarteraOscilaTest(unittest.TestCase):
+    """Tipo B no tiene balance final: la cartera gira sobre su apertura y lo
+    cobrado/otorgado pasa por la caja (igual que proveedores)."""
+
+    def setUp(self):
+        self.m = certificar_tipo_b(_inputs(cxc=120_000.0))
+
+    def test_no_queda_plana(self):
+        serie = [e.cuentas_por_cobrar for e in self.m.esf.meses]
+        self.assertGreater(len(set(round(v) for v in serie)), 1, f"quedo plana: {serie}")
+
+    def test_gira_sobre_la_apertura(self):
+        serie = [e.cuentas_por_cobrar for e in self.m.esf.meses]
+        promedio = sum(serie) / len(serie)
+        self.assertAlmostEqual(promedio / 120_000.0, 1.0, delta=0.15)
+
+    def test_balance_cuadra_todos_los_meses(self):
+        for e in self.m.esf.meses:
+            self.assertLessEqual(abs(e.diferencia), 1.0, f"Mes {e.mes} descuadra {e.diferencia}")
+
+    def test_la_cobranza_aparece_en_el_flujo(self):
+        self.assertIn("Cobranza neta de cartera", self.m.mov.df["Concepto"].tolist())
+
+    def test_sin_cartera_no_ensucia_el_flujo(self):
+        sin = certificar_tipo_b(_inputs())
+        self.assertNotIn("Cobranza neta de cartera", sin.mov.df["Concepto"].tolist())
 
 
 class TipoBValidacionInputsTest(unittest.TestCase):

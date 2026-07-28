@@ -214,6 +214,7 @@
       <div><label>Otros créditos (sin plan)</label><input id="bandaCreditos" value="10" placeholder="10"></div>
       <div><label>Inventario <span class="hint" style="margin:0">(Tipo A)</span></label><input id="bandaInventario" value="10" placeholder="10"></div>
       <div><label>Proveedores</label><input id="bandaProveedores" value="10" placeholder="10"></div>
+      <div><label>Cuentas por cobrar</label><input id="bandaCxC" value="10" placeholder="10"></div>
     </div>
   </div>
 
@@ -685,7 +686,8 @@ async function extraerEstadoCuenta(){
 
 // Bandas de oscilacion: input vacio => se usa el default del motor.
 const BANDAS_CAMPOS={tarjetas_pct:["bandaTarjetas",20], creditos_pct:["bandaCreditos",10],
-                     inventario_pct:["bandaInventario",10], proveedores_pct:["bandaProveedores",10]};
+                     inventario_pct:["bandaInventario",10], proveedores_pct:["bandaProveedores",10],
+                     cxc_pct:["bandaCxC",10]};
 function leerBandas(){
   const out={};
   for(const k in BANDAS_CAMPOS){

@@ -250,6 +250,11 @@ class PlanResuelto:
 
 # --------------------------------------------------------- Inputs por regimen
 
+CAMPOS_BANDA = (
+    "tarjetas_pct", "creditos_pct", "inventario_pct", "proveedores_pct", "cxc_pct",
+)
+
+
 @dataclass(frozen=True)
 class Bandas:
     """Amplitud de la oscilacion mensual de cada concepto, en %.
@@ -264,9 +269,10 @@ class Bandas:
     creditos_pct: float = 10.0      # cuentas de credito declaradas sin plan
     inventario_pct: float = 10.0    # inventario (Tipo A)
     proveedores_pct: float = 10.0   # proveedores
+    cxc_pct: float = 10.0           # cuentas por cobrar clientes
 
     def __post_init__(self) -> None:
-        for campo in ("tarjetas_pct", "creditos_pct", "inventario_pct", "proveedores_pct"):
+        for campo in CAMPOS_BANDA:
             v = getattr(self, campo)
             if not (0 <= v <= 50):
                 raise ValueError(f"{campo} debe estar en [0, 50], no {v}")
