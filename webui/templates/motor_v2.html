@@ -216,6 +216,13 @@
       <div><label>Proveedores</label><input id="bandaProveedores" value="10" placeholder="10"></div>
       <div><label>Cuentas por cobrar</label><input id="bandaCxC" value="10" placeholder="10"></div>
     </div>
+    <h2 style="margin-top:18px">Mínimos (NIO)</h2>
+    <p class="hint">Los pisos que el motor no puede violar al cuadrar el período. La banda dice <b>cuánto oscila</b> una cuenta; el mínimo, <b>hasta dónde se la puede empujar</b> cuando hay que salvar la caja.</p>
+    <div class="grid g4" id="minimos">
+      <div><label>Caja mínima</label><input id="minCaja" placeholder="0 = solo no negativa"></div>
+      <div><label>Inventario mínimo</label><input id="minInventario" placeholder="0"></div>
+      <div><label>Aporte máx. del propietario</label><input id="minAporte" placeholder="vacío = sin tope"></div>
+    </div>
   </div>
 
   <div class="panel">
@@ -703,6 +710,19 @@ function aplicarBandas(b){
     document.getElementById(id).value = b[k]!=null? b[k] : def;
   }
 }
+// Minimos: campo vacio => sin piso (0) / sin tope (null en aporte).
+function leerMinimos(){
+  const num = id => { const v=(document.getElementById(id).value||"").trim();
+                      return v===""? null : (parseFloat(v)||0); };
+  return {caja: num("minCaja")||0, inventario: num("minInventario")||0,
+          aporte_maximo: num("minAporte")};
+}
+function aplicarMinimos(m){
+  m=m||{};
+  document.getElementById("minCaja").value = m.caja||"";
+  document.getElementById("minInventario").value = m.inventario||"";
+  document.getElementById("minAporte").value = m.aporte_maximo!=null? m.aporte_maximo : "";
+}
 function collect(){
   const p=readFields("periodo");
   const tipo=(p.tipo||"A").toUpperCase();
@@ -718,6 +738,7 @@ function collect(){
     saldos_iniciales: numify(readFields("saldosIni")),
     deudas: readDeudas(),
     bandas: leerBandas(),
+    minimos: leerMinimos(),
   };
   if(modoER()==="generado"){
     const g=readFields("erGenParams");
@@ -1068,6 +1089,7 @@ function aplicarInputs(b){
   if(b.seed) ov.seed=b.seed;
   buildFields("objetivos", OBJ_FIELDS, ov);
   aplicarBandas(b.bandas);
+  aplicarMinimos(b.minimos);
   const esGen=(b.er_modo||"manual")==="generado";
   document.getElementById("selModoER").value=esGen?"generado":"manual";
   if(esGen){

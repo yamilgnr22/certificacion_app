@@ -19,6 +19,7 @@ from typing import Any, Mapping
 from motor.inputs import (
     CAMPOS_BANDA,
     Bandas,
+    Minimos,
     CuentaObjetivo,
     DatosCliente,
     DeudaInput,
@@ -210,6 +211,18 @@ def _bandas(d: Mapping | None) -> Bandas:
     })
 
 
+def _minimos(d: Mapping | None) -> Minimos:
+    """Pisos/topes que el motor no puede violar. Sin bloque, los defaults
+    (piso 0 = solo se garantiza caja no negativa, aporte sin tope)."""
+    d = d or {}
+    tope = d.get("aporte_maximo")
+    return Minimos(
+        caja=float(d.get("caja") or 0.0),
+        inventario=float(d.get("inventario") or 0.0),
+        aporte_maximo=(float(tope) if tope not in (None, "") else None),
+    )
+
+
 def inputs_from_json(body: Mapping) -> InputsTipoA:
     periodo = _periodo(body["periodo"])
     return InputsTipoA(
@@ -220,6 +233,7 @@ def inputs_from_json(body: Mapping) -> InputsTipoA:
         saldos_finales=_esf(body.get("saldos_finales")),
         deudas=[_deuda(x) for x in (body.get("deudas") or [])],
         bandas=_bandas(body.get("bandas")),
+        minimos=_minimos(body.get("minimos")),
     )
 
 
@@ -242,6 +256,7 @@ def inputs_tipo_b_from_json(body: Mapping) -> InputsTipoB:
         deudas=[_deuda(x) for x in (body.get("deudas") or [])],
         seed=str(body.get("seed", "") or ""),
         bandas=_bandas(body.get("bandas")),
+        minimos=_minimos(body.get("minimos")),
     )
 
 

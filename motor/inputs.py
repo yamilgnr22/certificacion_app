@@ -279,6 +279,32 @@ class Bandas:
 
 
 @dataclass(frozen=True)
+class Minimos:
+    """Pisos y topes que el motor no puede violar al cuadrar el periodo.
+
+    Hermanos de Bandas: la banda dice CUANTO oscila una cuenta, el minimo
+    dice hasta donde se la puede empujar cuando hay que salvar la caja.
+
+    - caja: piso del efectivo. 0 = solo se garantiza que no quede negativo.
+    - inventario: sin el, recortar compras para salvar la caja puede dejar el
+      stock en un nivel que ningun negocio real sostiene.
+    - aporte_maximo: tope del ultimo recurso (plata que mete el dueño). None
+      = sin tope; 0 = prohibido, el periodo se declara infactible y se
+      informa cuanto falta en vez de inventar un aporte."""
+
+    caja: float = 0.0
+    inventario: float = 0.0
+    aporte_maximo: float | None = None
+
+    def __post_init__(self) -> None:
+        for campo in ("caja", "inventario"):
+            if getattr(self, campo) < 0:
+                raise ValueError(f"minimo {campo} no puede ser negativo")
+        if self.aporte_maximo is not None and self.aporte_maximo < 0:
+            raise ValueError("aporte_maximo no puede ser negativo")
+
+
+@dataclass(frozen=True)
 class InputsTipoA:
     """Inputs para certificacion Tipo A (~6 meses, balance final ancla dura)."""
 
@@ -289,6 +315,7 @@ class InputsTipoA:
     saldos_finales: ESF_Saldos
     deudas: list[DeudaInput] = field(default_factory=list)
     bandas: Bandas = field(default_factory=Bandas)
+    minimos: Minimos = field(default_factory=Minimos)
 
     def __post_init__(self) -> None:
         if self.periodo.tipo != "A":
@@ -338,6 +365,7 @@ class InputsTipoB:
     deudas: list[DeudaInput] = field(default_factory=list)
     seed: str = ""
     bandas: Bandas = field(default_factory=Bandas)
+    minimos: Minimos = field(default_factory=Minimos)
 
     def __post_init__(self) -> None:
         if self.periodo.tipo != "B":
