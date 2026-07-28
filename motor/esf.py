@@ -93,7 +93,8 @@ class CalculoESF:
 
 
 def _redondear(x: float) -> float:
-    return round(float(x), 2)
+    # Cordobas enteros (ver motor/er._redondear): cuadre exacto para el banco.
+    return round(float(x), 0)
 
 
 # Cuentas de pasivo alimentadas por planes; el resto queda en su saldo inicial (V1 no las mueve)
@@ -169,7 +170,14 @@ def construir_esf(
     calculo_er: CalculoER,
     calculo_mov: CalculoMov,
     planes: list[PlanResuelto],
+    inventario_mensual: dict[str, float] | None = None,
+    proveedores_mensual: dict[str, float] | None = None,
 ) -> CalculoESF:
+    """inventario_mensual / proveedores_mensual (opcionales): trayectorias mes
+    a mes (banda oscilante que ancla en el saldo final). Deben ser las MISMAS
+    que se pasaron a construir_mov, para que la caja refleje esas compras y
+    pagos y el balance cuadre. Sin ellas, ambas cuentas quedan constantes en
+    su saldo inicial."""
     aperturas = _aperturas_credito(planes)
     si = _saldos_iniciales_efectivos(inputs.saldos_iniciales, aperturas)
     capital = _capital_apertura(si)
@@ -192,9 +200,13 @@ def construir_esf(
     meses_esf: list[ESFMes] = []
     for mes in calculo_er.meses:
         efectivo = _redondear(calculo_mov.saldo_final_mes(mes))
-        # V1: CxC e Inventarios NO se mueven (todo contado, sin compras).
+        # CxC no se mueve (todo contado). El inventario sigue su trayectoria
+        # si se dio (banda que ancla en el saldo final); si no, constante.
         cxc = _redondear(si.cuentas_por_cobrar)
-        inventarios = _redondear(si.inventarios)
+        inventarios = _redondear(
+            inventario_mensual.get(mes, si.inventarios) if inventario_mensual
+            else si.inventarios
+        )
         # PPE constante (no capex); depreciacion acumulada crece linealmente.
         bienes = _redondear(si.bienes_inmuebles)
         mobiliario = _redondear(si.mobiliario_equipos)
@@ -211,7 +223,10 @@ def construir_esf(
         personales = saldo_credito_cuenta_mes("creditos_personales", mes)
         prendarios = saldo_credito_cuenta_mes("creditos_prendarios", mes)
         comerciales = saldo_credito_cuenta_mes("creditos_comerciales", mes)
-        proveedores = _redondear(si.proveedores)
+        proveedores = _redondear(
+            proveedores_mensual.get(mes, si.proveedores) if proveedores_mensual
+            else si.proveedores
+        )
         impuestos = _redondear(si.impuestos_por_pagar)
         gastos_acum = _redondear(si.gastos_acumulados)
 

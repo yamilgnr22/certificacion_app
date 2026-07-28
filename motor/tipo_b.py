@@ -45,8 +45,15 @@ from motor.inputs import InputsTipoB, PlanResuelto
 from motor.mov import _GASTOS_OPER_NO_DEPR_LABELS, CalculoMov, MovMes, _delta_principal_por_mes
 
 
+# Banda de oscilacion de proveedores. Conservadora como la del inventario:
+# el pasivo esta atado a la caja (lo que no se paga queda a credito), asi que
+# una banda amplia mueve fuerte el efectivo mes a mes.
+PROVEEDORES_BANDA_PCT = 10.0
+
+
 def _redondear(x: float) -> float:
-    return round(float(x), 2)
+    # Cordobas enteros (ver motor/er._redondear): cuadre exacto para el banco.
+    return round(float(x), 0)
 
 
 def _trayectoria(seed: str, n: int, tolerancia_pct: float) -> list[float]:
@@ -98,10 +105,23 @@ def construir_tipo_b(
     )
     delta_principal = _delta_principal_por_mes(planes, meses)
 
+    # Proveedores oscila en banda alrededor de su saldo de apertura (Tipo B no
+    # tiene balance final que anclar). Lo comprado y no pagado queda como
+    # pasivo: sale menos efectivo ese mes; cuando el pasivo baja, se paga mas.
+    prov_mensual = None
+    if _redondear(si.proveedores) > 0:
+        from motor.deuda_generada import trayectoria_con_ancla
+
+        prov_mensual = trayectoria_con_ancla(
+            si.proveedores, si.proveedores, list(meses),
+            banda_pct=PROVEEDORES_BANDA_PCT, seed=seed_base + "|prov",
+        )
+
     movs: list[MovMes] = []
     esf_meses: list[ESFMes] = []
     caja = _redondear(si.efectivo)
     inv_prev = _redondear(si.inventarios)
+    prov_prev = _redondear(si.proveedores)
     ra0 = _redondear(si.resultados_acumulados)
     retiros_acum = 0.0
     depr_acum_periodo = 0.0
@@ -132,8 +152,13 @@ def construir_tipo_b(
         financiamiento = _redondear(max(0.0, delta))
         abonos = _redondear(max(0.0, -delta))
 
+        # Pago efectivo de las compras = compras - lo que quedo a credito.
+        prov_mes = _redondear(prov_mensual.get(mes, prov_prev)) if prov_mensual else prov_prev
+        pago_compras = _redondear(compras - (prov_mes - prov_prev))
+        prov_prev = prov_mes
+
         caja_natural = _redondear(
-            caja + ventas + financiamiento - compras - gastos_oper - financieros - abonos
+            caja + ventas + financiamiento - pago_compras - gastos_oper - financieros - abonos
         )
         caja_deseada = _redondear(obj_caja.objetivo * (1.0 + osc_caja[idx]))
         retiro = _redondear(max(0.0, caja_natural - caja_deseada))
@@ -141,7 +166,7 @@ def construir_tipo_b(
         retiros_acum = _redondear(retiros_acum + retiro)
 
         total_cobros = _redondear(ventas + financiamiento)
-        total_pagos = _redondear(compras + gastos_oper + financieros + abonos + retiro)
+        total_pagos = _redondear(pago_compras + gastos_oper + financieros + abonos + retiro)
 
         movs.append(MovMes(
             mes=mes,
@@ -155,7 +180,7 @@ def construir_tipo_b(
             total_cobros=total_cobros,
             total_pagos=total_pagos,
             saldo_final=caja_fin,
-            pago_compras_inventario=compras,
+            pago_compras_inventario=pago_compras,
             retiro_patrimonio=retiro,
         ))
 
@@ -173,7 +198,7 @@ def construir_tipo_b(
         personales = _saldo_credito_mes(planes, si, "creditos_personales", mes)
         prendarios = _saldo_credito_mes(planes, si, "creditos_prendarios", mes)
         comerciales = _saldo_credito_mes(planes, si, "creditos_comerciales", mes)
-        proveedores = _redondear(si.proveedores)
+        proveedores = prov_mes
         impuestos = _redondear(si.impuestos_por_pagar)
         gastos_acum = _redondear(si.gastos_acumulados)
 

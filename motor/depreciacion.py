@@ -23,7 +23,8 @@ CUENTAS_PPE = ("bienes_inmuebles", "mobiliario_equipos", "vehiculos")
 
 
 def _redondear(v: float) -> float:
-    return round(v + 0.0, 2)
+    # Cordobas enteros (ver motor/er._redondear): cuadre exacto para el banco.
+    return round(float(v), 0)
 
 
 @dataclass(frozen=True)

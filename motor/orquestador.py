@@ -20,6 +20,12 @@ from motor.mov import CalculoMov, construir_mov
 from motor.tipo_b import construir_tipo_b
 from motor.validar import ResultadoValidacion, validar_tipo_a, validar_tipo_b
 
+# Banda de oscilacion del inventario en Tipo A. Mas conservadora que la de
+# tarjetas (20%): el inventario es un activo atado a la caja — cada subida es
+# una compra que consume efectivo, asi que una banda amplia puede dejar la
+# caja negativa en el mes de compra fuerte.
+INVENTARIO_BANDA_PCT = 10.0
+
 
 @dataclass(frozen=True)
 class ModeloCertificacion:
@@ -50,13 +56,39 @@ class ModeloCertificacion:
         return self.validacion.ok
 
 
+def _trayectoria_cuenta_tipo_a(
+    inputs: InputsTipoA, meses: list[str], cuenta: str, sufijo_seed: str
+) -> dict[str, float] | None:
+    """Trayectoria de una cuenta operativa (inventarios / proveedores) en
+    Tipo A: oscila en banda alrededor de la tendencia inicial->final y ANCLA
+    en el saldo final del balance. None si la cuenta esta en cero (nada que
+    mover)."""
+    from motor.deuda_generada import trayectoria_con_ancla
+
+    inicial = float(getattr(inputs.saldos_iniciales, cuenta) or 0.0)
+    final = float(getattr(inputs.saldos_finales, cuenta) or 0.0)
+    if inicial <= 0 and final <= 0:
+        return None
+    seed = (
+        f"{inputs.datos.cedula}|{inputs.periodo.mes_inicial}|"
+        f"{inputs.periodo.mes_final}|{sufijo_seed}"
+    )
+    return trayectoria_con_ancla(
+        inicial, final, meses, banda_pct=INVENTARIO_BANDA_PCT, seed=seed
+    )
+
+
 def certificar_tipo_a(inputs: InputsTipoA) -> ModeloCertificacion:
     todos = resolver_planes(inputs.deudas, inputs.periodo)
     activos = planes_activos(todos)
     soporte = planes_documentales(todos)
     er = construir_er(inputs.er_mensual, activos, inputs.periodo)
-    mov = construir_mov(er, activos, inputs.periodo, inputs.saldos_iniciales)
-    esf = construir_esf(inputs, er, mov, activos)
+    inv_mensual = _trayectoria_cuenta_tipo_a(inputs, er.meses, "inventarios", "inv")
+    prov_mensual = _trayectoria_cuenta_tipo_a(inputs, er.meses, "proveedores", "prov")
+    mov = construir_mov(
+        er, activos, inputs.periodo, inputs.saldos_iniciales, inv_mensual, prov_mensual
+    )
+    esf = construir_esf(inputs, er, mov, activos, inv_mensual, prov_mensual)
     validacion = validar_tipo_a(inputs, activos, er, mov, esf)
     df_cert = construir_certificacion(inputs.datos, inputs.periodo, er)
     df_datos = construir_datos(inputs.datos)

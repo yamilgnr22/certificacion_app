@@ -41,6 +41,90 @@ def _load() -> list:
         return json.load(f)["deudas"]
 
 
+class AmortizableSinCuotaTest(unittest.TestCase):
+    """Deuda amortizable SIN cuota ni apertura (tipico SIBOIF agregado):
+    saldo CONSTANTE = saldo_reportado en todo el periodo, respetando su
+    cuenta ESF por tipo (no salta de 0 al saldo pleno solo en el corte)."""
+
+    def _periodo(self):
+        return PeriodoSpec(tipo="B", mes_inicial="2026-01", mes_final="2026-06", tasa_cambio=TC)
+
+    def test_amortiza_hasta_el_reportado_en_su_cuenta(self):
+        # Sin valor_inicial (SIBOIF): baja lineal desde una apertura estimada
+        # hasta el saldo reportado, en su cuenta ESF por tipo.
+        d = [{"numero": "3", "entidad": "X", "tipo_credito": "Personales",
+              "estrategia": "amortizable", "moneda": "NIO", "valor_inicial": 0,
+              "saldo_reportado": 15591.33, "cuota": 0,
+              "fecha_otorgamiento": "2026-05-01", "fecha_actualizado": "2026-05-01"}]
+        plan = resolver_planes(deudas_from_json(d), self._periodo())[0]
+        self.assertEqual(plan.cuenta_esf, "creditos_personales")
+        saldos = [c.saldo_final_nio for c in plan.cuotas]
+        self.assertGreater(saldos[0], saldos[-1])          # baja (amortiza)
+        self.assertEqual(round(saldos[-1], 2), 15591.33)   # ancla al corte EXACTO
+        # baja pareja (lineal): deltas casi iguales (±1 por redondeo de meses)
+        deltas = [saldos[i] - saldos[i + 1] for i in range(len(saldos) - 1)]
+        self.assertTrue(all(d > 0 for d in deltas))        # monotona descendente
+        self.assertLess(max(deltas) - min(deltas), 2.0)    # pareja
+
+    def test_con_cuota_real_sigue_amortizando(self):
+        d = [{"numero": "9", "entidad": "X", "tipo_credito": "Personales",
+              "estrategia": "amortizable", "moneda": "NIO", "valor_inicial": 50000,
+              "saldo_reportado": 15591.33, "cuota": 3000,
+              "fecha_otorgamiento": "2024-01-01", "fecha_vencimiento": "2027-01-01",
+              "fecha_actualizado": "2026-05-01"}]
+        plan = resolver_planes(deudas_from_json(d), self._periodo())[0]
+        saldos = [round(c.saldo_final_nio) for c in plan.cuotas]
+        self.assertTrue(saldos[0] > saldos[-1], "con cuota debe amortizar (bajar)")
+        self.assertEqual(saldos[-1], 15591)  # ancla al corte
+
+
+class TrayectoriaGeneradaTest(unittest.TestCase):
+    """motor/deuda_generada: banda (revolving) y amortizacion (creditos)."""
+
+    def setUp(self):
+        self.meses = ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"]
+
+    def test_revolving_banda_reproducible_y_ancla(self):
+        from motor.deuda_generada import trayectoria_revolving
+
+        a = trayectoria_revolving(16251.90, self.meses, 20.0, "s1")
+        b = trayectoria_revolving(16251.90, self.meses, 20.0, "s1")
+        self.assertEqual(a, b)  # misma seed = mismo resultado
+        self.assertEqual(a["2026-06"], 16251.90)  # ancla EXACTA al corte
+        vals = list(a.values())
+        self.assertGreater(len(set(vals)), 1)  # oscila
+        for v in vals:
+            self.assertLessEqual(v, 16251.90 * 1.20 + 1)
+            self.assertGreaterEqual(v, 16251.90 * 0.80 - 1)
+
+    def test_amortizable_con_cuota_baja_por_capital(self):
+        from motor.deuda_generada import trayectoria_amortizable
+
+        t = trayectoria_amortizable(20000, self.meses, cuota=3000)
+        self.assertEqual(t["2026-06"], 20000)          # ancla EXACTA
+        self.assertEqual(t["2026-01"], 20000 + 3000 * 5)  # apertura = final + cuota*(n-1)
+        self.assertGreater(t["2026-01"], t["2026-06"])  # baja
+
+    def test_inventario_oscila_y_ancla_al_final(self):
+        from motor.deuda_generada import trayectoria_con_ancla
+
+        t = trayectoria_con_ancla(200_000, 260_000, self.meses, 10.0, "inv-1")
+        self.assertEqual(t["2026-06"], 260_000)       # ancla dura EXACTA
+        vals = list(t.values())
+        self.assertGreater(len(set(vals)), 1)         # oscila
+        # tendencia: arranca cerca del inicial, no salta al final de una
+        self.assertLess(vals[0], 260_000)
+        # reproducible con la misma seed
+        self.assertEqual(t, trayectoria_con_ancla(200_000, 260_000, self.meses, 10.0, "inv-1"))
+
+    def test_amortizable_sin_cuota_estima_apertura(self):
+        from motor.deuda_generada import trayectoria_amortizable
+
+        t = trayectoria_amortizable(15591.33, self.meses, cuota=0)
+        self.assertEqual(t["2026-06"], 15591.33)       # ancla EXACTA
+        self.assertGreater(t["2026-01"], 15591.33)     # apertura estimada mayor
+
+
 class LoaderTests(unittest.TestCase):
     def test_parsea_7_deudas(self):
         deudas = deudas_from_json(_load())
@@ -88,6 +172,30 @@ class MapeoCuentaTests(unittest.TestCase):
         d = next(x for x in deudas if x.numero == "5561")
         self.assertEqual(mapear_cuenta_esf(d), "creditos_hipotecarios")
 
+    def test_tipo_concatenado_siboif_usa_el_destino(self):
+        # SIBOIF concatena 'Categoria - Destino'; el DESTINO manda sobre la
+        # categoria ('Consumo - Personales' -> personales, no consumo).
+        from datetime import date
+
+        from motor.inputs import DeudaInput
+
+        def _cuenta(tipo):
+            d = DeudaInput(
+                numero="1", entidad="X", tipo_credito=tipo, estrategia="amortizable",
+                moneda="NIO", valor_inicial=0, saldo_reportado=100, cuota=0,
+                fecha_otorgamiento=date(2026, 1, 1), fecha_actualizado=date(2026, 1, 1),
+                fecha_vencimiento=None,
+            )
+            return mapear_cuenta_esf(d)
+
+        self.assertEqual(_cuenta("Consumo - Personales"), "creditos_personales")
+        self.assertEqual(_cuenta("Consumo - Tarjetas de Credito"), "tarjetas_credito")
+        self.assertEqual(_cuenta("Comercial - Compra de Vehiculos"), "creditos_prendarios")
+        self.assertEqual(_cuenta("Consumo - Consumo"), "creditos_consumo")
+        # TransUnion (sin concatenar) sigue igual
+        self.assertEqual(_cuenta("CARTERA COMERCIAL"), "creditos_comerciales")
+        self.assertEqual(_cuenta("CARTERA DE CONSUMO"), "creditos_consumo")
+
 
 class TasaInferidaTests(unittest.TestCase):
     def test_caso_limpio_1571(self):
@@ -128,16 +236,17 @@ class PlanesTests(unittest.TestCase):
                 msg=f"Credito {numero}: saldo final no pega al reportado",
             )
 
-    def test_5220_revolving_36_meses_saldo_constante(self):
+    def test_5220_revolving_oscila_en_banda_y_ancla_al_corte(self):
         plan = self.por_numero["5220"]
         self.assertEqual(len(plan.cuotas), 36)  # 2023-01..2025-12
-        saldos = {round(c.saldo_inicial_nio, 2) for c in plan.cuotas}
-        self.assertEqual(saldos, {4672.88})  # constante
-        # Cuota = puro interes
-        for c in plan.cuotas:
-            self.assertAlmostEqual(c.cuota_nio, c.interes_nio, places=2)
-            self.assertAlmostEqual(c.abono_capital_nio, 0.0)
-            self.assertAlmostEqual(c.abono_extraordinario_nio, 0.0)
+        saldos = [c.saldo_final_nio for c in plan.cuotas]
+        # Oscila (no todos iguales) pero dentro de la banda +-20% del reportado.
+        self.assertGreater(len(set(round(s) for s in saldos)), 1)
+        for s in saldos:
+            self.assertLessEqual(s, 4672.88 * 1.20 + 1)
+            self.assertGreaterEqual(s, 4672.88 * 0.80 - 1)
+        # Ultimo mes = saldo reportado EXACTO (ancla dura del corte)
+        self.assertAlmostEqual(saldos[-1], 4672.88, places=2)
         self.assertIsNone(plan.alerta)
 
     def test_1735_bullet_cuota_es_puro_interes(self):

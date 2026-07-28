@@ -18,7 +18,8 @@ class ComponenteTest(unittest.TestCase):
             cuenta="bienes_inmuebles", valor=1_000_000, pct_depreciable=20, vida_util_anios=10
         )
         self.assertEqual(c.base_depreciable, 200_000.0)
-        self.assertEqual(c.gasto_mensual, 1_666.67)
+        # Cordobas enteros: 200,000 / 120 = 1,666.66... -> 1,667
+        self.assertEqual(c.gasto_mensual, 1_667.0)
 
     def test_100pct_5_anios(self):
         c = ComponenteDepreciacion(
@@ -58,7 +59,7 @@ class CalcularDesdeSpecTest(unittest.TestCase):
             self.SALDOS,
         )
         self.assertEqual(len(dep.componentes), 2)
-        self.assertEqual(dep.gasto_mensual_total, 1_666.67 + 10_000.0)
+        self.assertEqual(dep.gasto_mensual_total, 1_667.0 + 10_000.0)  # enteros
 
     def test_componente_no_declarado_no_se_deprecia(self):
         dep = calcular_depreciacion(
@@ -105,7 +106,7 @@ class JsonIoOverrideTest(unittest.TestCase):
         }
         inputs = inputs_from_json(body)
         self.assertEqual([ln.gasto_depreciacion for ln in inputs.er_mensual],
-                         [11_666.67, 11_666.67, 11_666.67])
+                         [11_667.0, 11_667.0, 11_667.0])  # enteros (1667 + 10000)
 
     def test_modo_generado_reemplaza_el_parametro(self):
         from motor.json_io import inputs_from_json
@@ -124,7 +125,7 @@ class JsonIoOverrideTest(unittest.TestCase):
         }
         inputs = inputs_from_json(body)
         self.assertEqual([ln.gasto_depreciacion for ln in inputs.er_mensual],
-                         [11_666.67, 11_666.67, 11_666.67])
+                         [11_667.0, 11_667.0, 11_667.0])  # enteros (1667 + 10000)
 
     def test_sin_bloque_manda_el_valor_manual(self):
         from motor.json_io import inputs_from_json

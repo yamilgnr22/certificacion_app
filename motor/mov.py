@@ -71,7 +71,8 @@ _GASTOS_OPER_NO_DEPR_LABELS = [
 
 
 def _redondear(x: float) -> float:
-    return round(float(x), 2)
+    # Cordobas enteros (ver motor/er._redondear): cuadre exacto para el banco.
+    return round(float(x), 0)
 
 
 def _delta_principal_por_mes(planes: list[PlanResuelto], meses: list[str]) -> dict[str, float]:
@@ -97,16 +98,40 @@ def construir_mov(
     planes: list[PlanResuelto],
     periodo: PeriodoSpec,
     saldos_iniciales: ESF_Saldos,
+    inventario_mensual: dict[str, float] | None = None,
+    proveedores_mensual: dict[str, float] | None = None,
 ) -> CalculoMov:
+    """inventario_mensual (opcional): trayectoria del inventario. Si se da, las
+    COMPRAS del mes = costo de ventas + variacion del inventario (subir stock
+    consume caja, bajarlo la libera), de modo que el ESF cuadre con esa
+    trayectoria. Sin el, el inventario es constante (compras = costo).
+
+    proveedores_mensual (opcional): trayectoria del pasivo con proveedores. El
+    PAGO en efectivo = compras - variacion de proveedores: si el pasivo sube
+    (compre a credito) sale menos caja; si baja (pague deuda vieja) sale mas.
+    Debe ser la MISMA trayectoria que reciba construir_esf o el balance
+    descuadra."""
     # planes ya vienen filtrados a activos por el orquestador
     delta_principal = _delta_principal_por_mes(planes, calculo_er.meses)
 
     movs: list[MovMes] = []
     saldo = _redondear(saldos_iniciales.efectivo)
+    inv_prev = _redondear(saldos_iniciales.inventarios)
+    prov_prev = _redondear(saldos_iniciales.proveedores)
 
     for mes in calculo_er.meses:
         cobros_ventas = _redondear(calculo_er.ingresos_mes[mes])
         pago_cogs = _redondear(calculo_er.costo_ventas_mes[mes])
+        if inventario_mensual:
+            inv_mes = _redondear(inventario_mensual.get(mes, inv_prev))
+            # Compras = costo de ventas + lo que crecio el stock.
+            pago_cogs = _redondear(pago_cogs + (inv_mes - inv_prev))
+            inv_prev = inv_mes
+        if proveedores_mensual:
+            prov_mes = _redondear(proveedores_mensual.get(mes, prov_prev))
+            # Lo comprado y no pagado queda como pasivo: sale menos efectivo.
+            pago_cogs = _redondear(pago_cogs - (prov_mes - prov_prev))
+            prov_prev = prov_mes
         pago_gastos_oper = _redondear(
             sum(calculo_er.gastos_por_label_mes[lbl][mes] for lbl in _GASTOS_OPER_NO_DEPR_LABELS)
         )

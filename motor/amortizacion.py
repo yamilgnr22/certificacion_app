@@ -104,16 +104,23 @@ def mapear_cuenta_esf(deuda: DeudaInput) -> str:
     if deuda.estrategia == "revolving":
         return "tarjetas_credito"
     t = deuda.tipo_credito.upper()
+    # El DESTINO especifico manda sobre la CATEGORIA generica. SIBOIF concatena
+    # 'Categoria - Destino' (p.ej. 'Consumo - Personales', 'Consumo - Tarjetas
+    # de Credito'): si se chequeara "CONSUMO" primero, todo caeria en consumo.
+    # Por eso las palabras de destino (hipotec/vehiculo/tarjeta/personal) van
+    # ANTES que las de categoria (comercial/consumo).
     if "HIPOTEC" in t:
         return "creditos_hipotecarios"
     if "VEHICUL" in t or "PRENDARIO" in t or "PRENDA" in t:
         return "creditos_prendarios"
-    if "CONSUMO" in t:
-        return "creditos_consumo"
+    if "TARJETA" in t:
+        return "tarjetas_credito"
     if "PERSONAL" in t:
         return "creditos_personales"
     if "COMERCIAL" in t:
         return "creditos_comerciales"
+    if "CONSUMO" in t:
+        return "creditos_consumo"
     return "creditos_consumo"
 
 
@@ -244,9 +251,29 @@ def _materializar(
 # ---------------------------------------------------------------- Plan amortizable
 
 def _resolver_amortizable(deuda: DeudaInput, periodo: PeriodoSpec) -> PlanResuelto:
-    tasa = _tasa_amortizable(deuda)
     meses_periodo = _meses_del_periodo(periodo)
 
+    # Si el CPA da la trayectoria a mano, se respeta.
+    if deuda.saldos_mensuales:
+        saldos = {m: float(v) for m, v in deuda.saldos_mensuales.items()}
+        return _resolver_desde_saldos_mensuales(deuda, periodo, mapear_cuenta_esf(deuda), saldos)
+
+    # Sin valor_inicial no se puede inferir la tasa para el plan frances
+    # (tipico de reportes agregados SIBOIF, que no traen monto original). Se
+    # GENERA una amortizacion lineal descendente hasta el saldo reportado: con
+    # cuota, la baja mensual es la cuota de capital; sin cuota, se estima una
+    # amortizacion del periodo. Respeta la cuenta ESF por tipo.
+    if deuda.valor_inicial <= 0 and deuda.saldo_apertura is None:
+        from motor.deuda_generada import trayectoria_amortizable
+
+        saldos = trayectoria_amortizable(
+            deuda.saldo_reportado, meses_periodo, cuota=deuda.cuota,
+        )
+        return _resolver_desde_saldos_mensuales(
+            deuda, periodo, mapear_cuenta_esf(deuda), saldos
+        )
+
+    tasa = _tasa_amortizable(deuda)
     if deuda.saldo_apertura is not None:
         saldo_apertura = deuda.saldo_apertura
     else:
@@ -288,60 +315,69 @@ def _resolver_bullet(deuda: DeudaInput, periodo: PeriodoSpec) -> PlanResuelto:
     return _materializar(deuda, periodo, mapear_cuenta_esf(deuda), tasa, saldo_apertura, filas)
 
 
+# ---------------------------------------------------------------- Saldos dados
+
+def _seed_deuda(deuda: DeudaInput, periodo: PeriodoSpec) -> str:
+    """Seed determinista por deuda (banda reproducible mes a mes)."""
+    return f"{deuda.numero}|{deuda.entidad}|{deuda.saldo_reportado}|{periodo.mes_final}"
+
+
+def _resolver_desde_saldos_mensuales(
+    deuda: DeudaInput, periodo: PeriodoSpec, cuenta_esf: str, saldos: Mapping[str, float]
+) -> PlanResuelto:
+    """Materializa un plan a partir de una trayectoria mensual de saldos (dada
+    a mano o GENERADA). El flujo de caja lo deriva Mov del delta de saldo. El
+    ultimo mes queda anclado al saldo dado para ese mes (= saldo_reportado en
+    las trayectorias generadas). Respeta la cuenta ESF del tipo de credito."""
+    tc = periodo.tasa_cambio if deuda.moneda == "USD" else 1.0
+    meses_periodo = _meses_del_periodo(periodo)
+    apertura = deuda.saldo_apertura if deuda.saldo_apertura is not None else (
+        float(saldos.get(meses_periodo[0], deuda.saldo_reportado)) if meses_periodo else deuda.saldo_reportado
+    )
+    cuotas: list[CuotaPlan] = []
+    prev = apertura
+    for no, mes in enumerate(meses_periodo, start=1):
+        s_fin = float(saldos.get(mes, prev))
+        delta = s_fin - prev  # >0 consumo/nuevo credito (entra caja), <0 pago (sale)
+        abono = max(0.0, -delta)
+        cuotas.append(CuotaPlan(
+            no_cuota=no,
+            mes=mes,
+            saldo_inicial_nio=prev * tc,
+            cuota_nio=deuda.cuota * tc,
+            interes_nio=deuda.cuota * tc,
+            abono_capital_nio=abono * tc,
+            abono_extraordinario_nio=0.0,
+            saldo_final_nio=s_fin * tc,
+        ))
+        prev = s_fin
+    return PlanResuelto(
+        deuda=deuda,
+        cuenta_esf=cuenta_esf,
+        cuotas=cuotas,
+        tasa_mensual_inferida=0.0,
+        saldo_apertura_nio=apertura * tc,
+        alerta=None,
+    )
+
+
 # ---------------------------------------------------------------- Plan revolving
 
 def _resolver_revolving(deuda: DeudaInput, periodo: PeriodoSpec) -> PlanResuelto:
-    """Tarjeta/linea revolving. Cuota = interes corriente (puede ser 0).
+    """Tarjeta/linea revolving. El saldo OSCILA en banda +-20% alrededor del
+    saldo reportado (como caja/inventario en Tipo B), terminando en el saldo
+    reportado (ancla dura). Si el CPA da saldos_mensuales, se respetan."""
+    from motor.deuda_generada import trayectoria_revolving
 
-    Si saldos_mensuales esta dado (caso tarjeta con saldo variable, p.ej.
-    Gloria), cada mes toma su saldo dado; el flujo de caja resultante es el
-    delta de saldo mes a mes (consumo entra, pago sale). Si no, saldo
-    constante = saldo_apertura y el ultimo mes ancla a saldo_reportado.
-    """
-    tc = periodo.tasa_cambio if deuda.moneda == "USD" else 1.0
     meses_periodo = _meses_del_periodo(periodo)
-    saldo_apertura = deuda.saldo_apertura if deuda.saldo_apertura is not None else deuda.saldo_reportado
-
     if deuda.saldos_mensuales:
-        # Materializamos directo: saldo_final[t] = saldos_mensuales[mes];
-        # el abono/consumo neto lo deriva Mov desde el delta de saldo.
-        cuotas: list[CuotaPlan] = []
-        prev = saldo_apertura
-        alerta = None
-        for no, mes in enumerate(meses_periodo, start=1):
-            s_fin = float(deuda.saldos_mensuales.get(mes, prev))
-            delta = s_fin - prev  # >0 consumo (entra caja), <0 pago (sale caja)
-            abono = max(0.0, -delta)
-            cuotas.append(CuotaPlan(
-                no_cuota=no,
-                mes=mes,
-                saldo_inicial_nio=prev * tc,
-                cuota_nio=deuda.cuota * tc,
-                interes_nio=deuda.cuota * tc,
-                abono_capital_nio=abono * tc,
-                abono_extraordinario_nio=0.0,
-                saldo_final_nio=s_fin * tc,
-            ))
-            prev = s_fin
-        # Chequeo suave: el ultimo saldo deberia coincidir con reportado
-        if abs(prev - deuda.saldo_reportado) > max(2.0 * deuda.cuota, 1.0) and deuda.cuota > 0:
-            alerta = (
-                f"Tarjeta {deuda.numero}: saldo final dado {prev:,.2f} difiere del "
-                f"reportado {deuda.saldo_reportado:,.2f} {deuda.moneda}."
-            )
-        return PlanResuelto(
-            deuda=deuda,
-            cuenta_esf="tarjetas_credito",
-            cuotas=cuotas,
-            tasa_mensual_inferida=0.0,
-            saldo_apertura_nio=saldo_apertura * tc,
-            alerta=alerta,
+        saldos = {m: float(v) for m, v in deuda.saldos_mensuales.items()}
+    else:
+        saldos = trayectoria_revolving(
+            deuda.saldo_reportado, meses_periodo, banda_pct=20.0,
+            seed=_seed_deuda(deuda, periodo),
         )
-
-    filas: list[tuple] = []
-    for no, mes in enumerate(meses_periodo, start=1):
-        filas.append((no, mes, saldo_apertura, deuda.cuota, deuda.cuota, 0.0))
-    return _materializar(deuda, periodo, "tarjetas_credito", 0.0, saldo_apertura, filas)
+    return _resolver_desde_saldos_mensuales(deuda, periodo, "tarjetas_credito", saldos)
 
 
 # ---------------------------------------------------------------- Orquestador

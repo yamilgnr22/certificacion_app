@@ -114,7 +114,10 @@ def _indexar_lineas(er_lineas: list[ER_LineaMes]) -> dict[str, ER_LineaMes]:
 
 
 def _redondear(x: float) -> float:
-    return round(float(x), 2)
+    # Certificacion en cordobas ENTEROS: los bancos exigen cuadre exacto sin
+    # tolerancia, asi que se redondea a entero en cada calculo (como el Excel
+    # del CPA). El balance cuadra por construccion (el motor no usa plug).
+    return round(float(x), 0)
 
 
 def construir_er(
