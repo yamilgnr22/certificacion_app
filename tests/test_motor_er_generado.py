@@ -174,6 +174,92 @@ class E2EJsonIoTest(unittest.TestCase):
             inputs_from_json(body)
 
 
+class CostoSobreIngresosDadosTest(unittest.TestCase):
+    """Caso real (Jose Daniel): el CPA tiene la VENTA exacta mes a mes pero no
+    el costo, solo sabe que ronda un % de la venta. El motor genera el costo
+    con banda sobre los ingresos dados, SIN tocarlos."""
+
+    MESES = ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"]
+    INGRESOS = {
+        "2026-01": 25_180_990, "2026-02": 21_888_289, "2026-03": 21_798_222,
+        "2026-04": 17_335_831, "2026-05": 21_237_262, "2026-06": 23_852_784,
+    }
+
+    def _gen(self, pct=91.0, banda=2.0, seed="s1"):
+        from motor.er_generado import generar_costo_sobre_ingresos
+        return generar_costo_sobre_ingresos(self.INGRESOS, self.MESES, pct, banda, seed)
+
+    def test_cada_mes_dentro_de_la_banda(self):
+        costos = self._gen()
+        for mes in self.MESES:
+            tasa = costos[mes] / self.INGRESOS[mes] * 100
+            self.assertGreaterEqual(tasa, 91.0 * 0.98 - 0.01, f"mes {mes}")
+            self.assertLessEqual(tasa, 91.0 * 1.02 + 0.01, f"mes {mes}")
+
+    def test_promedio_cerca_del_pct_sin_ser_exacto(self):
+        exactos = 0
+        for seed in ("s1", "s2", "s3", "s4", "s5"):
+            costos = self._gen(seed=seed)
+            tasa_prom = sum(costos.values()) / sum(self.INGRESOS.values()) * 100
+            self.assertLess(abs(tasa_prom - 91.0), 1.0, f"seed {seed}: {tasa_prom:.2f}%")
+            if abs(tasa_prom - 91.0) < 0.01:
+                exactos += 1
+        self.assertLess(exactos, 5, "el promedio no debe quedar clavado en el pct")
+
+    def test_reproducible_y_seed_cambia_serie(self):
+        self.assertEqual(self._gen(seed="a"), self._gen(seed="a"))
+        self.assertNotEqual(self._gen(seed="a"), self._gen(seed="b"))
+
+    def test_costo_nunca_supera_la_venta(self):
+        for seed in ("s1", "s2", "s3"):
+            costos = self._gen(pct=95.0, banda=4.0, seed=seed)
+            for mes in self.MESES:
+                self.assertLess(costos[mes], self.INGRESOS[mes], f"seed {seed} mes {mes}")
+
+    def test_pct_con_banda_que_supera_100_es_bloqueante(self):
+        with self.assertRaises(ValueError):
+            self._gen(pct=98.0, banda=5.0)   # 98 * 1.05 = 102.9%
+        with self.assertRaises(ValueError):
+            self._gen(pct=0)
+        with self.assertRaises(ValueError):
+            self._gen(pct=100)
+
+    def test_e2e_modo_manual_conserva_ingresos_y_genera_costo(self):
+        from motor.json_io import inputs_from_json
+
+        body = {
+            "periodo": {"tipo": "A", "mes_inicial": "2026-01", "mes_final": "2026-06", "tasa_cambio": 36.6243},
+            "datos": {"nombre_completo": "Demo", "cedula": "443-260488-0001K", "empleados": 10,
+                      "fecha_certificacion": "2026-07-26"},
+            "er_modo": "manual",
+            "er_mensual": [{"mes": m, "ingresos": v, "costo_ventas": 0} for m, v in self.INGRESOS.items()],
+            "costo_generado": {"pct_sobre_venta": 91, "banda_pct": 2},
+            "saldos_iniciales": {"efectivo": 100_000},
+            "saldos_finales": {"efectivo": 0},
+        }
+        lineas = inputs_from_json(body).er_mensual
+        # Los ingresos NO se tocan (dato duro del cliente)
+        self.assertEqual([l.ingresos for l in lineas], list(self.INGRESOS.values()))
+        # El costo se genero dentro de la banda y reemplaza el 0 cargado
+        for l in lineas:
+            tasa = l.costo_ventas / l.ingresos * 100
+            self.assertGreater(l.costo_ventas, 0)
+            self.assertGreaterEqual(tasa, 91.0 * 0.98 - 0.01)
+            self.assertLessEqual(tasa, 91.0 * 1.02 + 0.01)
+
+    def test_sin_bloque_el_costo_manual_se_respeta(self):
+        from motor.json_io import inputs_from_json
+
+        body = {
+            "periodo": {"tipo": "A", "mes_inicial": "2026-01", "mes_final": "2026-01", "tasa_cambio": 36.6},
+            "datos": {"nombre_completo": "D", "cedula": "001", "empleados": 1,
+                      "fecha_certificacion": "2026-02-01"},
+            "er_mensual": [{"mes": "2026-01", "ingresos": 100_000, "costo_ventas": 60_000}],
+            "saldos_iniciales": {"efectivo": 1000}, "saldos_finales": {"efectivo": 0},
+        }
+        self.assertEqual(inputs_from_json(body).er_mensual[0].costo_ventas, 60_000)
+
+
 class FechaDeudaTest(unittest.TestCase):
     """La UI manda fechas de deuda como 'AAAA-MM' (mismo formato que los
     meses); el parser debe aceptarlo (dia 01) y dar error claro si es basura."""

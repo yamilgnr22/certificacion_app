@@ -150,10 +150,29 @@ def _er_lineas(body: Mapping, periodo: PeriodoSpec) -> list[ER_LineaMes]:
     dep_ppe = _dep_ppe_mensual(body)
     modo = str(body.get("er_modo") or "manual").lower()
     if modo == "manual":
-        lineas = [_er_linea(x) for x in (body.get("er_mensual") or [])]
-        if dep_ppe is not None:
-            from dataclasses import replace
+        from dataclasses import replace
 
+        lineas = [_er_linea(x) for x in (body.get("er_mensual") or [])]
+        # Costo generado sobre ingresos DADOS: el CPA tiene la venta exacta
+        # del cliente pero no el costo, solo el % que ronda (con banda).
+        cg = body.get("costo_generado") or {}
+        if cg and float(cg.get("pct_sobre_venta", 0) or 0) > 0:
+            from motor.er_generado import generar_costo_sobre_ingresos
+
+            meses = [ln.mes for ln in lineas]
+            ingresos = {ln.mes: ln.ingresos for ln in lineas}
+            seed = str(cg.get("seed") or "")
+            if not seed:
+                cedula = str((body.get("datos") or {}).get("cedula") or "")
+                seed = f"{cedula}|{periodo.mes_inicial}|{periodo.mes_final}"
+            costos = generar_costo_sobre_ingresos(
+                ingresos, meses,
+                pct_sobre_venta=float(cg["pct_sobre_venta"]),
+                banda_pct=float(cg.get("banda_pct", 2.0) or 0.0),
+                seed=seed,
+            )
+            lineas = [replace(ln, costo_ventas=costos[ln.mes]) for ln in lineas]
+        if dep_ppe is not None:
             lineas = [replace(ln, gasto_depreciacion=dep_ppe) for ln in lineas]
         return lineas
     if modo != "generado":

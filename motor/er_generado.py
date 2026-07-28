@@ -122,6 +122,50 @@ def _offsets_centrados(seed: str, n: int, banda_pct: float) -> list[float]:
     return [max(-tope, min(tope, x - media + residuo)) for x in crudos]
 
 
+def validar_costo_pct(pct_sobre_venta: float, banda_pct: float) -> None:
+    """Reglas duras del costo generado (compartidas por ambos modos)."""
+    if not (0 < pct_sobre_venta < 100):
+        raise ValueError(
+            f"pct_sobre_venta debe estar en (0, 100), no {pct_sobre_venta}"
+        )
+    if not (0 <= banda_pct <= 50):
+        raise ValueError(f"banda_pct debe estar en [0, 50], no {banda_pct}")
+    tope = pct_sobre_venta * (1 + banda_pct / 100.0)
+    if tope >= 100:
+        raise ValueError(
+            f"pct_sobre_venta ({pct_sobre_venta}%) con banda ±{banda_pct}% puede "
+            f"llegar a {tope:.1f}% de la venta: el costo superaria la venta. "
+            "Baja el porcentaje o la banda."
+        )
+
+
+def generar_costo_sobre_ingresos(
+    ingresos_por_mes: Mapping[str, float],
+    meses: list[str],
+    pct_sobre_venta: float,
+    banda_pct: float = 2.0,
+    seed: str = "",
+) -> dict[str, float]:
+    """Costo de ventas generado sobre ingresos DADOS (modo manual).
+
+    Caso real del CPA: tiene la venta exacta mes a mes (dato duro del cliente)
+    pero no el costo, solo sabe que ronda un % de la venta. Aplica la misma
+    oscilacion determinista del modo generado (independiente por mes, centrada
+    sin sesgo) sobre cada ingreso real, sin tocar los ingresos.
+    """
+    validar_costo_pct(pct_sobre_venta, banda_pct)
+    osc = _offsets_centrados(seed + "|cos-manual", len(meses), banda_pct)
+    out: dict[str, float] = {}
+    for i, mes in enumerate(meses):
+        ingreso = float(ingresos_por_mes.get(mes, 0.0) or 0.0)
+        tasa = (pct_sobre_venta / 100.0) * (1.0 + osc[i])
+        costo = round(ingreso * tasa, 2)
+        if ingreso > 0 and costo >= ingreso:  # cinturon (validar_costo_pct ya lo impide)
+            raise ValueError(f"Mes {mes}: costo generado ({costo}) >= venta ({ingreso})")
+        out[mes] = costo
+    return out
+
+
 def generar_er_mensual(
     params: ERGeneradoParams,
     periodo: PeriodoSpec,
