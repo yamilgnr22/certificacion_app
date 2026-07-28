@@ -367,7 +367,57 @@ class MotorV2PersistenciaTest(unittest.TestCase):
         textos = "\n".join(p.text for p in doc.paragraphs)
         self.assertIn("Documentos del cliente", textos)
         self.assertIn("Notas a los Estados Financieros", textos)
-        self.assertNotIn("Fotografías del Negocio", textos)
+        # NINGUNA variante de hoja de fotos (ni la nuestra ni la de la
+        # plantilla SmartArt, que dice "Fotografias del negocio" sin tilde).
+        self.assertNotIn("fotograf", textos.lower())
+
+    def test_finalizar_fotos_negocio_sin_fotos_usa_plantilla(self):
+        # Check ON pero sin fotos cargadas: sale la hoja de la plantilla
+        # SmartArt ("Fotografias del negocio" con placeholders manuales),
+        # una sola vez.
+        cid = self.crear_cliente()
+        inputs = gloria_inputs()
+        inputs["incluir_fotos_negocio"] = True
+        periodo = self.crear_borrador(cid, inputs)
+        data = self.client.post(f"/api/motor/v2/periodos/{periodo['id']}/finalizar").get_json()
+        self.assertTrue(data["ok"], data)
+        from docx import Document
+        doc = Document(data["documento_path"])
+        textos = "\n".join(p.text for p in doc.paragraphs)
+        self.assertEqual(textos.lower().count("fotograf"), 1)
+
+    def test_finalizar_con_cuentas_bancarias_en_nota1(self):
+        # Nota 1 desglosada: cuenta bancaria + Efectivo en Caja residuo en el DOCX.
+        cid = self.crear_cliente()
+        inputs = gloria_inputs()
+        inputs["cuentas_bancarias"] = [
+            {"banco": "LAFISE", "tipo": "Cuenta de Ahorro", "moneda": "NIO",
+             "numero": "106012140", "saldo": 500_000},
+        ]
+        periodo = self.crear_borrador(cid, inputs)
+        data = self.client.post(f"/api/motor/v2/periodos/{periodo['id']}/finalizar").get_json()
+        self.assertTrue(data["ok"], data)
+        from docx import Document
+        doc = Document(data["documento_path"])
+        celdas = {c.text for tb in doc.tables for r in tb.rows for c in r.cells}
+        self.assertIn("LAFISE Cuenta de Ahorro NIO No. 106012140", celdas)
+        self.assertIn("Efectivo en Caja", celdas)
+        self.assertIn("341,220", celdas)  # 841,220 - 500,000 (residuo)
+
+    def test_finalizar_caja_negativa_bloquea(self):
+        # Cuentas suman mas que el efectivo del ESF -> NO finaliza (borrador intacto).
+        cid = self.crear_cliente()
+        inputs = gloria_inputs()
+        inputs["cuentas_bancarias"] = [
+            {"banco": "LAFISE", "tipo": "Cuenta de Ahorro", "moneda": "NIO",
+             "numero": "1", "saldo": 900_000},  # > 841,220
+        ]
+        periodo = self.crear_borrador(cid, inputs)
+        data = self.client.post(f"/api/motor/v2/periodos/{periodo['id']}/finalizar").get_json()
+        self.assertFalse(data["ok"])
+        self.assertIn("negativo", data["validacion"]["errores"][0]["mensaje"])
+        sigue = self.client.get(f"/api/motor/v2/periodos/{periodo['id']}").get_json()["periodo"]
+        self.assertEqual(sigue["estado"], "borrador")  # no se finalizo
 
     def test_finalizar_con_fotos_negocio(self):
         # incluir_fotos_negocio=True agrega la hoja; las imagenes tipo
@@ -394,6 +444,9 @@ class MotorV2PersistenciaTest(unittest.TestCase):
         self.assertIn("Fotografías del Negocio", textos)
         tipos = [p.content_type for p in doc.part.package.iter_parts()]
         self.assertEqual(sum(1 for t in tipos if t.startswith("image/png")), 2)
+        # UNA sola hoja de fotos: con fotos cargadas no se fusiona ademas la
+        # plantilla SmartArt (que trae su propia "Fotografias del negocio").
+        self.assertEqual(textos.lower().count("fotograf"), 1)
 
 
 if __name__ == "__main__":

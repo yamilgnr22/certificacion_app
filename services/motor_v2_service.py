@@ -229,6 +229,26 @@ class MotorV2Service:
         if not modelo.ok:
             return {"ok": False, "validacion": validacion}
 
+        # Nota 1 desglosada por cuentas bancarias: si la caja residual da
+        # negativa es BLOQUEANTE (no se finaliza con una nota que no cuadra).
+        from motor.notas import NotasError
+
+        incluir_notas = bool(inputs_body.get("incluir_notas", True))
+        try:
+            notas_data = (
+                construir_notas(modelo, cuentas_bancarias=inputs_body.get("cuentas_bancarias") or None)
+                if incluir_notas else None
+            )
+        except NotasError as exc:
+            return {
+                "ok": False,
+                "validacion": {
+                    "ok": False,
+                    "errores": [{"invariante": 0, "mensaje": str(exc)}],
+                    "alertas": [],
+                },
+            }
+
         # Respaldo best-effort de la DB antes de mutar (finalizar es el paso
         # que convierte el borrador en el activo real e inmutable).
         from db.backup import backup_sqlite
@@ -248,7 +268,8 @@ class MotorV2Service:
             )
             # Hojas opcionales del Word (checks de la UI). Los documentos del
             # cliente SIEMPRE van; lo opcional son notas y fotos del negocio.
-            incluir_notas = bool(inputs_body.get("incluir_notas", True))
+            # (incluir_notas y notas_data ya se resolvieron arriba, con el
+            # bloqueo de caja negativa ANTES de mutar nada.)
             incluir_fotos = bool(inputs_body.get("incluir_fotos_negocio", False))
             # Imagenes elegidas para esta certificacion (checks de la UI):
             # ids -> {tipo, path}. Las de tipo foto_negocio van a su propia
@@ -268,7 +289,7 @@ class MotorV2Service:
                 str(out_path),
                 incluir_validacion=False,
                 esf_tipo=esf_vista,
-                notas_data=construir_notas(modelo) if incluir_notas else None,
+                notas_data=notas_data,
                 docs_imagenes=docs_imagenes or None,
                 fotos_negocio=fotos_negocio or None,
                 incluir_fotos_negocio=incluir_fotos,

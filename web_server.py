@@ -1164,6 +1164,27 @@ def motor_v2_extraer_deudas():
     return resultado
 
 
+@app.post("/api/motor/v2/cuentas/extract")
+def motor_v2_extraer_cuentas():
+    """Extrae las cuentas de un ESTADO DE CUENTA bancario (PDF o imagen)
+    para la Nota 1 (Integracion del Efectivo). Stateless; la IA extrae solo
+    banco/tipo/moneda/numero/saldo final — el cuadre con el ESF (Efectivo en
+    Caja residuo) es determinista y lo valida el motor."""
+    from services.estado_cuenta_extraction import EstadoCuentaError, procesar_estado_cuenta
+
+    archivo = request.files.get("archivo")
+    if not archivo or not archivo.filename:
+        return {"ok": False, "error": "Adjunta el estado de cuenta (PDF o imagen)"}, 400
+    try:
+        resultado = procesar_estado_cuenta(archivo.filename, archivo.stream.read())
+    except EstadoCuentaError as exc:
+        return {"ok": False, "error": str(exc)}, 422
+    except Exception:
+        app.logger.exception("Fallo inesperado extrayendo el estado de cuenta")
+        return {"ok": False, "error": "Fallo inesperado al procesar el estado de cuenta"}, 500
+    return resultado
+
+
 @app.post("/api/motor/v2/certificar")
 def motor_v2_certificar():
     """Motor de certificaciones V2 (Tipo A y Tipo B), determinista.
@@ -1274,6 +1295,17 @@ def motor_v2_certificar():
             docs_imagenes = None
             fotos_negocio = None
 
+    # Nota 1 desglosada por cuentas bancarias; caja negativa = BLOQUEANTE.
+    from motor.notas import NotasError
+
+    try:
+        notas_data = (
+            construir_notas(modelo, cuentas_bancarias=body.get("cuentas_bancarias") or None)
+            if incluir_notas else None
+        )
+    except NotasError as exc:
+        return {"ok": False, "error": str(exc), "tipo": "NotasError"}, 422
+
     generar_documento_completo(
         modelo.df_esf_mensual if esf_vista == "mensual" else modelo.df_esf_corte,
         modelo.df_er,
@@ -1286,7 +1318,7 @@ def motor_v2_certificar():
         validacion_documentos=None,
         validacion_llm=None,
         esf_tipo=esf_vista,
-        notas_data=construir_notas(modelo) if incluir_notas else None,
+        notas_data=notas_data,
         docs_imagenes=docs_imagenes,
         fotos_negocio=fotos_negocio,
         incluir_fotos_negocio=incluir_fotos,

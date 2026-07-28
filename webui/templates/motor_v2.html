@@ -157,6 +157,17 @@
       </div>
     </div>
     <div class="grid g4" id="erGenParams" style="display:none;margin-bottom:12px"></div>
+    <div id="costoGenBox" style="margin-bottom:12px">
+      <label style="display:inline-flex;align-items:center;gap:8px;margin:0 0 8px;white-space:nowrap;cursor:pointer">
+        <input type="checkbox" id="chkCostoGen"> Calcular el costo de ventas como % de la venta
+      </label>
+      <div class="row" id="costoGenParams" style="display:none;align-items:flex-end">
+        <div style="max-width:160px"><label>% sobre venta</label><input id="cgPct" value="91" placeholder="ej. 91"></div>
+        <div style="max-width:160px"><label>Banda ± %</label><input id="cgBanda" value="2" placeholder="ej. 2"></div>
+        <div style="max-width:220px"><label>Semilla (opcional)</label><input id="cgSeed" placeholder="cédula|periodo"></div>
+        <span class="hint" id="cgInfo" style="margin:0"></span>
+      </div>
+    </div>
     <p class="hint" id="erHint">Ingresá los números reales del cliente. Gastos Financieros los calcula el motor desde las deudas activas.</p>
     <div class="scroll"><table id="erTable"></table></div>
   </div>
@@ -205,6 +216,19 @@
     </div>
     <p class="hint">Detecta solo la fuente: <b>TransUnion</b> (PDF) trae el detalle por deuda; <b>SIBOIF</b> (foto/captura) viene agregado por tipo/moneda — completás número, entidad, cuota y fecha a mano. El reporte se procesa con OpenAI (servidor externo); revisá cada fila y decidí cuáles entran al ER.</p>
     <div class="scroll"><table id="deudasTable"></table></div>
+  </div>
+
+  <div class="panel" id="panelCuentas">
+    <h2>Cuentas bancarias (Nota 1 — integración del efectivo) <button class="btn secondary small" id="addCuenta" style="margin-left:8px">+ Agregar cuenta</button></h2>
+    <p class="hint">El desglose de la Nota 1: cada cuenta con su saldo final al corte. <b>Efectivo en Caja</b> se calcula solo (efectivo del ESF − suma de cuentas); si diera negativo, el sistema BLOQUEA la generación hasta que lo resuelvas. Cuentas USD se convierten con la tasa del período.</p>
+    <div class="row" style="margin-bottom:10px;align-items:flex-end">
+      <div><label>Estado de cuenta (PDF o imagen)</label><input type="file" id="estadoCuenta" accept=".pdf,application/pdf,image/*"></div>
+      <button class="btn secondary small" id="btnExtraerCuentas">🏦 Extraer cuenta del estado</button>
+      <span class="hint" id="cuentasInfo" style="margin:0"></span>
+    </div>
+    <p class="hint">El estado de cuenta se procesa con OpenAI (servidor externo) para leer banco/número/saldo final; verificá el saldo contra el PDF.</p>
+    <div class="scroll"><table id="cuentasTable"></table></div>
+    <p class="hint" id="cuentasResumen" style="margin-top:8px"></p>
   </div>
 
   <div class="panel" id="panelDocs">
@@ -345,6 +369,7 @@ function toggleModoER(){
   document.getElementById("erHint").textContent = gen
     ? "Ingresos, costo y depreciación los genera el motor (base + bandas, seed fija); esas filas quedan en solo lectura y se llenan al Validar. Los gastos operativos se toman del PRIMER mes como columna fija; si editás un mes puntual, se guarda como override."
     : "Ingresá los números reales del cliente. Gastos Financieros los calcula el motor desde las deudas activas.";
+  toggleCostoGen();
   recalcDepPPE();
 }
 function syncERDisabled(){
@@ -352,8 +377,39 @@ function syncERDisabled(){
   ["ingresos","costo_ventas","gasto_depreciacion"].forEach(k=>{
     const tr=document.querySelector('#erTable tr[data-key="'+k+'"]'); if(!tr) return;
     const dep=(k==="gasto_depreciacion") && depPPEActivo();
-    tr.querySelectorAll("input").forEach(i=>{ i.disabled=gen||dep; });
+    const cg=(k==="costo_ventas") && costoGenActivo();
+    tr.querySelectorAll("input").forEach(i=>{ i.disabled=gen||dep||cg; });
   });
+}
+
+// ---- Costo de ventas generado sobre ingresos DADOS (modo manual) ----
+// El CPA tiene la venta exacta del cliente pero no el costo, solo el % que
+// ronda. El motor lo genera con banda determinista sin tocar los ingresos.
+function costoGenActivo(){
+  const c=document.getElementById("chkCostoGen");
+  return !!(c && c.checked && modoER()==="manual");
+}
+function leerCostoGen(){
+  const pct=parseFloat(document.getElementById("cgPct").value||0)||0;
+  const banda=parseFloat(document.getElementById("cgBanda").value||0)||0;
+  const seed=(document.getElementById("cgSeed").value||"").trim();
+  return {pct_sobre_venta:pct, banda_pct:banda, ...(seed?{seed}:{})};
+}
+function toggleCostoGen(){
+  const manual=modoER()==="manual";
+  // En modo generado el costo ya se genera junto con los ingresos.
+  document.getElementById("costoGenBox").style.display = manual?"":"none";
+  const on=costoGenActivo();
+  document.getElementById("costoGenParams").style.display = on?"":"none";
+  const info=document.getElementById("cgInfo");
+  if(on){
+    const {pct_sobre_venta:p, banda_pct:b} = leerCostoGen();
+    const tope=p*(1+b/100);
+    if(p<=0||p>=100){ info.textContent="El % debe estar entre 0 y 100."; info.style.color="var(--err)"; }
+    else if(tope>=100){ info.textContent="⚠ "+p+"% ±"+b+"% llega a "+tope.toFixed(1)+"%: el costo superaría la venta."; info.style.color="var(--err)"; }
+    else { info.textContent="Costo entre "+(p*(1-b/100)).toFixed(1)+"% y "+tope.toFixed(1)+"% de la venta (margen bruto ~"+(100-p).toFixed(1)+"%). Se llena al Validar."; info.style.color="var(--muted)"; }
+  } else { info.textContent=""; }
+  syncERDisabled();
 }
 
 // ---------- Depreciación por componentes de PPE (línea recta) ----------
@@ -510,8 +566,110 @@ function readDeudas(){
       else if(k==="fecha_vencimiento" && v==="") v=null;
       d[k]=v;
     });
-    if(d.numero) out.push(d);
+    // Enviar la fila si tiene ALGÚN dato real. Las deudas SIBOIF vienen sin
+    // número (es agregado); antes se descartaban por exigir número y no
+    // llegaban al motor -> ESF sin esos pasivos.
+    const tieneNumero = d.numero && String(d.numero).trim();
+    const tieneSaldo = d.saldo_reportado != null && d.saldo_reportado !== 0;
+    const tieneEntidad = d.entidad && String(d.entidad).trim();
+    if(tieneNumero || tieneSaldo || tieneEntidad){
+      if(!tieneNumero) d.numero = "";  // el motor acepta número vacío
+      out.push(d);
+    }
   }); return out;
+}
+
+// ---------- Cuentas bancarias (Nota 1 — integracion del efectivo) ----------
+const CUENTA_COLS=["banco","tipo","moneda","numero","saldo"];
+function addCuentaRow(c={}){
+  const t=document.getElementById("cuentasTable");
+  if(!t.querySelector("tr")){
+    const h=el("tr");
+    ["banco","tipo","moneda","numero","saldo (moneda original)",""].forEach(x=>h.appendChild(el("th",{},x)));
+    t.appendChild(h);
+  }
+  const tr=el("tr");
+  CUENTA_COLS.forEach(k=>{
+    const td=el("td");
+    if(k==="tipo"){
+      const s=el("select"); ["Cuenta Corriente","Cuenta de Ahorro","Cuenta"].forEach(o=>s.appendChild(el("option",{value:o},o)));
+      s.value=c.tipo||"Cuenta Corriente"; s.dataset.key=k; td.appendChild(s);
+    } else if(k==="moneda"){
+      const s=el("select"); ["NIO","USD"].forEach(o=>s.appendChild(el("option",{value:o},o)));
+      s.value=c.moneda||"NIO"; s.dataset.key=k; td.appendChild(s);
+    } else {
+      const i=el("input",{value:c[k]!=null?c[k]:""}); i.dataset.key=k;
+      i.style.minWidth=(k==="numero"?"180px":"110px");
+      td.appendChild(i);
+    }
+    tr.appendChild(td);
+  });
+  const tdx=el("td"); const b=el("button",{className:"btn secondary small"},"X");
+  b.onclick=()=>{ tr.remove(); recalcCuentas(); }; tdx.appendChild(b); tr.appendChild(tdx);
+  t.appendChild(tr);
+  recalcCuentas();
+}
+function readCuentas(){
+  const out=[]; document.querySelectorAll("#cuentasTable tr").forEach(tr=>{
+    if(tr.querySelector("th"))return; const c={};
+    tr.querySelectorAll("input,select").forEach(i=>{
+      let v=i.value; if(i.dataset.key==="saldo") v = v===""?0:parseFloat(v);
+      c[i.dataset.key]=v;
+    });
+    if((c.banco||"").trim() || (c.numero||"").trim() || (c.saldo||0)>0) out.push(c);
+  }); return out;
+}
+function recalcCuentas(){
+  const p=readFields("periodo");
+  const tc=parseFloat(p.tasa_cambio||36.6243);
+  const cuentas=readCuentas();
+  const resumen=document.getElementById("cuentasResumen");
+  if(!cuentas.length){ resumen.textContent=""; return; }
+  let suma=0;
+  cuentas.forEach(c=>{ suma+=Math.round((c.moneda==="USD"?(c.saldo||0)*tc:(c.saldo||0))); });
+  let msg="Suma de cuentas: <b>"+fmt(suma)+"</b> NIO. ";
+  const esA=(p.tipo||"A").toUpperCase()==="A";
+  const efectivoFin=esA?parseFloat(readFields("saldosFin").efectivo||0):null;
+  if(esA && efectivoFin>0){
+    const caja=Math.round(efectivoFin)-suma;
+    if(caja<0){
+      msg+='<span style="color:var(--err)">⚠ Efectivo en Caja daría '+fmt(caja)+' (NEGATIVO): las cuentas suman más que el efectivo del balance. BLOQUEANTE.</span>';
+    } else {
+      msg+="Efectivo en Caja resultante: <b>"+fmt(caja)+"</b> (efectivo ESF "+fmt(Math.round(efectivoFin))+" − cuentas).";
+    }
+  } else if(!esA){
+    msg+="Tipo B: el efectivo del corte lo calcula el motor; el cuadre se valida al Finalizar/Generar.";
+  } else {
+    msg+="Cargá el efectivo en saldos finales para ver el Efectivo en Caja resultante.";
+  }
+  resumen.innerHTML=msg;
+}
+async function extraerEstadoCuenta(){
+  const f=document.getElementById("estadoCuenta").files[0];
+  const info=document.getElementById("cuentasInfo");
+  const setInfo=(t,err)=>{ info.textContent=t||""; info.style.color=err?"var(--err)":"var(--muted)"; };
+  if(!f){ setInfo("Elegí el estado de cuenta (PDF o imagen).", true); return; }
+  const btn=document.getElementById("btnExtraerCuentas"); btn.disabled=true;
+  setInfo("Leyendo el estado de cuenta con IA (OpenAI)…");
+  try{
+    const fd=new FormData(); fd.append("archivo", f);
+    const r=await fetch("/api/motor/v2/cuentas/extract",{method:"POST",body:fd});
+    let j={}; try{ j=await r.json(); }catch(e){}
+    if(!r.ok) throw new Error(j.error||("HTTP "+r.status));
+    const cuentas=j.cuentas||[];
+    if(!cuentas.length){ setInfo("No se encontraron cuentas con saldo en el documento.", true); return; }
+    cuentas.forEach(c=>addCuentaRow(c));
+    document.getElementById("estadoCuenta").value="";
+    let msg=cuentas.length+" cuenta(s) de "+(j.banco||"el banco")+((j.titular)?" — titular: "+j.titular:"")+". Verificá el saldo contra el PDF.";
+    // Aviso si la fecha de corte del estado no coincide con el mes final del periodo
+    const mesFinal=(readFields("periodo").mes_final||"");
+    const desfasadas=cuentas.filter(c=>c.fecha_corte && mesFinal && c.fecha_corte.slice(0,7)!==mesFinal);
+    if(desfasadas.length) msg="⚠ OJO: "+desfasadas.length+" cuenta(s) con fecha de corte distinta al mes final del periodo ("+mesFinal+"). "+msg;
+    const dudosas=cuentas.filter(c=>c.confianza==="baja").length;
+    if(dudosas) msg+=" ⚠ "+dudosas+" con confianza BAJA.";
+    setInfo(msg, desfasadas.length>0);
+  }catch(e){ setInfo("Error al extraer: "+e.message, true); }
+  finally{ btn.disabled=false; }
 }
 
 function collect(){
@@ -522,6 +680,7 @@ function collect(){
     incluir_notas: document.getElementById("chkIncluirNotas").checked,
     incluir_fotos_negocio: document.getElementById("chkFotosNegocio").checked,
     documentos_ids: [...docsSeleccion],
+    ...(readCuentas().length ? {cuentas_bancarias: readCuentas()} : {}),
     ...(depPPEActivo() && Object.keys(leerDepPPE()).length ? {depreciacion_ppe: leerDepPPE()} : {}),
     periodo: {tipo:tipo, mes_inicial:p.mes_inicial, mes_final:p.mes_final, tasa_cambio:parseFloat(p.tasa_cambio||36.6243)},
     datos: (()=>{ const d=readFields("datos"); d.empleados=parseInt(d.empleados||0); return d; })(),
@@ -545,6 +704,7 @@ function collect(){
   } else {
     out.er_modo="manual";
     out.er_mensual=readER();
+    if(costoGenActivo() && leerCostoGen().pct_sobre_venta>0) out.costo_generado=leerCostoGen();
   }
   if(tipo==="B"){
     const o=readFields("objetivos"); const co=[];
@@ -629,7 +789,7 @@ async function validar(){
     const r=await fetch("/api/motor/v2/certificar?format=json",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(collect())});
     const j=await r.json();
     renderResultado(j, r.status);
-    if(modoER()==="generado" && j.er_mensual_efectivo){
+    if((modoER()==="generado" || costoGenActivo()) && j.er_mensual_efectivo){
       // Red de seguridad: si la tabla quedo desincronizada del periodo, alinearla
       // a los meses que REALMENTE calculo el motor antes de pintar los valores.
       const mesesMotor=j.er_mensual_efectivo.map(x=>x.mes);
@@ -739,6 +899,14 @@ buildDepPPE({});
 toggleTipo();
 document.getElementById("selModoER").onchange=toggleModoER;
 toggleModoER();
+// Costo de ventas generado: activar/desactivar y recalcular el aviso en vivo
+document.getElementById("chkCostoGen").addEventListener("change", toggleCostoGen);
+document.getElementById("costoGenParams").addEventListener("input", toggleCostoGen);
+// Cuentas bancarias (Nota 1): filas, extracción y resumen en vivo
+document.getElementById("addCuenta").onclick=()=>addCuentaRow();
+document.getElementById("btnExtraerCuentas").onclick=extraerEstadoCuenta;
+document.getElementById("cuentasTable").addEventListener("input", recalcCuentas);
+document.getElementById("saldosFin").addEventListener("input", recalcCuentas);
 // Depreciación PPE: recalcular en vivo al tocar %/vida o los saldos iniciales
 document.getElementById("chkDepPPE").addEventListener("change", recalcDepPPE);
 document.getElementById("depPPETable").addEventListener("input", recalcDepPPE);
@@ -893,8 +1061,17 @@ function aplicarInputs(b){
     const er=b.er_mensual||[]; const meses=er.map(r=>r.mes);
     if(meses.length){ const pf={}; er.forEach(r=>{ pf[r.mes]={...r}; delete pf[r.mes].mes; }); buildER(meses, pf); }
   }
+  // Costo generado sobre ingresos dados (modo manual)
+  const cg=b.costo_generado||{};
+  document.getElementById("chkCostoGen").checked = !!(cg.pct_sobre_venta>0);
+  document.getElementById("cgPct").value = cg.pct_sobre_venta!=null?cg.pct_sobre_venta:91;
+  document.getElementById("cgBanda").value = cg.banda_pct!=null?cg.banda_pct:2;
+  document.getElementById("cgSeed").value = cg.seed||"";
   document.getElementById("deudasTable").innerHTML="";
   (b.deudas||[]).forEach(d=>addDeudaRow(d));
+  document.getElementById("cuentasTable").innerHTML="";
+  (b.cuentas_bancarias||[]).forEach(c=>addCuentaRow(c));
+  recalcCuentas();
   // Depreciación por componentes PPE (opcional en los inputs guardados)
   const dep=b.depreciacion_ppe||{};
   buildDepPPE(dep);
