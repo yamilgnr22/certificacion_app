@@ -183,16 +183,32 @@ def generar_tabla_esf(doc, df_esf: pd.DataFrame, df_cert: pd.DataFrame) -> None:
             set_vertical_alignment(cell, "center")
         set_row_height(table.rows[i + 1], 283)           # ≈0.50 cm
 
-    # 3c) bordes para totales (izquierda)
-    totales = totales_valor
+    # 3c) bordes para totales, POR LADO.
+    # El ESF al corte son dos columnas paralelas: activos en 0-1 y
+    # pasivos/patrimonio en 3-4. El borde de un total debe quedarse en SU
+    # lado: aplicarlo a toda la fila lo derrama sobre la cuenta que caiga
+    # enfrente (p.ej. la linea de "Total No Corrientes" de activos aparecia
+    # sobre "Creditos Comerciales"), y ademas dejaba sin linea a los totales
+    # de la derecha (Total No Corrientes de pasivos, Total Patrimonio).
+    # "Patrimonio" va en totales_valor solo para negrita: es encabezado de
+    # seccion, no un total, y no lleva linea encima.
+    totales = totales_valor - {"Patrimonio"}
+    linea = {"sz": "3", "val": "single", "color": "000000"}
+    doble = {"sz": "3", "val": "double", "color": "000000"}
     for row in table.rows[1:]:
-        primer = row.cells[0].text.strip()
-        if primer in totales:
-            for c in row.cells:
-                set_cell_border(c, top={"sz": "3", "val": "single", "color": "000000"})
-            if primer in ("Total Activos", "Total Pasivo + Patrimonio"):
-                for c in row.cells:
-                    set_cell_border(c, bottom={"sz": "3", "val": "double", "color": "000000"})
+        izq, der = row.cells[0].text.strip(), row.cells[3].text.strip()
+        if izq in totales:
+            for c in (row.cells[0], row.cells[1]):
+                set_cell_border(c, top=linea)
+            if izq == "Total Activos":
+                for c in (row.cells[0], row.cells[1]):
+                    set_cell_border(c, bottom=doble)
+        if der in totales:
+            for c in (row.cells[3], row.cells[4]):
+                set_cell_border(c, top=linea)
+            if der == "Total Pasivo + Patrimonio":
+                for c in (row.cells[3], row.cells[4]):
+                    set_cell_border(c, bottom=doble)
 
     # ── ▶︎ NUEVO: bordes especiales para “Total Pasivos” en la columna 3 ◀︎ ──
     for row in table.rows[1:]:

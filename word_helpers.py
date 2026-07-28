@@ -88,8 +88,16 @@ def add_bullet_paragraph(document, text: str) -> None:
 #  set_cell_border)                                                       #
 # ---------------------------------------------------------------------- #
 def set_row_height(row, height_twips: int):
+    """Fija la altura EXACTA de la fila.
+
+    Reemplaza cualquier altura previa: si se llama dos veces sobre la misma
+    fila (p.ej. una altura general y luego una especifica), dejar ambos
+    elementos w:trHeight es ambiguo y Word aplica el primero, ignorando el
+    ultimo valor pedido."""
     tr = row._element
     trPr = tr.get_or_add_trPr()
+    for previo in trPr.findall(qn("w:trHeight")):
+        trPr.remove(previo)
     trHeight = OxmlElement("w:trHeight")
     trHeight.set(qn("w:val"), str(height_twips))
     trHeight.set(qn("w:hRule"), "exact")

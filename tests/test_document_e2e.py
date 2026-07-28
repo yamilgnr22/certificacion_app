@@ -83,5 +83,47 @@ class DocumentE2ETest(unittest.TestCase):
         self.assertGreaterEqual(len(doc.tables), 2)
 
 
+class CertificadoEnterosTest(unittest.TestCase):
+    """El certificado se expresa en cordobas enteros: la cifra y las letras
+    coinciden y nunca aparece 'punto' en la conversion a palabras (bug del
+    caso Jose David: promedios con decimales daban '...punto tres tres')."""
+
+    def _texto_certificado(self, ingresos_prom, utilidad_prom) -> str:
+        import pandas as pd
+        from docx import Document
+        from generators.certificacion import generar_certificacion
+
+        dfc = pd.DataFrame([
+            ["Nombre completo", "Cliente Decimal"],
+            ["cedula", "001-010101-0000A"],
+            ["inicio", "2026-01-01"],
+            ["fin", "2026-06-30"],
+            ["sexo", "masculino"],
+            ["banco", "Banco X"],
+            ["Fecha Certificacion", "2026-07-05"],
+            ["ingresos brutos", 23657828.00],
+            ["promedio ingresos", ingresos_prom],
+            ["utilidad del periodo", 2833355.35],
+            ["promedio utilidad", utilidad_prom],
+        ])
+        doc = Document()
+        generar_certificacion(doc, dfc)
+        return "\n".join(p.text for p in doc.paragraphs)
+
+    def test_promedios_decimales_no_generan_punto(self):
+        texto = self._texto_certificado(3942971.33, 472226.89)
+        # Ninguna cantidad en letras debe contener 'punto' (decimales).
+        for linea in texto.split("\n"):
+            if "córdobas" in linea:
+                self.assertNotIn("punto", linea, f"decimales en letras: {linea!r}")
+
+    def test_cifra_y_letra_coinciden_redondeadas(self):
+        # 472,226.89 redondea a 472,227 -> la cifra y la letra deben coincidir.
+        texto = self._texto_certificado(3942971.33, 472226.89)
+        self.assertIn("472,227", texto)
+        self.assertIn("cuatrocientos setenta y dos mil doscientos veintisiete", texto)
+        self.assertNotIn("472,226", texto)
+
+
 if __name__ == "__main__":
     unittest.main()

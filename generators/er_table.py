@@ -171,12 +171,13 @@ def generar_tabla_er(doc, df_er: pd.DataFrame, df_cert: pd.DataFrame) -> None:
             bottom={"sz": "3", "val": "double", "color": "000000"},
         )
 
-    # 5b) Negrita en toda la fila “Ingresos/Utilidad Neta”
+    # 5b) Negrita y alto de 1 cm en la fila “Ingresos/Utilidad Neta”
     for row in table.rows[1:]:
         if row.cells[0].text.strip().lower().startswith("ingresos/utilidad"):
             for cell in row.cells:
                 for r in cell.paragraphs[0].runs:
                     r.bold = True
+            set_row_height(row, int(1.0 * 1440 / 2.54))            # 1 cm
             break
 
     # 6) Anchos

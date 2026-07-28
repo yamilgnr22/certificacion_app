@@ -32,6 +32,21 @@ def _fusionar_con_plantilla(doc_final: Document, ruta_plantilla: str, salida: st
     composer.append(Document(ruta_plantilla))
     composer.save(salida)
 
+
+def _quitar_saltos_finales(doc: Document) -> None:
+    """Elimina los saltos de página sueltos del final del documento.
+
+    Cada sección cierra con un salto para que la siguiente arranque en hoja
+    propia; si el documento termina ahí (no se fusiona la plantilla), ese
+    salto dejaría una página en blanco al final."""
+    while doc.paragraphs:
+        ultimo = doc.paragraphs[-1]
+        xml = ultimo._p.xml
+        if ultimo.text.strip() == "" and 'w:type="page"' in xml:
+            ultimo._p.getparent().remove(ultimo._p)
+            continue
+        break
+
 # -------------- API pública -------------------------------------------
 def generar_documento_completo(
     df_esf,
@@ -196,12 +211,24 @@ def generar_documento_completo(
     generar_tabla_docs_cliente(doc, imagenes=docs_imagenes)
 
     # -------- Fotografías del Negocio (hoja opcional) --------
-    if incluir_fotos_negocio:
+    # OJO: la plantilla SmartArt ES la hoja "Fotografias del negocio" con
+    # placeholders para pegar a mano. Por eso hay UNA sola hoja de fotos:
+    #   - con fotos cargadas -> se genera aquí con las imágenes incrustadas
+    #     y NO se fusiona la plantilla (evita la hoja duplicada);
+    #   - sin fotos -> se fusiona la plantilla (placeholders manuales);
+    #   - hoja desactivada -> no va ninguna de las dos.
+    if incluir_fotos_negocio and fotos_negocio:
         from generators.docs_table import generar_fotos_negocio
 
         generar_fotos_negocio(doc, imagenes=fotos_negocio)
 
-    # -------- Plantilla SmartArt --------
+    usar_plantilla = incluir_fotos_negocio and not fotos_negocio
+    if not usar_plantilla:
+        _quitar_saltos_finales(doc)  # sin plantilla detrás, el salto sobra
+        doc.save(output_path)
+        return
+
+    # -------- Plantilla SmartArt (= hoja de fotos para pegado manual) --------
     tpl = plantilla_path or _PLANTILLA_PATH
     if not os.path.isfile(tpl):
         raise FileNotFoundError(f"Plantilla SmartArt no encontrada: {tpl}")

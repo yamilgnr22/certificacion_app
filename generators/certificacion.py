@@ -58,10 +58,15 @@ def generar_certificacion(doc: Document, dfc: pd.DataFrame, profile=None):
     banco        = cert.get("banco")
     fecha_cert   = cert.get("fecha_certificacion")
 
-    ingresos_brutos   = cert.get("ingresos_brutos")
-    ingresos_promedio = cert.get("ingresos_promedio")
-    utilidad_periodo  = cert.get("utilidad_periodo")
-    utilidad_promedio = cert.get("utilidad_promedio")
+    # El certificado se expresa en cordobas ENTEROS (como el Excel del CPA):
+    # se redondea una vez y ese mismo entero alimenta la cifra y las letras,
+    # para que nunca se desincronicen ni aparezca "punto tres tres" en la
+    # conversion a palabras. El calculo del motor (ER/ESF, invariantes) sigue
+    # con sus decimales; esto es solo la presentacion narrativa.
+    ingresos_brutos   = round(cert.get("ingresos_brutos")   or 0)
+    ingresos_promedio = round(cert.get("ingresos_promedio") or 0)
+    utilidad_periodo  = round(cert.get("utilidad_periodo")  or 0)
+    utilidad_promedio = round(cert.get("utilidad_promedio") or 0)
 
     ingresos_brutos_palabras   = num2words(ingresos_brutos,   lang="es")
     ingresos_promedio_palabras = num2words(ingresos_promedio, lang="es")
