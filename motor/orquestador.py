@@ -79,7 +79,9 @@ def _trayectoria_cuenta_tipo_a(
 
 
 def certificar_tipo_a(inputs: InputsTipoA) -> ModeloCertificacion:
-    todos = resolver_planes(inputs.deudas, inputs.periodo)
+    # Los saldos iniciales declarados (vienen del ESF de la certificacion
+    # anterior) son el ancla de apertura de las cuentas de credito.
+    todos = resolver_planes(inputs.deudas, inputs.periodo, inputs.saldos_iniciales)
     activos = planes_activos(todos)
     soporte = planes_documentales(todos)
     er = construir_er(inputs.er_mensual, activos, inputs.periodo)
@@ -106,7 +108,7 @@ def certificar_tipo_a(inputs: InputsTipoA) -> ModeloCertificacion:
 
 
 def certificar_tipo_b(inputs: InputsTipoB) -> ModeloCertificacion:
-    todos = resolver_planes(inputs.deudas, inputs.periodo)
+    todos = resolver_planes(inputs.deudas, inputs.periodo, inputs.saldos_iniciales)
     activos = planes_activos(todos)
     soporte = planes_documentales(todos)
     er = construir_er(inputs.er_mensual, activos, inputs.periodo)

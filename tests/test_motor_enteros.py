@@ -183,7 +183,7 @@ class CreditoNuevoDelPeriodoTest(unittest.TestCase):
         for mes in ["2026-01", "2026-02", "2026-03", "2026-04"]:
             self.assertEqual(por_mes[mes], 0.0, f"{mes}: aun no existia")
         self.assertEqual(por_mes["2026-05"], 509_078.0)      # desembolso (cordobas enteros)
-        self.assertEqual(por_mes["2026-06"], 334_290.27)     # ancla del corte
+        self.assertAlmostEqual(por_mes["2026-06"], 334_290.27, delta=1.0)  # ancla (entero)
 
     def test_desembolso_entra_a_caja_ese_mes(self):
         m = self._modelo()
@@ -193,6 +193,59 @@ class CreditoNuevoDelPeriodoTest(unittest.TestCase):
 
     def test_balance_cuadra_exacto(self):
         for e in self._modelo().esf.meses:
+            self.assertEqual(_descuadre_balance(e), 0.0, f"mes {e.mes}")
+
+
+class AperturaDeclaradaMandaTest(unittest.TestCase):
+    """Cuando hay una certificacion previa, el saldo inicial de las cuentas de
+    credito viene de un ESF ya emitido y firmado: es un HECHO, no algo a
+    estimar. El motor recalibra las aperturas de los creditos contra el, y el
+    saldo del corte sigue anclando en el reporte de deuda."""
+
+    MESES = ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"]
+
+    def _modelo(self, prendarios_declarado, saldo_corte=850_000):
+        from motor.json_io import inputs_from_json
+
+        return certificar_tipo_a(inputs_from_json({
+            "periodo": {"tipo": "A", "mes_inicial": "2026-01", "mes_final": "2026-06",
+                        "tasa_cambio": 36.6243},
+            "datos": {"nombre_completo": "D", "cedula": "001", "empleados": 1,
+                      "fecha_certificacion": "2026-07-26"},
+            "er_mensual": [{"mes": m, "ingresos": 21_000_000, "costo_ventas": 19_000_000}
+                           for m in self.MESES],
+            "saldos_iniciales": {"efectivo": 2_095_487, "creditos_prendarios": prendarios_declarado,
+                                 "creditos_personales": 659_237},
+            "saldos_finales": {"efectivo": 0, "creditos_prendarios": saldo_corte},
+            "deudas": [{"numero": "6332", "entidad": "LAFISE",
+                        "tipo_credito": "CARTERA DE VEHICULOS", "estrategia": "amortizable",
+                        "moneda": "NIO", "valor_inicial": 1_500_000,
+                        "saldo_reportado": saldo_corte, "cuota": 40_000,
+                        "fecha_otorgamiento": "2024-01-04", "fecha_actualizado": "2026-06-01"}],
+        }))
+
+    def test_apertura_declarada_se_respeta(self):
+        # El ESF certificado dice 1,053,347: esa es la apertura, no la que el
+        # motor derivaria amortizando hacia atras.
+        m = self._modelo(1_053_347)
+        self.assertEqual(m.planes[0].saldo_apertura_nio, 1_053_347.0)
+
+    def test_sigue_anclando_al_saldo_del_reporte(self):
+        m = self._modelo(1_053_347, saldo_corte=850_000)
+        self.assertEqual(m.planes[0].cuotas[-1].saldo_final_nio, 850_000.0)
+
+    def test_cuenta_declarada_sin_credito_que_la_respalde_se_conserva(self):
+        # Personales 659,237 viene del ESF anterior pero no hay credito de esa
+        # cuenta en el reporte (se cancelo): el saldo declarado no se pierde.
+        m = self._modelo(1_053_347)
+        self.assertEqual(m.esf.meses[0].creditos_personales, 659_237.0)
+
+    def test_sin_declarar_el_motor_deriva_como_siempre(self):
+        m = self._modelo(0)
+        self.assertGreater(m.planes[0].saldo_apertura_nio, 0.0)
+
+    def test_balance_cuadra_exacto(self):
+        for e in self._modelo(1_053_347).esf.meses:
             self.assertEqual(_descuadre_balance(e), 0.0, f"mes {e.mes}")
 
 

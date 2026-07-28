@@ -61,7 +61,7 @@ class AmortizableSinCuotaTest(unittest.TestCase):
         self.assertEqual(plan.cuenta_esf, "creditos_personales")
         saldos = [c.saldo_final_nio for c in plan.cuotas]
         self.assertGreater(saldos[0], saldos[-1])          # baja (amortiza)
-        self.assertEqual(round(saldos[-1], 2), 15591.33)   # ancla al corte EXACTO
+        self.assertAlmostEqual(saldos[-1], 15591.33, delta=1.0)  # ancla al corte (entero)
         # baja pareja (lineal): deltas casi iguales (±1 por redondeo de meses)
         deltas = [saldos[i] - saldos[i + 1] for i in range(len(saldos) - 1)]
         self.assertTrue(all(d > 0 for d in deltas))        # monotona descendente
@@ -233,7 +233,7 @@ class PlanesTests(unittest.TestCase):
             self.assertAlmostEqual(
                 plan.saldo_final_corte_nio(),
                 esperado,
-                places=2,
+                delta=1.0,  # cordobas enteros: hasta 1 de redondeo
                 msg=f"Credito {numero}: saldo final no pega al reportado",
             )
 
@@ -247,7 +247,7 @@ class PlanesTests(unittest.TestCase):
             self.assertLessEqual(s, 4672.88 * 1.20 + 1)
             self.assertGreaterEqual(s, 4672.88 * 0.80 - 1)
         # Ultimo mes = saldo reportado EXACTO (ancla dura del corte)
-        self.assertAlmostEqual(saldos[-1], 4672.88, places=2)
+        self.assertAlmostEqual(saldos[-1], 4672.88, delta=1.0)  # entero
         self.assertIsNone(plan.alerta)
 
     def test_creditos_nuevos_arrancan_en_cero_hasta_su_desembolso(self):

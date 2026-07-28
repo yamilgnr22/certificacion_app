@@ -230,12 +230,12 @@ def _materializar(
         cuotas.append(CuotaPlan(
             no_cuota=no,
             mes=mes,
-            saldo_inicial_nio=s_ini * tc,
-            cuota_nio=c * tc,
-            interes_nio=intr * tc,
-            abono_capital_nio=ab * tc,
-            abono_extraordinario_nio=ab_extra * tc,
-            saldo_final_nio=s_fin * tc,
+            saldo_inicial_nio=_redondear(s_ini * tc),
+            cuota_nio=_redondear(c * tc),
+            interes_nio=_redondear(intr * tc),
+            abono_capital_nio=_redondear(ab * tc),
+            abono_extraordinario_nio=_redondear(ab_extra * tc),
+            saldo_final_nio=_redondear(s_fin * tc),
         ))
 
     return PlanResuelto(
@@ -243,7 +243,7 @@ def _materializar(
         cuenta_esf=cuenta_esf,
         cuotas=cuotas,
         tasa_mensual_inferida=tasa,
-        saldo_apertura_nio=saldo_apertura * tc,
+        saldo_apertura_nio=_redondear(saldo_apertura * tc),
         alerta=alerta,
     )
 
@@ -343,12 +343,12 @@ def _resolver_desde_saldos_mensuales(
         cuotas.append(CuotaPlan(
             no_cuota=no,
             mes=mes,
-            saldo_inicial_nio=prev * tc,
-            cuota_nio=deuda.cuota * tc,
-            interes_nio=deuda.cuota * tc,
-            abono_capital_nio=abono * tc,
+            saldo_inicial_nio=_redondear(prev * tc),
+            cuota_nio=_redondear(deuda.cuota * tc),
+            interes_nio=_redondear(deuda.cuota * tc),
+            abono_capital_nio=_redondear(abono * tc),
             abono_extraordinario_nio=0.0,
-            saldo_final_nio=s_fin * tc,
+            saldo_final_nio=_redondear(s_fin * tc),
         ))
         prev = s_fin
     return PlanResuelto(
@@ -356,7 +356,7 @@ def _resolver_desde_saldos_mensuales(
         cuenta_esf=cuenta_esf,
         cuotas=cuotas,
         tasa_mensual_inferida=0.0,
-        saldo_apertura_nio=apertura * tc,
+        saldo_apertura_nio=_redondear(apertura * tc),
         alerta=None,
     )
 
@@ -416,9 +416,87 @@ def _resolver_credito_nuevo(deuda: DeudaInput, periodo: PeriodoSpec) -> PlanResu
     return _resolver_desde_saldos_mensuales(deuda, periodo, cuenta, saldos)
 
 
-def resolver_planes(deudas: Sequence[DeudaInput], periodo: PeriodoSpec) -> list[PlanResuelto]:
+# Diferencia (NIO) bajo la cual no vale la pena recalibrar las aperturas.
+TOLERANCIA_APERTURA = 1.0
+
+
+def _redondear(x: float) -> float:
+    # Cordobas enteros como el resto del motor (ver motor/er._redondear): si
+    # los planes dejan decimales, el ESF los redondea pero Mov usa el valor
+    # crudo para el delta de caja y el balance descuadra por centavos.
+    return round(float(x), 0)
+
+
+def _calibrar_aperturas(
+    planes: list[PlanResuelto], saldos_iniciales, periodo: PeriodoSpec
+) -> dict[str, float]:
+    """Aperturas por credito (en moneda ORIGINAL) ajustadas al saldo inicial
+    DECLARADO de cada cuenta del ESF.
+
+    Cuando el CPA viene de una certificacion anterior, el saldo de apertura de
+    cada cuenta de credito es un HECHO (sale de un ESF ya emitido y firmado),
+    no algo a estimar. Este ajuste reparte ese monto declarado entre los
+    creditos que existian al inicio, proporcional a la apertura que el motor
+    habia derivado; asi la trayectoria arranca del balance real y sigue
+    anclando en el saldo reportado del corte.
+
+    Devuelve {numero_credito: saldo_apertura} solo para los que cambian."""
+    from motor.esf import _CUENTAS_CREDITO
+
+    por_cuenta: dict[str, list[PlanResuelto]] = {}
+    for p in planes:
+        # Los creditos nuevos del periodo no existian al inicio: apertura 0.
+        if not es_credito_nuevo(p.deuda, periodo):
+            por_cuenta.setdefault(p.cuenta_esf, []).append(p)
+
+    ajustes: dict[str, float] = {}
+    for cuenta in _CUENTAS_CREDITO:
+        declarado = float(getattr(saldos_iniciales, cuenta, 0.0) or 0.0)
+        viejos = por_cuenta.get(cuenta, [])
+        if declarado <= 0 or not viejos:
+            continue  # sin declaracion: el motor deriva (comportamiento clasico)
+        derivado = sum(p.saldo_apertura_nio for p in viejos)
+        if abs(derivado - declarado) <= TOLERANCIA_APERTURA:
+            continue  # ya coinciden
+        for p in viejos:
+            tc = periodo.tasa_cambio if p.deuda.moneda == "USD" else 1.0
+            if derivado > 0:
+                nueva_nio = declarado * (p.saldo_apertura_nio / derivado)
+            else:  # todos en 0: repartir en partes iguales
+                nueva_nio = declarado / len(viejos)
+            ajustes[p.deuda.numero] = round(nueva_nio / tc, 2)
+    return ajustes
+
+
+def resolver_planes(
+    deudas: Sequence[DeudaInput],
+    periodo: PeriodoSpec,
+    saldos_iniciales=None,
+) -> list[PlanResuelto]:
     """Filtra por ventana y resuelve TODOS los planes vigentes (activos +
-    documentales). Usar planes_activos() para los que impactan ER/Mov/ESF."""
+    documentales). Usar planes_activos() para los que impactan ER/Mov/ESF.
+
+    saldos_iniciales (opcional): si trae saldos declarados en las cuentas de
+    credito (tipico cuando hay una certificacion previa), esos montos son el
+    ancla de apertura y las deudas se recalibran contra ellos."""
+    planes = _resolver_planes_base(deudas, periodo)
+    if saldos_iniciales is None:
+        return planes
+    ajustes = _calibrar_aperturas(planes, saldos_iniciales, periodo)
+    if not ajustes:
+        return planes
+    import dataclasses
+
+    recalibradas = [
+        dataclasses.replace(d, saldo_apertura=ajustes[d.numero])
+        if d.numero in ajustes and d.saldo_apertura is None
+        else d
+        for d in deudas
+    ]
+    return _resolver_planes_base(recalibradas, periodo)
+
+
+def _resolver_planes_base(deudas: Sequence[DeudaInput], periodo: PeriodoSpec) -> list[PlanResuelto]:
     activos = filtrar_por_ventana(deudas, periodo)
     out: list[PlanResuelto] = []
     for d in activos:

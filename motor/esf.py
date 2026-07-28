@@ -121,23 +121,19 @@ def _aperturas_credito(planes: list[PlanResuelto]) -> dict[str, float]:
 
 
 def _saldos_iniciales_efectivos(si: ESF_Saldos, aperturas: dict[str, float]) -> ESF_Saldos:
-    """ESF_Saldos con las cuentas de credito reemplazadas por las aperturas de
-    los planes. Si el cliente puso un saldo de credito != al de los planes,
-    es error bloqueante (inconsistencia entre saldos_iniciales y deudas)."""
+    """ESF_Saldos con las cuentas de credito resueltas.
+
+    Prioridad: lo que DECLARA el cliente manda. El saldo de apertura de una
+    cuenta de credito suele venir de una certificacion anterior (un ESF ya
+    emitido y firmado), asi que es un hecho, no algo a estimar; el modulo de
+    deuda ya recalibro las aperturas de los creditos contra el (ver
+    amortizacion._calibrar_aperturas). Solo cuando el cliente NO declara nada
+    (cuenta en 0) se usa la apertura derivada de los planes."""
     import dataclasses
 
     overrides: dict[str, float] = {}
     for cuenta, apertura in aperturas.items():
-        dado = getattr(si, cuenta)
-        if apertura > 0.0:
-            if abs(_redondear(dado) - apertura) > TOLERANCIA and abs(_redondear(dado)) > TOLERANCIA:
-                raise ESFError(
-                    f"Cuenta '{cuenta}' en saldos_iniciales ({dado:,.2f}) no coincide con "
-                    f"la suma de aperturas de los creditos ({apertura:,.2f}). "
-                    f"La apertura de las cuentas de credito la define el modulo de "
-                    f"deuda (saldo_apertura por credito); deja esa cuenta en 0 o "
-                    f"pon el mismo valor."
-                )
+        if apertura > 0.0 and abs(_redondear(getattr(si, cuenta))) <= TOLERANCIA:
             overrides[cuenta] = apertura
     return dataclasses.replace(si, **overrides) if overrides else si
 
