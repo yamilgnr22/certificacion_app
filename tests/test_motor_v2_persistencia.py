@@ -293,6 +293,33 @@ class MotorV2PersistenciaTest(unittest.TestCase):
         self.assertEqual(lista2, [])
         self.assertEqual(self.client.get(f"/api/documentos/{doc['id']}/archivo").status_code, 404)
 
+    def test_documento_cambiar_tipo(self):
+        """Arrastrar una imagen a otra casilla de la hoja: antes habia que
+        borrarla de la biblioteca y volver a subirla."""
+        cid = self.crear_cliente()
+        doc = self.subir_documento(cid, "matricula_2", "matricula_2024.png")
+
+        r = self.client.patch(f"/api/documentos/{doc['id']}", json={"tipo": "soporte_2"})
+        self.assertEqual(r.status_code, 200, r.get_json())
+        self.assertEqual(r.get_json()["documento"]["tipo"], "soporte_2")
+
+        lista = self.client.get(f"/api/clientes/{cid}/documentos").get_json()["documentos"]
+        self.assertEqual(len(lista), 1, "no se duplica: es la misma imagen")
+        self.assertEqual(lista[0]["tipo"], "soporte_2")
+        self.assertEqual(lista[0]["original_filename"], "matricula_2024.png")
+
+    def test_documento_cambiar_tipo_invalido_es_400(self):
+        cid = self.crear_cliente()
+        doc = self.subir_documento(cid)
+        r = self.client.patch(f"/api/documentos/{doc['id']}", json={"tipo": "matricula_9"})
+        self.assertEqual(r.status_code, 400)
+        sigue = self.client.get(f"/api/clientes/{cid}/documentos").get_json()["documentos"][0]
+        self.assertEqual(sigue["tipo"], "cedula_front", "el tipo original no se toca")
+
+    def test_documento_cambiar_tipo_inexistente_es_404(self):
+        r = self.client.patch("/api/documentos/no-existe", json={"tipo": "cedula_back"})
+        self.assertEqual(r.status_code, 404)
+
     def test_documento_tipo_invalido_rechazado(self):
         import io
         cid = self.crear_cliente()

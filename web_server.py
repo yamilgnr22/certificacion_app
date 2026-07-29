@@ -1450,6 +1450,21 @@ def api_servir_documento(doc_id: str):
         return _service_error_response(exc)
 
 
+@app.patch("/api/documentos/<doc_id>")
+def api_cambiar_tipo_documento(doc_id: str):
+    """Reasigna la casilla de una imagen (arrastrarla a otro lugar de la hoja)."""
+    try:
+        body = request.get_json(silent=True) or {}
+        doc = DocumentoService(_db_session()).cambiar_tipo(
+            doc_id, body.get("tipo"), cpa_user=_cpa_user()
+        )
+        if doc is None:
+            return {"ok": False, "error": "Documento no encontrado"}, 404
+        return {"ok": True, "documento": doc}
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
 @app.delete("/api/documentos/<doc_id>")
 def api_eliminar_documento(doc_id: str):
     try:

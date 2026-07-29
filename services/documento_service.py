@@ -160,6 +160,46 @@ class DocumentoService:
             out.append({"tipo": doc.tipo, "path": str(p)})
         return out
 
+    def cambiar_tipo(self, doc_id: str, tipo: str, *, cpa_user: str = "system") -> dict | None:
+        """Reasigna la casilla de una imagen ya subida.
+
+        Antes, corregir un tipo mal elegido obligaba a borrar la imagen de la
+        biblioteca y volver a subirla; en la pantalla esto es arrastrarla de
+        una casilla a otra."""
+        doc = self.session.get(DocumentoSoporte, doc_id)
+        if not doc:
+            return None
+        tipo = (tipo or "").strip().lower()
+        if tipo not in TIPOS_VALIDOS:
+            raise PeriodoValidationError(
+                f"Tipo de documento invalido '{tipo}'. Validos: {sorted(TIPOS_VALIDOS)}"
+            )
+        if tipo == doc.tipo:
+            return _doc_to_dict(doc)
+        before = _doc_to_dict(doc)
+        try:
+            doc.tipo = tipo
+            self.session.flush()
+            data = _doc_to_dict(doc)
+            self.audit.log(
+                cpa_user=cpa_user,
+                entity_type="documento",
+                entity_id=doc.id,
+                action="update",
+                summary=(
+                    f"Cambio el tipo de '{doc.original_filename}' de "
+                    f"{before['tipo']} a {tipo}"
+                ),
+                before=before,
+                after=data,
+                metadata={"cliente_id": doc.cliente_id},
+            )
+            self.session.commit()
+            return data
+        except Exception:
+            self.session.rollback()
+            raise
+
     def eliminar(self, doc_id: str, *, cpa_user: str = "system") -> bool:
         doc = self.session.get(DocumentoSoporte, doc_id)
         if not doc:
