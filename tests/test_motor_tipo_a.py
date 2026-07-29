@@ -148,5 +148,54 @@ class MotorTipoACapitalNoCuadraTest(unittest.TestCase):
             certificar_tipo_a(inputs)
 
 
+class SubtotalesDelESFTest(unittest.TestCase):
+    """El ESF mensual lleva los mismos subtotales de seccion que el de corte:
+    Total Corrientes y Total No Corrientes en activos y en pasivos."""
+
+    def setUp(self):
+        self.modelo = certificar_tipo_a(InputsTipoA(
+            periodo=PeriodoSpec(tipo="A", mes_inicial="2025-12", mes_final="2026-05", tasa_cambio=36.6243),
+            datos=_datos(),
+            er_mensual=_er_6_meses(),
+            saldos_iniciales=ESF_Saldos(efectivo=0.0),
+            saldos_finales=ESF_Saldos(efectivo=150_000.0, depreciacion_acumulada=-6_000.0),
+        ))
+        self.df = self.modelo.df_esf_mensual
+
+    def _fila(self, etiqueta: str) -> list:
+        return [r for _, r in self.df.iterrows() if str(r.iloc[0]).strip() == etiqueta]
+
+    def test_estan_las_cuatro_filas(self):
+        self.assertEqual(len(self._fila("Total Corrientes")), 2, "activos y pasivos")
+        self.assertEqual(len(self._fila("Total No Corrientes")), 2)
+
+    def test_los_subtotales_suman_el_total(self):
+        corr_act, corr_pas = self._fila("Total Corrientes")
+        nc_act, nc_pas = self._fila("Total No Corrientes")
+        (t_act,) = self._fila("Total Activos")
+        (t_pas,) = self._fila("Total Pasivos")
+        for col in range(1, len(self.df.columns)):
+            self.assertAlmostEqual(corr_act.iloc[col] + nc_act.iloc[col], t_act.iloc[col],
+                                   delta=1.0, msg=f"activos, columna {col}")
+            self.assertAlmostEqual(corr_pas.iloc[col] + nc_pas.iloc[col], t_pas.iloc[col],
+                                   delta=1.0, msg=f"pasivos, columna {col}")
+
+    def test_el_mensual_coincide_con_el_corte(self):
+        # Las dos vistas del mismo mes no pueden discrepar sobre que cuenta es
+        # corriente: ambas leen los subtotales de ESFMes.
+        e = self.modelo.esf.corte()
+        corr_act, corr_pas = self._fila("Total Corrientes")
+        nc_act, nc_pas = self._fila("Total No Corrientes")
+        self.assertAlmostEqual(corr_act.iloc[-1], e.total_activos_corrientes, delta=1.0)
+        self.assertAlmostEqual(nc_act.iloc[-1], e.total_activos_no_corrientes, delta=1.0)
+        self.assertAlmostEqual(corr_pas.iloc[-1], e.total_pasivos_corrientes, delta=1.0)
+        self.assertAlmostEqual(nc_pas.iloc[-1], e.total_pasivos_no_corrientes, delta=1.0)
+
+    def test_la_depreciacion_resta_en_los_no_corrientes(self):
+        e = self.modelo.esf.corte()
+        bruto = e.bienes_inmuebles + e.mobiliario_equipos + e.vehiculos
+        self.assertLess(e.total_activos_no_corrientes, bruto + 1.0)
+
+
 if __name__ == "__main__":
     unittest.main()

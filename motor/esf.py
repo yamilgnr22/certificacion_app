@@ -75,10 +75,40 @@ class ESFMes:
     total_patrimonio: float
     total_pasivo_patrimonio: float
     diferencia: float  # total_activos - total_pasivo_patrimonio
+
     # Contra-patrimonio: retiros del propietario acumulados (Tipo B). Se
     # presentan en su propia linea "(-) Retiros del Propietario"; NUNCA se
     # netean contra Resultados Acumulados (dejaria RA negativo en el ESF).
     retiros_acumulados: float = 0.0
+
+    # Subtotales por seccion. Viven aca y no en cada armador de tabla para que
+    # el ESF al corte y el mensual no puedan discrepar sobre que cuenta es
+    # corriente y cual no.
+    @property
+    def total_activos_corrientes(self) -> float:
+        return _redondear(self.efectivo + self.cuentas_por_cobrar + self.inventarios)
+
+    @property
+    def total_activos_no_corrientes(self) -> float:
+        # La depreciacion acumulada ya viene negativa: resta sumandola.
+        return _redondear(
+            self.bienes_inmuebles + self.mobiliario_equipos + self.vehiculos
+            + self.depreciacion_acumulada
+        )
+
+    @property
+    def total_pasivos_corrientes(self) -> float:
+        return _redondear(
+            self.tarjetas_credito + self.proveedores + self.impuestos_por_pagar
+            + self.gastos_acumulados
+        )
+
+    @property
+    def total_pasivos_no_corrientes(self) -> float:
+        return _redondear(
+            self.creditos_hipotecarios + self.creditos_consumo + self.creditos_personales
+            + self.creditos_prendarios + self.creditos_comerciales
+        )
 
 
 @dataclass(frozen=True)
@@ -310,11 +340,13 @@ def _build_df_mensual(meses_esf: list[ESFMes], meses: list[str]) -> pd.DataFrame
         fila("Efectivo y Equivalentes de Efectivo", "efectivo"),
         fila("Cuentas por Cobrar Clientes", "cuentas_por_cobrar"),
         fila("Inventarios", "inventarios"),
+        fila("Total Corrientes", "total_activos_corrientes"),
         header("No Corrientes"),
         fila("Bienes Inmuebles", "bienes_inmuebles"),
         fila("Mobiliario y Equipos", "mobiliario_equipos"),
         fila("Vehículos", "vehiculos"),
         fila("(-) Depreciación Acumulada", "depreciacion_acumulada"),
+        fila("Total No Corrientes", "total_activos_no_corrientes"),
         fila("Total Activos", "total_activos"),
         header("Pasivos"),
         header("Corrientes"),
@@ -322,12 +354,14 @@ def _build_df_mensual(meses_esf: list[ESFMes], meses: list[str]) -> pd.DataFrame
         fila("Proveedores", "proveedores"),
         fila("Impuestos por Pagar", "impuestos_por_pagar"),
         fila("Gastos Acumulados por pagar", "gastos_acumulados"),
+        fila("Total Corrientes", "total_pasivos_corrientes"),
         header("No Corrientes"),
         fila("Créditos Hipotecarios", "creditos_hipotecarios"),
         fila("Créditos Consumo", "creditos_consumo"),
         fila("Créditos Personales", "creditos_personales"),
         fila("Créditos Prendarios", "creditos_prendarios"),
         fila("Créditos Comerciales", "creditos_comerciales"),
+        fila("Total No Corrientes", "total_pasivos_no_corrientes"),
         fila("Total Pasivos", "total_pasivos"),
         header("Patrimonio"),
         # Capital NETO de retiros (presentacion del CPA, como su Excel):
@@ -346,17 +380,10 @@ def _build_df_corte(e: ESFMes) -> pd.DataFrame:
     columnas paralelas con subdivisiones Corrientes / No Corrientes,
     subtotales y bloque de Patrimonio. generar_tabla_esf bold-ea los
     agrupadores por etiqueta, asi que los textos deben coincidir."""
-    total_act_corr = _redondear(e.efectivo + e.cuentas_por_cobrar + e.inventarios)
-    total_act_nc = _redondear(
-        e.bienes_inmuebles + e.mobiliario_equipos + e.vehiculos + e.depreciacion_acumulada
-    )
-    total_pas_corr = _redondear(
-        e.tarjetas_credito + e.proveedores + e.impuestos_por_pagar + e.gastos_acumulados
-    )
-    total_pas_nc = _redondear(
-        e.creditos_hipotecarios + e.creditos_consumo + e.creditos_personales
-        + e.creditos_prendarios + e.creditos_comerciales
-    )
+    total_act_corr = e.total_activos_corrientes
+    total_act_nc = e.total_activos_no_corrientes
+    total_pas_corr = e.total_pasivos_corrientes
+    total_pas_nc = e.total_pasivos_no_corrientes
 
     izq: list[tuple] = [
         ("Activos", ""),
