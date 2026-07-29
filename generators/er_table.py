@@ -17,7 +17,7 @@ from word_helpers import (
     set_row_height,
     set_cell_border,
 )
-from .utils import extract_cert_fields
+from .utils import extract_cert_fields, titulo_columna
 
 # ───────────────────────────── utilidades fecha ──────────────────────────────
 SPANISH_MONTHS = [
@@ -34,7 +34,7 @@ SPANISH_ABBR = {
 def _periodo(inicio: datetime, fin: datetime) -> str:
     last_day = calendar.monthrange(fin.year, fin.month)[1]
     return (
-        f"Para el periodo comprendido del 1ro de {SPANISH_MONTHS[inicio.month-1]} "
+        f"Para el período comprendido del 1ro de {SPANISH_MONTHS[inicio.month-1]} "
         f"del año {inicio.year} al {last_day} de {SPANISH_MONTHS[fin.month-1]} "
         f"del año {fin.year}"
     )
@@ -46,7 +46,7 @@ def _hdr(col) -> str:
         dt = pd.to_datetime(col, errors="raise")
         return f"{SPANISH_ABBR[dt.month]}-{str(dt.year)[-2:]}"
     except Exception:
-        return str(col)
+        return titulo_columna(col)
 
 
 # ───────────────────────── función principal ─────────────────────────────────

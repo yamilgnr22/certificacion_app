@@ -32,7 +32,7 @@ def _periodo_certificacion(inicio, fin):
     ]
     last_day_fin = calendar.monthrange(fin.year, fin.month)[1]
     return (
-        f"Para el periodo comprendido del 1ro de {meses_es[inicio.month - 1]} "
+        f"Para el período comprendido del 1ro de {meses_es[inicio.month - 1]} "
         f"del año {inicio.year} al {last_day_fin} de {meses_es[fin.month - 1]} "
         f"del año {fin.year}"
     )
@@ -155,8 +155,8 @@ def generar_certificacion(doc: Document, dfc: pd.DataFrame, profile=None):
             f"Para lograr los objetivos efectué una revisión selectiva de los registros contables a fin de determinar que estos estaban efectuados de acuerdo con Principios de Contabilidad Generalmente Aceptados en Nicaragua.",
             f"Mi trabajo proporciona una base razonable para Certificar que las cifras contenidas en los Estados Financieros {genero_cliente_2} {nombre_completo}, han sido preparados de acuerdo con los registros contables de sus operaciones a la fecha anteriormente indicada. En este sentido, sobre la base del trabajo que efectué, Certifico que:",
             # Los siguientes dos párrafos deben tener viñeta también:
-            f"•\tLos ingresos brutos para el periodo revisado ascendieron a NIO {ingresos_brutos_fmt} ({ingresos_brutos_palabras} córdobas), que da como resultado un promedio mensual de ingresos brutos de NIO {ingresos_promedio_fmt} ({ingresos_promedio_palabras} córdobas).",
-            f"•\tLas utilidades netas del periodo revisado (después de deducir costos y gastos) fueron de NIO {utilidad_periodo_fmt} ({utilidad_periodo_palabras} córdobas), que da como resultado un promedio mensual de utilidades netas de NIO {utilidad_promedio_fmt} ({utilidad_promedio_palabras} córdobas).",
+            f"•\tLos ingresos brutos para el período revisado ascendieron a NIO {ingresos_brutos_fmt} ({ingresos_brutos_palabras} córdobas), que da como resultado un promedio mensual de ingresos brutos de NIO {ingresos_promedio_fmt} ({ingresos_promedio_palabras} córdobas).",
+            f"•\tLas utilidades netas del período revisado (después de deducir costos y gastos) fueron de NIO {utilidad_periodo_fmt} ({utilidad_periodo_palabras} córdobas), que da como resultado un promedio mensual de utilidades netas de NIO {utilidad_promedio_fmt} ({utilidad_promedio_palabras} córdobas).",
             f"Se adjuntan a esta Certificación, el Estado de Resultados, el Estado de Situación Financiera y los anexos a los estados financieros, los cuales han sido rubricado y sellado por el suscrito Contador Público Autorizado.",
             f"Esta certificación ha sido solicitada para completar los requisitos bancarios con {banco}, por lo que no debe ser utilizada para otro trámite legal ante cualquier otra institución pública o privada.",
             f"Dado en la ciudad de {cpa.ciudad_emision}, a los {fecha_certificacion_palabras}."

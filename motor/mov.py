@@ -17,7 +17,18 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from motor.er import CalculoER
+from motor.er import (
+    CalculoER,
+    LABEL_ALCALDIA,
+    LABEL_COMBUSTIBLE,
+    LABEL_MANTENIMIENTOS,
+    LABEL_OTROS,
+    LABEL_PUBLICIDAD,
+    LABEL_RENTA,
+    LABEL_SEGUROS,
+    LABEL_SERVICIOS,
+    LABEL_SUELDOS,
+)
 from motor.inputs import ESF_Saldos, PeriodoSpec, PlanResuelto
 
 
@@ -61,16 +72,14 @@ class CalculoMov:
         return {m.mes: m.saldo_final for m in self.movs}
 
 
+# Se derivan de las etiquetas del ER en vez de repetirlas: son las claves con
+# las que se busca cada gasto en calculo_er.gastos_por_label_mes, y una copia
+# literal se desincroniza en silencio al corregir un acento (el gasto se leia
+# como cero sin que nada fallara).
 _GASTOS_OPER_NO_DEPR_LABELS = [
-    "Sueldos y Salarios",
-    "Servicios Publicos",
-    "Alcaldia y DGI",
-    "Combustible",
-    "Publicidad",
-    "Mantenimientos",
-    "Renta",
-    "Seguros",
-    "Otros Gastos",
+    LABEL_SUELDOS, LABEL_SERVICIOS, LABEL_ALCALDIA, LABEL_COMBUSTIBLE,
+    LABEL_PUBLICIDAD, LABEL_MANTENIMIENTOS, LABEL_RENTA, LABEL_SEGUROS,
+    LABEL_OTROS,
 ]
 
 
@@ -198,7 +207,7 @@ def construir_mov(
     rows = [
         _fila("Saldo inicial de caja", lambda x: x.saldo_inicial),
         _fila("Ventas de contado (cobros)", lambda x: x.ventas_contado),
-        _fila("Financiamiento de creditos", lambda x: x.financiamiento_credito),
+        _fila("Financiamiento de créditos", lambda x: x.financiamiento_credito),
     ]
     # La fila de cartera solo aparece si hay CxC en movimiento (la mayoria de
     # los clientes vende de contado; no ensuciamos el flujo con ceros).
@@ -208,8 +217,8 @@ def construir_mov(
         _fila("Total entradas de efectivo", lambda x: x.total_cobros),
         _fila("Pago costo de ventas", lambda x: -x.pago_costo_ventas),
         _fila("Pago gastos operativos", lambda x: -x.pago_gastos_operativos),
-        _fila("Pago intereses creditos", lambda x: -x.pago_gastos_financieros),
-        _fila("Abonos a creditos (principal)", lambda x: -x.pago_abonos_creditos),
+        _fila("Pago intereses créditos", lambda x: -x.pago_gastos_financieros),
+        _fila("Abonos a créditos (principal)", lambda x: -x.pago_abonos_creditos),
         _fila("Total salidas de efectivo", lambda x: -x.total_pagos),
         _fila("Saldo final de caja", lambda x: x.saldo_final),
     ]

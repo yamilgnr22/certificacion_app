@@ -54,7 +54,7 @@ class NotasGloriaTest(unittest.TestCase):
         self.assertAlmostEqual(self.notas[3].total[-1], 60_430.0, places=2)
         # Solo cuentas con saldo (Gloria: solo tarjetas)
         self.assertEqual(len(self.notas[3].filas), 1)
-        self.assertEqual(self.notas[3].filas[0][0], "Tarjetas de Credito")
+        self.assertEqual(self.notas[3].filas[0][0], "Tarjetas de Crédito")
 
     def test_fecha_corte_en_totales(self):
         self.assertIn("31/05/2026", self.notas[0].total[0])
@@ -147,8 +147,8 @@ class NotasDocxE2ETest(unittest.TestCase):
             )
             doc = Document(out)
             textos = [p.text for p in doc.paragraphs]
-            self.assertTrue(any("INTEGRACION DEL EFECTIVO" in t for t in textos))
-            self.assertTrue(any("INTEGRACION DE PASIVOS" in t for t in textos))
+            self.assertTrue(any("INTEGRACIÓN DEL EFECTIVO" in t for t in textos))
+            self.assertTrue(any("INTEGRACIÓN DE PASIVOS" in t for t in textos))
             # La tabla de la nota 1 trae el total cuadrado
             montos = {c.text for tb in doc.tables for r in tb.rows for c in r.cells}
             self.assertIn("841,220", montos)

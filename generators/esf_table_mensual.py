@@ -21,7 +21,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 import unicodedata
 
-from .utils import extract_cert_fields
+from .utils import extract_cert_fields, titulo_columna
 from config_cpa import load_cpa_profile
 from word_helpers import apply_paragraph_style, set_vertical_alignment, set_cell_border, set_row_height
 
@@ -61,7 +61,7 @@ def _periodo_text(cert: dict) -> str:
     ]
     ultimo = calendar.monthrange(fin.year, fin.month)[1]
     return (
-        f"Para el periodo comprendido del 1ro de {meses[inicio.month-1]} del {inicio.year} "
+        f"Para el período comprendido del 1ro de {meses[inicio.month-1]} del {inicio.year} "
         f"al {ultimo} de {meses[fin.month-1]} del {fin.year}"
     )
 
@@ -96,7 +96,7 @@ def generar_tabla_esf_mensual(doc, df_esf_m: pd.DataFrame, df_cert: pd.DataFrame
 
     df = df_esf_m.copy()
     # Normalizar encabezados "Unnamed" -> vacío
-    cols = ["" if str(c).startswith("Unnamed") else str(c) for c in df.columns]
+    cols = [titulo_columna(c) for c in df.columns]
     df.columns = cols
     # Limpiar NaN en primera columna (descripciones)
     df[df.columns[0]] = df[df.columns[0]].fillna("").astype(str).replace("nan", "")
@@ -300,8 +300,8 @@ def generar_tabla_esf_mensual(doc, df_esf_m: pd.DataFrame, df_cert: pd.DataFrame
     firma_nombre = nombre_completo or (f"{nombre or ''} {apellido or ''}".strip()) or ""
     firmas = (
         f"{firma_nombre}\t\t\t\t\t\t\t{cpa.nombre_plano}",
-        f"Elaborado\t\t\t\t\t\t\t\t\tCedula de identidad {cpa.cedula}",
-        f"Propietario\t\t\t\t\t\t\t\t\tContador Publico Autorizado No. {cpa.numero_cpa}",
+        f"Elaborado\t\t\t\t\t\t\t\t\tCédula de identidad {cpa.cedula}",
+        f"Propietario\t\t\t\t\t\t\t\t\tContador Público Autorizado No. {cpa.numero_cpa}",
     )
     for line in firmas:
         p = doc.add_paragraph(line)

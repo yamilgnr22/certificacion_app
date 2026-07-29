@@ -128,7 +128,7 @@ class MotorTipoASinDeudaTest(unittest.TestCase):
 
     def test_certificacion_utilidad_periodo(self):
         cert = self.modelo.df_certificacion
-        fila = cert[cert["Descripcion"] == "Utilidad del Periodo"]
+        fila = cert[cert["Descripcion"] == "Utilidad del Período"]
         self.assertAlmostEqual(float(fila["Datos"].iloc[0]), 144_000.0, places=2)
 
 

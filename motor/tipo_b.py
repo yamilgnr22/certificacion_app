@@ -351,7 +351,7 @@ def construir_tipo_b(
     rows = [
         _fila("Saldo inicial de caja", lambda x: x.saldo_inicial),
         _fila("Ventas de contado (cobros)", lambda x: x.ventas_contado),
-        _fila("Financiamiento de creditos", lambda x: x.financiamiento_credito),
+        _fila("Financiamiento de créditos", lambda x: x.financiamiento_credito),
     ]
     # Solo si hay cartera en movimiento (ver motor/mov.construir_mov).
     if any(m.cobro_cartera for m in movs):
@@ -362,8 +362,8 @@ def construir_tipo_b(
         _fila("Total entradas de efectivo", lambda x: x.total_cobros),
         _fila("Compras de inventario (incluye costo de ventas)", lambda x: -x.pago_compras_inventario),
         _fila("Pago gastos operativos", lambda x: -x.pago_gastos_operativos),
-        _fila("Pago intereses creditos", lambda x: -x.pago_gastos_financieros),
-        _fila("Abonos a creditos (principal)", lambda x: -x.pago_abonos_creditos),
+        _fila("Pago intereses créditos", lambda x: -x.pago_gastos_financieros),
+        _fila("Abonos a créditos (principal)", lambda x: -x.pago_abonos_creditos),
         _fila("Retiros de patrimonio", lambda x: -x.retiro_patrimonio),
         _fila("Total salidas de efectivo", lambda x: -x.total_pagos),
         _fila("Saldo final de caja", lambda x: x.saldo_final),

@@ -62,6 +62,23 @@ def _norm(s: Any) -> str:
     return s
 
 
+# Encabezados de columna que en los DataFrames son CLAVE tecnica (los buscan
+# la UI, los servicios y los tests, y v1 los escribe sin tilde) pero que al
+# imprimirse en el DOCX deben salir bien escritos.
+_TITULOS_COLUMNA = {
+    "descripcion": "Descripción",
+    "acumulado del periodo": "Acumulado del período",
+}
+
+
+def titulo_columna(col: Any) -> str:
+    """Encabezado listo para el documento: ortografia corregida.
+
+    'Unnamed: N' (columnas sin nombre de pandas) sale vacio."""
+    s = "" if str(col).startswith("Unnamed") else str(col)
+    return _TITULOS_COLUMNA.get(_norm(s), s)
+
+
 def _try_pos(dfc: pd.DataFrame, idx: int) -> Optional[Any]:
     try:
         return dfc.iloc[idx, 1]

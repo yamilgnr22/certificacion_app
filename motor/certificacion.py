@@ -3,7 +3,7 @@
 OJO nomenclatura (ESPEC seccion 3):
   - "Ingresos Brutos" de la Certificacion = TOTAL de Ingresos del periodo
     (NO la linea "(=) UTILIDAD BRUTA" del ER). Es la practica actual.
-  - "Utilidad del Periodo" = utilidad neta acumulada del ER.
+  - "Utilidad del Período" = utilidad neta acumulada del ER.
   - Promedios = acumulado / numero de meses.
 """
 
@@ -39,26 +39,26 @@ def construir_certificacion(
 
     filas = [
         ("Nombre completo", datos.nombre_completo, True),
-        ("Cedula", datos.cedula, True),
+        ("Cédula", datos.cedula, True),
         ("Fecha Inicio", _primer_dia(periodo.mes_inicial), True),
         ("Fecha Fin", _ultimo_dia(periodo.mes_final), True),
         ("Estado Civil", datos.estado_civil, bool(datos.estado_civil)),
-        ("Profesion", datos.profesion, bool(datos.profesion)),
+        ("Profesión", datos.profesion, bool(datos.profesion)),
         ("Sexo", datos.sexo, bool(datos.sexo)),
         ("Domicilio", datos.domicilio, bool(datos.domicilio)),
-        ("Direccion Negocio", datos.direccion_negocio, bool(datos.direccion_negocio)),
+        ("Dirección Negocio", datos.direccion_negocio, bool(datos.direccion_negocio)),
         ("Primer Apellido", datos.primer_apellido, bool(datos.primer_apellido)),
         ("Ingresos Brutos", ingresos_brutos, True),
         ("Ingresos Promedio", ingresos_promedio, True),
-        ("Utilidad del Periodo", utilidad_periodo, True),
+        ("Utilidad del Período", utilidad_periodo, True),
         ("Utilidad Promedio", utilidad_promedio, True),
         ("Banco", datos.banco, bool(datos.banco)),
-        ("Fecha Certificacion", datos.fecha_certificacion.isoformat(), True),
+        ("Fecha Certificación", datos.fecha_certificacion.isoformat(), True),
         ("Contacto", datos.contacto, bool(datos.contacto)),
-        ("Regimen", datos.regimen, bool(datos.regimen)),
-        ("Matricula", datos.matricula, bool(datos.matricula)),
+        ("Régimen", datos.regimen, bool(datos.regimen)),
+        ("Matrícula", datos.matricula, bool(datos.matricula)),
         ("Giro", datos.giro, bool(datos.giro)),
-        ("Antiguedad", datos.antiguedad, bool(datos.antiguedad)),
+        ("Antigüedad", datos.antiguedad, bool(datos.antiguedad)),
         ("Empleados", datos.empleados, True),
     ]
     return pd.DataFrame(
@@ -75,12 +75,12 @@ def construir_datos(datos: DatosCliente) -> pd.DataFrame:
         ["Nombre", ":", datos.nombre_completo or ""],
         ["Domicilio personal", ":", datos.domicilio or ""],
         ["Contacto", ":", datos.contacto or ""],
-        ["Cedula de identidad", ":", datos.cedula or ""],
-        ["Regimen", ":", datos.regimen or ""],
-        ["Matricula Alcaldia No.", ":", datos.matricula or ""],
-        ["Direccion del negocio", ":", datos.direccion_negocio or ""],
+        ["Cédula de identidad", ":", datos.cedula or ""],
+        ["Régimen", ":", datos.regimen or ""],
+        ["Matrícula Alcaldía No.", ":", datos.matricula or ""],
+        ["Dirección del negocio", ":", datos.direccion_negocio or ""],
         ["Giro del Negocio", ":", datos.giro or ""],
-        ["Antiguedad", ":", datos.antiguedad or ""],
+        ["Antigüedad", ":", datos.antiguedad or ""],
         ["Empleados", ":", datos.empleados or ""],
     ]
     return pd.DataFrame(filas)

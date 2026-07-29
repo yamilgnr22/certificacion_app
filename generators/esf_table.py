@@ -24,7 +24,7 @@ from word_helpers import (
     set_vertical_alignment,
     set_cell_border,
 )
-from .utils import extract_cert_fields
+from .utils import extract_cert_fields, titulo_columna
 
 # ───────────────────────────── helpers ──────────────────────────────
 MESES = [
@@ -36,7 +36,7 @@ MESES = [
 def _periodo(inicio: datetime, fin: datetime) -> str:
     último = calendar.monthrange(fin.year, fin.month)[1]
     return (
-        f"Para el periodo comprendido del 1ro de {MESES[inicio.month-1]} del {inicio.year} "
+        f"Para el período comprendido del 1ro de {MESES[inicio.month-1]} del {inicio.year} "
         f"al {último} de {MESES[fin.month-1]} del {fin.year}"
     )
 
@@ -93,7 +93,7 @@ def generar_tabla_esf(doc, df_esf: pd.DataFrame, df_cert: pd.DataFrame) -> None:
 
     # 3a) encabezado
     for j, col in enumerate(df.columns):
-        text = "" if str(col).startswith("Unnamed") else str(col)
+        text = titulo_columna(col)
         cell = table.rows[0].cells[j]
         cell.text = text
         apply_paragraph_style(

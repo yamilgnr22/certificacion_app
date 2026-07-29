@@ -101,8 +101,8 @@ def construir_notas(modelo, cuentas_bancarias: Sequence[Mapping[str, Any]] | Non
         filas_efectivo = [["Efectivo en Caja y Bancos", _redondear(corte.efectivo)]]
     nota1 = Nota(
         numero=1,
-        titulo="INTEGRACION DEL EFECTIVO Y EQUIVALENTES DE EFECTIVO",
-        columnas=["DESCRIPCION", "SALDO NIO"],
+        titulo="INTEGRACIÓN DEL EFECTIVO Y EQUIVALENTES DE EFECTIVO",
+        columnas=["DESCRIPCIÓN", "SALDO NIO"],
         filas=filas_efectivo,
         total=[f"Total Efectivo y Equivalentes al {fecha}", _redondear(corte.efectivo)],
     )
@@ -110,9 +110,9 @@ def construir_notas(modelo, cuentas_bancarias: Sequence[Mapping[str, Any]] | Non
     # ---- 2. Inventarios
     nota2 = Nota(
         numero=2,
-        titulo="INTEGRACION DE LOS INVENTARIOS",
-        columnas=["DESCRIPCION", "SALDO NIO"],
-        filas=[["Inventarios de mercaderia", _redondear(corte.inventarios)]],
+        titulo="INTEGRACIÓN DE LOS INVENTARIOS",
+        columnas=["DESCRIPCIÓN", "SALDO NIO"],
+        filas=[["Inventarios de mercadería", _redondear(corte.inventarios)]],
         total=[f"Total Inventarios al {fecha}", _redondear(corte.inventarios)],
     )
 
@@ -120,7 +120,7 @@ def construir_notas(modelo, cuentas_bancarias: Sequence[Mapping[str, Any]] | Non
     activos = [
         ("Bienes Inmuebles", _redondear(corte.bienes_inmuebles)),
         ("Mobiliario y Equipos", _redondear(corte.mobiliario_equipos)),
-        ("Vehiculos", _redondear(corte.vehiculos)),
+        ("Vehículos", _redondear(corte.vehiculos)),
     ]
     costo_total = _redondear(sum(c for _, c in activos))
     depr_total = _redondear(corte.depreciacion_acumulada)  # negativa
@@ -142,31 +142,31 @@ def construir_notas(modelo, cuentas_bancarias: Sequence[Mapping[str, Any]] | Non
     valor_libros_total = _redondear(costo_total + depr_total)
     nota3 = Nota(
         numero=3,
-        titulo="INTEGRACION DE LA PROPIEDAD PLANTA Y EQUIPO",
-        columnas=["DESCRIPCION", "COSTO DE ADQUISICION NIO", "DEPRECIACION ACUMULADA", "VALOR EN LIBROS NIO"],
+        titulo="INTEGRACIÓN DE LA PROPIEDAD PLANTA Y EQUIPO",
+        columnas=["DESCRIPCIÓN", "COSTO DE ADQUISICIÓN NIO", "DEPRECIACIÓN ACUMULADA", "VALOR EN LIBROS NIO"],
         filas=filas_ppe,
         total=[f"Total Propiedad Planta y Equipo, Neto al {fecha}", costo_total, depr_total, valor_libros_total],
     )
 
     # ---- 4. Pasivos (solo cuentas con saldo; si no hay, una linea en 0)
     cuentas_pasivo = [
-        ("Tarjetas de Credito", corte.tarjetas_credito),
+        ("Tarjetas de Crédito", corte.tarjetas_credito),
         ("Proveedores", corte.proveedores),
         ("Impuestos por Pagar", corte.impuestos_por_pagar),
         ("Gastos Acumulados por pagar", corte.gastos_acumulados),
-        ("Creditos Hipotecarios", corte.creditos_hipotecarios),
-        ("Creditos Consumo", corte.creditos_consumo),
-        ("Creditos Personales", corte.creditos_personales),
-        ("Creditos Prendarios", corte.creditos_prendarios),
-        ("Creditos Comerciales", corte.creditos_comerciales),
+        ("Créditos Hipotecarios", corte.creditos_hipotecarios),
+        ("Créditos Consumo", corte.creditos_consumo),
+        ("Créditos Personales", corte.creditos_personales),
+        ("Créditos Prendarios", corte.creditos_prendarios),
+        ("Créditos Comerciales", corte.creditos_comerciales),
     ]
     filas_pasivo = [[n, _redondear(v)] for n, v in cuentas_pasivo if abs(v) > 0.005]
     if not filas_pasivo:
         filas_pasivo = [["Sin pasivos al corte", 0.0]]
     nota4 = Nota(
         numero=4,
-        titulo="INTEGRACION DE PASIVOS",
-        columnas=["DESCRIPCION", "SALDO NIO"],
+        titulo="INTEGRACIÓN DE PASIVOS",
+        columnas=["DESCRIPCIÓN", "SALDO NIO"],
         filas=filas_pasivo,
         total=[f"Total Pasivos al {fecha}", _redondear(corte.total_pasivos)],
     )
