@@ -72,14 +72,27 @@
   .doc-drop { border: 1px dashed var(--border); border-radius: 8px; padding: 14px;
     text-align: center; font-size: 12px; color: var(--muted); transition: background .15s; }
   .doc-drop.activa { background: rgba(90,160,255,.10); border-color: var(--acc); color: var(--text); }
-  .doc-hoja { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; max-width: 560px; }
+  /* Cada PAR es una fila del documento (matricula | su soporte) y nunca se
+     parte; los pares fluyen segun el ancho, asi la grilla llena el panel en
+     vez de dejar media pantalla vacia. */
+  .doc-hoja { display: grid; grid-template-columns: 1fr; gap: 12px 18px;
+    margin-top: 12px; align-items: start; }
+  /* Dos pares por fila (la hoja queda 2x2) cuando hay lugar; uno solo en
+     pantalla angosta. Nunca 3, que dejaria una fila coja. */
+  @media (min-width: 980px) { .doc-hoja { grid-template-columns: 1fr 1fr; } }
+  .doc-par { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .doc-sueltos { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 10px; }
   .doc-slot { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
     overflow: hidden; display: flex; flex-direction: column; }
   .doc-slot.vacia { border-style: dashed; }
   .doc-slot.activa { border-color: var(--acc); background: rgba(90,160,255,.10); }
-  .doc-slot .marco { height: 104px; display: flex; align-items: center; justify-content: center;
-    background: rgba(255,255,255,.02); cursor: pointer; }
-  .doc-slot .marco img { max-width: 100%; max-height: 104px; object-fit: contain; }
+  /* El marco crece con la casilla en vez de quedar fijo en 104px: en pantalla
+     ancha la imagen se ve grande y no queda una franja vacia debajo. */
+  .doc-slot .marco { aspect-ratio: 16 / 9; min-height: 104px; max-height: 210px;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(255,255,255,.02); cursor: pointer; overflow: hidden; }
+  .doc-slot .marco img { max-width: 100%; max-height: 100%; object-fit: contain; }
   .doc-slot .marco .vacio { font-size: 22px; color: var(--muted); }
   .doc-slot .pie { display: flex; align-items: center; justify-content: space-between;
     gap: 6px; padding: 6px 8px; font-size: 11px; color: var(--text); }
@@ -1249,7 +1262,12 @@ function renderDocs(mensaje){
   hoja.innerHTML=""; sueltos.innerHTML="";
   if(mensaje){ sueltos.innerHTML='<span class="hint">'+mensaje+'</span>'; return; }
 
-  DOC_CASILLAS.forEach(c=>hoja.appendChild(casillaDoc(c)));
+  for(let i=0;i<DOC_CASILLAS.length;i+=2){
+    const par=el("div",{className:"doc-par"});
+    par.appendChild(casillaDoc(DOC_CASILLAS[i]));
+    if(DOC_CASILLAS[i+1]) par.appendChild(casillaDoc(DOC_CASILLAS[i+1]));
+    hoja.appendChild(par);
+  }
 
   // Lo que no entra en la hoja: fotos del negocio y lo no clasificado.
   const fuera=docsCache.filter(d=>!DOC_CASILLAS.some(c=>c.tipo===d.tipo));
@@ -1257,7 +1275,7 @@ function renderDocs(mensaje){
     sueltos.appendChild(el("p",{className:"hint",style:"margin:14px 0 6px"},
       "<b>Fuera de la hoja de documentos</b> — arrastrá a una casilla lo que corresponda. "+
       "Las fotos del negocio van a su propia hoja (activala en «Hojas opcionales»)."));
-    const fila=el("div",{className:"doc-hoja",style:"max-width:none"});
+    const fila=el("div",{className:"doc-sueltos"});
     fuera.forEach(d=>fila.appendChild(casillaDoc(
       {tipo:d.tipo, nombre:d.tipo==="foto_negocio"?"Foto del negocio":"Sin clasificar"}, d)));
     sueltos.appendChild(fila);
