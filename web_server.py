@@ -1232,6 +1232,10 @@ def motor_v2_certificar():
             # ESF (invariante #7). Se expone para que el CPA vea COMO llego
             # el modelo a cada saldo, no solo el resultado.
             "mov": _df_records(modelo.mov.df),
+            # Capital de apertura (Activos0 - Pasivos0 - ResultAcum0). Es el
+            # punto de partida del movimiento de la cuenta Capital: el ESF la
+            # muestra ya neta de retiros y no deja ver como se llego ahi.
+            "capital_apertura": round(float(modelo.esf.capital_apertura), 2),
             # ER efectivamente usado (clave en er_modo=generado: la serie
             # producida por base+bandas, para mostrarla en la UI).
             "er_mensual_efectivo": [asdict(l) for l in modelo.inputs.er_mensual],
