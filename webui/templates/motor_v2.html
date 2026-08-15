@@ -814,9 +814,12 @@ function _tablaDesdeRecords(records, opciones){
   const skip=new Set(opciones.skipCols||[]);
   const cols=Object.keys(records[0]).filter(c=>!skip.has(c));
   // Flask ordena las claves JSON alfabeticamente ("2026-01" < "Descripcion"):
-  // la columna de etiquetas debe ir SIEMPRE primera.
-  const iDesc=cols.indexOf("Descripcion");
-  if(iDesc>0){ cols.splice(iDesc,1); cols.unshift("Descripcion"); }
+  // la columna de etiquetas debe ir SIEMPRE primera. El ER y el ESF la llaman
+  // "Descripcion"; el flujo de caja, "Concepto".
+  ["Descripcion","Concepto"].forEach(etiqueta=>{
+    const i=cols.indexOf(etiqueta);
+    if(i>0){ cols.splice(i,1); cols.unshift(etiqueta); }
+  });
   const tabla=el("table");
   const thead=el("tr");
   cols.forEach(c=>thead.appendChild(el("th",{}, c.startsWith("Unnamed")?"":c)));
@@ -851,6 +854,10 @@ function renderPreviewEstados(j){
   const vistaMensual=((readFields("periodo").esf_vista)||"corte")==="mensual";
   const esf=_tablaDesdeRecords(vistaMensual ? j.esf_mensual : j.esf_corte);
   if(esf) bloques.push(["🏛 Estado de Situación Financiera ("+(vistaMensual?"mensual":"al corte")+")", esf, true]);
+  // El flujo de caja explica CADA saldo de Efectivo del ESF: saldo inicial +
+  // entradas - salidas = saldo final, que es el inicial del mes siguiente.
+  const mov=_tablaDesdeRecords(j.mov);
+  if(mov) bloques.push(["💵 Flujo de caja (cómo se llega a cada saldo de Efectivo)", mov, false]);
   bloques.forEach(([titulo, tabla, abierto])=>{
     const det=el("details"); if(abierto) det.open=true;
     det.appendChild(el("summary",{}, titulo));

@@ -1228,6 +1228,10 @@ def motor_v2_certificar():
             "er": _df_records(modelo.df_er),
             "esf_corte": _df_records(modelo.df_esf_corte),
             "esf_mensual": _df_records(modelo.df_esf_mensual),
+            # Movimiento de caja mes a mes: es de donde sale el Efectivo del
+            # ESF (invariante #7). Se expone para que el CPA vea COMO llego
+            # el modelo a cada saldo, no solo el resultado.
+            "mov": _df_records(modelo.mov.df),
             # ER efectivamente usado (clave en er_modo=generado: la serie
             # producida por base+bandas, para mostrarla en la UI).
             "er_mensual_efectivo": [asdict(l) for l in modelo.inputs.er_mensual],
