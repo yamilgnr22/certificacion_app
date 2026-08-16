@@ -1326,6 +1326,12 @@ const DOC_CASILLAS=[
 ];
 let docsCache=[];
 let docsSeleccion=new Set();
+// Sacadas a proposito de ESTA certificacion con el boton "−". Lo demas que
+// se vea en la hoja entra al Word: la seleccion se recalcula en cada render
+// a partir de lo que hay en pantalla, para que no queden imagenes visibles
+// que el documento no lleva (pasaba con las fotos del negocio: se veian, no
+// se enviaban, y el Word salia con la plantilla vacia).
+let docsExcluidos=new Set();
 
 function setDocsInfo(t, esError){
   const s=document.getElementById("docsInfo");
@@ -1357,7 +1363,7 @@ function tipoDesdeNombre(nombre){
 async function cargarDocs(preseleccion){
   // preseleccion: ids a marcar (al abrir un borrador); null => todas.
   const cid=document.getElementById("selCliente").value;
-  docsCache=[]; docsSeleccion=new Set();
+  docsCache=[]; docsSeleccion=new Set(); docsExcluidos=new Set();
   if(!cid){ renderDocs("Seleccioná un cliente para ver o subir sus documentos."); return; }
   try{
     const j=await fetchJson("/api/clientes/"+encodeURIComponent(cid)+"/documentos");
@@ -1397,6 +1403,28 @@ function renderDocs(mensaje){
     fuera.forEach(d=>fila.appendChild(casillaDoc({tipo:d.tipo, nombre:"Sin clasificar"}, d)));
     sueltos.appendChild(fila);
   }
+  actualizarResumenDocs();
+}
+
+// Lo mostrado es lo que va: cada imagen visible que no se saco a proposito
+// queda seleccionada para esta certificacion.
+function marcarVisible(id){
+  if(docsExcluidos.has(id)) docsSeleccion.delete(id);
+  else docsSeleccion.add(id);
+}
+
+function actualizarResumenDocs(){
+  const docs=[...docsSeleccion].map(id=>docsCache.find(d=>String(d.id)===String(id))).filter(Boolean);
+  const fotos=docs.filter(d=>d.tipo==="foto_negocio").length;
+  const otros=docs.length-fotos;
+  const chk=document.getElementById("chkFotosNegocio");
+  let aviso="";
+  if(fotos && !(chk&&chk.checked))
+    aviso=" · las fotos no saldrán: activá la hoja en «Hojas opcionales»";
+  else if(!fotos && chk&&chk.checked)
+    aviso=" · la hoja de fotos saldrá vacía para pegado manual";
+  setDocsInfo("Entran en esta certificación: "+otros+" documento"+(otros===1?"":"s")+
+              " y "+fotos+" foto"+(fotos===1?"":"s")+" del negocio."+aviso);
 }
 
 function zonaFotosNegocio(){
@@ -1433,7 +1461,9 @@ function zonaFotosNegocio(){
 
 function casillaDoc(casilla, docFijo){
   const disponibles=docFijo?[docFijo]:docsDeTipo(casilla.tipo);
-  const doc=disponibles.find(d=>docsSeleccion.has(d.id))||disponibles[0]||null;
+  const doc=disponibles.find(d=>docsSeleccion.has(d.id))
+            ||disponibles.find(d=>!docsExcluidos.has(d.id))||disponibles[0]||null;
+  if(doc) marcarVisible(doc.id);
   const box=el("div",{className:"doc-slot"+(doc?"":" vacia")});
   box.dataset.tipo=casilla.tipo;
 
@@ -1467,8 +1497,15 @@ function casillaDoc(casilla, docFijo){
       };
       acc.appendChild(sig);
     }
-    const quitar=el("button",{title:"Quitar de ESTA certificación (la imagen sigue en la biblioteca)"},"−");
-    quitar.onclick=()=>{ docsSeleccion.delete(doc.id); renderDocs(); };
+    const excluida=docsExcluidos.has(doc.id);
+    const quitar=el("button",{title: excluida
+      ? "Volver a incluirla en esta certificación"
+      : "Quitar de ESTA certificación (la imagen sigue en la biblioteca)"}, excluida?"＋":"−");
+    quitar.onclick=()=>{
+      if(excluida) docsExcluidos.delete(doc.id); else docsExcluidos.add(doc.id);
+      renderDocs();
+    };
+    if(excluida){ box.style.opacity=".45"; }
     const borrar=el("button",{title:"Eliminar de la biblioteca del cliente"},"✕");
     borrar.onclick=()=>eliminarDoc(doc);
     acc.appendChild(quitar); acc.appendChild(borrar);
