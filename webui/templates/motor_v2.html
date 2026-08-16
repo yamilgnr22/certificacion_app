@@ -205,6 +205,13 @@
     </div>
     <p class="hint" id="erHint">Ingresá los números reales del cliente. Gastos Financieros los calcula el motor desde las deudas activas.</p>
     <div class="scroll"><table id="erTable"></table></div>
+    <h2 style="margin-top:18px">Utilidad objetivo</h2>
+    <p class="hint">Lo que esperás que el negocio gane <b>por mes</b>. No cambia ninguna cifra del ER: al validar, el motor mide qué tan lejos quedó la utilidad promedio de esa meta y te lo muestra arriba del Resultado. Vacío = no se mide.</p>
+    <div class="grid g4" id="utilObjetivo">
+      <div><label>Utilidad promedio mensual</label><input id="uoMonto" placeholder="ej. 6000"></div>
+      <div><label>Moneda</label><select id="uoMoneda"><option value="USD">USD</option><option value="NIO">NIO</option></select></div>
+      <div><label>Margen ± %</label><input id="uoTolerancia" value="5" placeholder="5"></div>
+    </div>
   </div>
 
   <div class="panel">
@@ -250,13 +257,6 @@
       <div><label>Inventario <span class="hint" style="margin:0">(Tipo A)</span></label><input id="bandaInventario" value="10" placeholder="10"></div>
       <div><label>Proveedores</label><input id="bandaProveedores" value="10" placeholder="10"></div>
       <div><label>Cuentas por cobrar</label><input id="bandaCxC" value="10" placeholder="10"></div>
-    </div>
-    <h2 style="margin-top:18px">Utilidad objetivo</h2>
-    <p class="hint">Lo que esperás que el negocio gane <b>por mes</b>. No cambia ninguna cifra: al validar, el motor te dice qué tan lejos quedó la utilidad promedio del ER. Vacío = no se mide.</p>
-    <div class="grid g4" id="utilObjetivo">
-      <div><label>Utilidad promedio mensual</label><input id="uoMonto" placeholder="ej. 6000"></div>
-      <div><label>Moneda</label><select id="uoMoneda"><option value="USD">USD</option><option value="NIO">NIO</option></select></div>
-      <div><label>Margen ± %</label><input id="uoTolerancia" value="5" placeholder="5"></div>
     </div>
     <h2 style="margin-top:18px">Mínimos (NIO)</h2>
     <p class="hint">Los pisos que el motor no puede violar al cuadrar el período. La banda dice <b>cuánto oscila</b> una cuenta; el mínimo, <b>hasta dónde se la puede empujar</b> cuando hay que salvar la caja.</p>
