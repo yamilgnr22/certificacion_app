@@ -11,6 +11,7 @@ Dos modos por sección:
   • SIN imágenes: tabla vacía 3×5 como siempre (respaldo para pegar a mano).
 """
 
+import io
 import os
 from docx import Document
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
@@ -90,6 +91,36 @@ def _filas_pareadas(items) -> List[Tuple[Optional[str], Optional[str]]]:
     return filas
 
 
+def _abrir_enderezada(ruta: str):
+    """Devuelve lo que hay que insertar en el DOCX, ya derecho.
+
+    Las fotos de celular guardan la rotacion en un tag EXIF en vez de rotar
+    los pixeles: el visor de Windows la aplica y se ven bien, pero Word NO,
+    asi que la cedula entraba acostada y, escalada por ancho, ocupaba media
+    pagina. Aca se aplica la rotacion y se entrega la imagen en memoria; el
+    archivo original del cliente no se toca.
+
+    Sin EXIF de orientacion (o si Pillow no puede leerla) devuelve la ruta
+    tal cual, que es el camino de siempre.
+    """
+    try:
+        from PIL import Image, ImageOps
+
+        with Image.open(ruta) as im:
+            if (im.getexif() or {}).get(274, 1) in (1, None):
+                return ruta  # ya esta derecha: se inserta el archivo original
+            derecha = ImageOps.exif_transpose(im)
+            buffer = io.BytesIO()
+            formato = im.format or "PNG"
+            if formato.upper() in {"JPEG", "JPG"} and derecha.mode not in ("RGB", "L"):
+                derecha = derecha.convert("RGB")
+            derecha.save(buffer, format=formato)
+            buffer.seek(0)
+            return buffer
+    except Exception:
+        return ruta
+
+
 def _grilla_imagenes(doc: Document, imagenes) -> None:
     """Incrusta las imágenes 2 por fila (columna separadora de 1 cm al medio)."""
     no_border = {"sz": "0", "val": "nil"}
@@ -105,7 +136,7 @@ def _grilla_imagenes(doc: Document, imagenes) -> None:
             parrafo.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
             try:
                 if os.path.isfile(ruta):
-                    parrafo.add_run().add_picture(ruta, width=Cm(8.3))
+                    parrafo.add_run().add_picture(_abrir_enderezada(ruta), width=Cm(8.3))
                 else:
                     parrafo.add_run("(imagen no encontrada)")
             except Exception:
