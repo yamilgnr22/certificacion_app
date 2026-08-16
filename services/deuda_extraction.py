@@ -375,10 +375,64 @@ def _rescatar_deudas(raw: Mapping[str, Any]) -> dict[str, Any]:
     return d
 
 
-def _resultado(raw: Mapping[str, Any], fuente: str, retries: int) -> dict[str, Any]:
+def vencimientos_desde_texto(texto: str, numeros) -> dict[str, str]:
+    """Fecha de vencimiento por credito, leida del bloque 'Historico Vigentes'.
+
+    Por que en Python y no con el LLM: el dato de un credito viene partido en
+    DOS tablas del reporte ("Saldos y Cupos" trae montos y cuota; "Historico
+    Vigentes" trae otorgamiento y vencimiento) y el modelo casa las dos de
+    forma inconsistente — en un reporte real trajo 2 vencimientos de 9. El
+    bloque tiene formato fijo, asi que un parser lo lee completo y siempre
+    igual:
+
+        BANCO DE AMERICA CENTRAL 5176 18/12/2012 MENSUAL
+        CARTERA HIPOTECARIA HIPOTECA 05/12/2027 07/2026
+                                     ^ vencimiento
+
+    Solo busca los numeros de credito que el LLM ya reconocio, para no
+    inventar deudas ni tomar fechas de otra parte del documento. Devuelve
+    ISO (AAAA-MM-DD); los creditos con '--/--/----' (tarjetas) no aparecen.
+    """
+    lineas = [l.strip() for l in (texto or "").splitlines()]
+    buscados = {str(n).strip() for n in numeros if str(n).strip()}
+    out: dict[str, str] = {}
+    for i, linea in enumerate(lineas[:-1]):
+        for numero in buscados - set(out):
+            # Linea de encabezado: ...NUMERO DD/MM/AAAA PERIODICIDAD
+            cab = re.search(
+                rf"\b{re.escape(numero)}\s+(\d{{2}}/\d{{2}}/\d{{4}})\b", linea
+            )
+            if not cab:
+                continue
+            # La siguiente linea abre con el tipo y la garantia; la PRIMERA
+            # fecha completa que trae es el vencimiento (la segunda, en
+            # formato corto MM/AAAA, es 'Actualizado' y no matchea aca).
+            fechas = re.findall(r"\b\d{2}/\d{2}/\d{4}\b", lineas[i + 1])
+            if not fechas:
+                continue
+            venc, otorg = _fecha_iso(fechas[0]), _fecha_iso(cab.group(1))
+            # Sanity: un vencimiento anterior al otorgamiento es otra cosa
+            # (una fecha de consulta, un pago), no el plazo del credito.
+            if venc and otorg and venc > otorg:
+                out[numero] = venc
+    return out
+
+
+def _resultado(
+    raw: Mapping[str, Any], fuente: str, retries: int, texto: str = ""
+) -> dict[str, Any]:
     raw = _rescatar_deudas(raw)
     titular = raw.get("titular") or {}
     deudas = _normalizar_siboif(raw) if fuente == "siboif" else _normalizar_tuca(raw)
+    if fuente == "tuca" and texto:
+        # El parser manda sobre el LLM para este campo: es deterministico y
+        # lee el bloque completo. Solo rellena lo que falta o corrige lo que
+        # el modelo dejo mal.
+        venc = vencimientos_desde_texto(texto, [d.get("numero") for d in deudas])
+        for d in deudas:
+            f = venc.get(str(d.get("numero") or "").strip())
+            if f:
+                d["fecha_vencimiento"] = f
     out = {
         "ok": True,
         "fuente": fuente,
@@ -412,7 +466,7 @@ def extraer_deudas(texto: str, provider: LLMProvider | None = None) -> dict[str,
         )
     except LLMProviderError as exc:
         raise DeudaExtractionError(f"La extraccion con IA fallo: {exc}") from exc
-    return _resultado(raw, "tuca", getattr(provider, "last_retries", 0))
+    return _resultado(raw, "tuca", getattr(provider, "last_retries", 0), texto)
 
 
 def extraer_deudas_de_texto(texto: str, provider: LLMProvider | None = None) -> dict[str, Any]:
@@ -427,7 +481,7 @@ def extraer_deudas_de_texto(texto: str, provider: LLMProvider | None = None) -> 
         )
     except LLMProviderError as exc:
         raise DeudaExtractionError(f"La extraccion con IA fallo: {exc}") from exc
-    return _resultado(raw, fuente, getattr(provider, "last_retries", 0))
+    return _resultado(raw, fuente, getattr(provider, "last_retries", 0), texto)
 
 
 def _vision_json(image_paths: list[str], *, model: str | None = None) -> dict[str, Any]:

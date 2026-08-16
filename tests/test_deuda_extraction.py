@@ -22,6 +22,7 @@ from services.deuda_extraction import (
     detectar_fuente,
     extraer_deudas,
     extraer_texto_pdf,
+    vencimientos_desde_texto,
 )
 
 # Alias de compat: los tests TUCA existentes usaban _normalizar_deudas.
@@ -159,6 +160,80 @@ class NormalizacionTest(unittest.TestCase):
         d = _normalizar_deudas(raw)[0]
         self.assertEqual(d["fecha_vencimiento"], "2031-09-04")
         self.assertEqual(d["confianza"], "alta")
+
+
+class VencimientosDesdeTextoTest(unittest.TestCase):
+    """El vencimiento se lee del texto con Python, no del LLM.
+
+    Caso real (Yader): el reporte parte los datos de cada credito en dos
+    tablas y el modelo trajo 2 vencimientos de 9. El bloque 'Historico
+    Vigentes' tiene formato fijo, asi que un parser lo lee completo.
+    """
+
+    TEXTO = """\
+Saldos y Cupos
+BANCO DE AMERICA CENTRAL 5176
+CARTERA HIPOTECARIA 07/2026 USD 20,264.85 9,557.65 0.00 162.00
+BANCO FICOHSA NICARAGUA, S.A 7980 NIO 105,844.23 113,056.48 0.00 7,326.00
+Historico Vigentes
+BANCO LAFISE BANCENTRO 6203 12/02/2013 MENSUAL NIO TARJETA
+TARJETAS DE CREDITO INTERNACIONAL SIN GARANTIA --/--/---- 07/2026
+BANCO DE AMERICA CENTRAL 5176 18/12/2012 MENSUAL
+CARTERA HIPOTECARIA HIPOTECA 05/12/2027 07/2026
+BANCO DE AMERICA CENTRAL 2941 09/05/2015 MENSUAL
+CARTERA HIPOTECARIA HIPOTECA 05/05/2030 07/2026
+"""
+
+    def test_lee_el_vencimiento_de_la_segunda_linea(self):
+        v = vencimientos_desde_texto(self.TEXTO, ["5176", "2941"])
+        self.assertEqual(v, {"5176": "2027-12-05", "2941": "2030-05-05"})
+
+    def test_ignora_las_tarjetas_sin_vencimiento(self):
+        # '--/--/----' no es una fecha: la tarjeta no debe aparecer.
+        self.assertNotIn("6203", vencimientos_desde_texto(self.TEXTO, ["6203"]))
+
+    def test_solo_busca_los_numeros_pedidos(self):
+        # No inventa creditos que el LLM no reconocio.
+        self.assertEqual(vencimientos_desde_texto(self.TEXTO, ["9999"]), {})
+
+    def test_no_confunde_la_fecha_de_la_tabla_de_montos(self):
+        # En 'Saldos y Cupos' la unica fecha es 'Actualizado' (MM/AAAA), que
+        # no matchea el patron de fecha completa.
+        v = vencimientos_desde_texto(self.TEXTO, ["7980"])
+        self.assertEqual(v, {})
+
+    def test_descarta_un_vencimiento_anterior_al_otorgamiento(self):
+        texto = (
+            "BANCO X 1234 18/12/2020 MENSUAL\n"
+            "CARTERA HIPOTECARIA HIPOTECA 05/12/2015 07/2026\n"
+        )
+        self.assertEqual(vencimientos_desde_texto(texto, ["1234"]), {})
+
+    def test_texto_vacio_no_revienta(self):
+        self.assertEqual(vencimientos_desde_texto("", ["5176"]), {})
+        self.assertEqual(vencimientos_desde_texto(self.TEXTO, []), {})
+
+    def test_completa_lo_que_el_llm_no_trajo(self):
+        # El LLM devuelve las dos deudas pero solo una con vencimiento; el
+        # parser rellena la otra.
+        prov = FakeProvider({
+            "fuente": "tuca", "titular": {"nombre": "X", "cedula": "1"},
+            "deudas": [
+                {"numero": "5176", "entidad": "BAC", "tipo_credito": "CARTERA HIPOTECARIA",
+                 "moneda": "USD", "limite": 20264.85, "saldo": 9557.65, "cuota": 162,
+                 "fecha_otorgamiento": "18/12/2012", "fecha_vencimiento": "05/12/2027",
+                 "fecha_actualizado": "07/2026"},
+                {"numero": "2941", "entidad": "BAC", "tipo_credito": "CARTERA HIPOTECARIA",
+                 "moneda": "USD", "limite": 17999.10, "saldo": 10998.14, "cuota": 135,
+                 "fecha_otorgamiento": "09/05/2015", "fecha_vencimiento": "",
+                 "fecha_actualizado": "07/2026"},
+            ],
+        })
+        r = extraer_deudas(self.TEXTO, provider=prov)
+        por_no = {d["numero"]: d for d in r["deudas"]}
+        self.assertEqual(por_no["5176"]["fecha_vencimiento"], "2027-12-05")
+        self.assertEqual(por_no["2941"]["fecha_vencimiento"], "2030-05-05",
+                         "el parser debe completar lo que el LLM dejo vacio")
 
 
 class ExtraerDeudasTest(unittest.TestCase):
