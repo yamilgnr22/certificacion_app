@@ -54,6 +54,7 @@ def deudas_from_json(raw_list: Sequence[Mapping]) -> list[DeudaInput]:
                 saldo_apertura=raw.get("saldo_apertura"),
                 incluir_en_er=bool(raw.get("incluir_en_er", True)),
                 saldos_mensuales=raw.get("saldos_mensuales"),
+                intereses_mensuales=raw.get("intereses_mensuales"),
                 notas=raw.get("notas", ""),
             )
         )
@@ -328,24 +329,33 @@ def _resolver_desde_saldos_mensuales(
     """Materializa un plan a partir de una trayectoria mensual de saldos (dada
     a mano o GENERADA). El flujo de caja lo deriva Mov del delta de saldo. El
     ultimo mes queda anclado al saldo dado para ese mes (= saldo_reportado en
-    las trayectorias generadas). Respeta la cuenta ESF del tipo de credito."""
+    las trayectorias generadas). Respeta la cuenta ESF del tipo de credito.
+
+    El interes del mes sale de deuda.intereses_mensuales si viene; si no, se
+    asume la cuota completa (el caso tipico de una tarjeta, donde el pago
+    minimo es casi todo interes). La distincion importa al CONTINUAR una
+    certificacion: los Gastos Financieros de un credito amortizable ya
+    emitido son 'saldo x tasa', no la cuota, y si el motor los recalculara
+    como cuota el ER de un mes ya certificado cambiaria."""
     tc = periodo.tasa_cambio if deuda.moneda == "USD" else 1.0
     meses_periodo = _meses_del_periodo(periodo)
     apertura = deuda.saldo_apertura if deuda.saldo_apertura is not None else (
         float(saldos.get(meses_periodo[0], deuda.saldo_reportado)) if meses_periodo else deuda.saldo_reportado
     )
+    intereses = deuda.intereses_mensuales or {}
     cuotas: list[CuotaPlan] = []
     prev = apertura
     for no, mes in enumerate(meses_periodo, start=1):
         s_fin = float(saldos.get(mes, prev))
         delta = s_fin - prev  # >0 consumo/nuevo credito (entra caja), <0 pago (sale)
         abono = max(0.0, -delta)
+        interes = float(intereses[mes]) if mes in intereses else deuda.cuota
         cuotas.append(CuotaPlan(
             no_cuota=no,
             mes=mes,
             saldo_inicial_nio=_redondear(prev * tc),
             cuota_nio=_redondear(deuda.cuota * tc),
-            interes_nio=_redondear(deuda.cuota * tc),
+            interes_nio=_redondear(interes * tc),
             abono_capital_nio=_redondear(abono * tc),
             abono_extraordinario_nio=0.0,
             saldo_final_nio=_redondear(s_fin * tc),

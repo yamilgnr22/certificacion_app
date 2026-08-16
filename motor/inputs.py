@@ -197,6 +197,12 @@ class DeudaInput:
     # 'YYYY-MM' -> saldo en moneda original. Si None, el revolving usa saldo
     # constante = saldo_apertura (o saldo_reportado).
     saldos_mensuales: Optional[dict] = None
+    # intereses_mensuales: 'YYYY-MM' -> interes del mes en moneda original.
+    # Solo se usa junto con saldos_mensuales, al CONTINUAR una certificacion:
+    # congela los Gastos Financieros tal como quedaron emitidos. Sin esto el
+    # motor asumiria la cuota completa y el ER de un mes ya certificado
+    # cambiaria (ver amortizacion._resolver_desde_saldos_mensuales).
+    intereses_mensuales: Optional[dict] = None
     notas: str = ""
 
 

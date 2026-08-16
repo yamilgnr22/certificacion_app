@@ -129,6 +129,9 @@ def _deuda(d: Mapping) -> DeudaInput:
         saldo_apertura=(float(d["saldo_apertura"]) if d.get("saldo_apertura") is not None else None),
         incluir_en_er=bool(d.get("incluir_en_er", True)),
         saldos_mensuales=(dict(d["saldos_mensuales"]) if d.get("saldos_mensuales") else None),
+        intereses_mensuales=(
+            dict(d["intereses_mensuales"]) if d.get("intereses_mensuales") else None
+        ),
         notas=str(d.get("notas", "")),
     )
 
