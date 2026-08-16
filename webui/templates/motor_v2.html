@@ -1100,6 +1100,7 @@ document.getElementById("btnExtraerDocs").onclick=extraerDocs;
 document.getElementById("btnCrearCliente").onclick=crearClienteNuevo;
 cargarClientes();
 inicializarZonaDocs();
+document.getElementById("chkFotosNegocio").addEventListener("change", ()=>renderDocs());
 cargarGiros();
 
 function erSnapshot(){ const pf={}; readER().forEach(r=>{ const m=r.mes; pf[m]={...r}; delete pf[m].mes; }); return pf; }
@@ -1337,17 +1338,52 @@ function renderDocs(mensaje){
     hoja.appendChild(par);
   }
 
-  // Lo que no entra en la hoja: fotos del negocio y lo no clasificado.
-  const fuera=docsCache.filter(d=>!DOC_CASILLAS.some(c=>c.tipo===d.tipo));
+  // Fotos del local: van a SU PROPIA hoja del Word, no a la de documentos,
+  // y son varias (no hay una casilla fija por foto).
+  sueltos.appendChild(zonaFotosNegocio());
+
+  // Lo que no cayo en ningun lado: se arrastra a su casilla.
+  const conocidos=new Set([...DOC_CASILLAS.map(c=>c.tipo), "foto_negocio"]);
+  const fuera=docsCache.filter(d=>!conocidos.has(d.tipo));
   if(fuera.length){
-    sueltos.appendChild(el("p",{className:"hint",style:"margin:14px 0 6px"},
-      "<b>Fuera de la hoja de documentos</b> — arrastrá a una casilla lo que corresponda. "+
-      "Las fotos del negocio van a su propia hoja (activala en «Hojas opcionales»)."));
+    sueltos.appendChild(el("p",{className:"hint",style:"margin:16px 0 6px"},
+      "<b>Sin clasificar</b> — arrastrá cada una a su casilla de arriba, o a las fotos del negocio."));
     const fila=el("div",{className:"doc-sueltos"});
-    fuera.forEach(d=>fila.appendChild(casillaDoc(
-      {tipo:d.tipo, nombre:d.tipo==="foto_negocio"?"Foto del negocio":"Sin clasificar"}, d)));
+    fuera.forEach(d=>fila.appendChild(casillaDoc({tipo:d.tipo, nombre:"Sin clasificar"}, d)));
     sueltos.appendChild(fila);
   }
+}
+
+function zonaFotosNegocio(){
+  const fotos=docsDeTipo("foto_negocio");
+  const cont=el("div",{style:"margin-top:18px"});
+  const activa=(document.getElementById("chkFotosNegocio")||{}).checked;
+  cont.appendChild(el("h2",{style:"margin:0 0 4px"},"Fotografías del negocio"));
+  cont.appendChild(el("p",{className:"hint",style:"margin:0 0 8px"},
+    activa
+      ? "Van a su propia hoja del Word. Soltá acá varias fotos del local juntas."
+      : "Van a una hoja aparte que hoy está <b>desactivada</b>: para que salgan en el Word, "+
+        "marcá «Fotografías del negocio» en <b>Hojas opcionales</b>, más abajo."));
+  const zona=el("div",{className:"doc-drop",style:"padding:10px"});
+  zona.innerHTML='<b>Arrastrá acá las fotos del local</b> · o hacé clic para elegirlas';
+  zona.onclick=()=>pedirArchivos("foto_negocio");
+  zona.ondragover=ev=>{ ev.preventDefault(); zona.classList.add("activa"); };
+  zona.ondragleave=()=>zona.classList.remove("activa");
+  zona.ondrop=async ev=>{
+    ev.preventDefault(); ev.stopPropagation(); zona.classList.remove("activa");
+    const id=ev.dataTransfer.getData("text/doc-id");
+    if(id){ await reubicarDoc(id, "foto_negocio"); return; }
+    if(ev.dataTransfer.files?.length) await subirDocs(ev.dataTransfer.files, "foto_negocio");
+  };
+  cont.appendChild(zona);
+  if(fotos.length){
+    const fila=el("div",{className:"doc-sueltos",style:"margin-top:10px"});
+    fotos.forEach((d,i)=>fila.appendChild(casillaDoc({tipo:"foto_negocio", nombre:"Foto "+(i+1)}, d)));
+    cont.appendChild(fila);
+    cont.appendChild(el("p",{className:"hint",style:"margin:6px 0 0"},
+      fotos.length+" foto"+(fotos.length>1?"s":"")+" en la biblioteca del cliente."));
+  }
+  return cont;
 }
 
 function casillaDoc(casilla, docFijo){
