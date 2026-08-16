@@ -113,6 +113,7 @@
   .msg { padding: 8px 12px; border-radius: 6px; margin: 6px 0; font-size: 12px; }
   .msg.err { background: rgba(242,85,90,.12); color: var(--err); border: 1px solid rgba(242,85,90,.3); }
   .msg.warn { background: rgba(230,162,60,.12); color: var(--warn); border: 1px solid rgba(230,162,60,.3); }
+  .msg.ok { background: rgba(80,200,120,.12); color: #6ee7a0; border: 1px solid rgba(80,200,120,.3); }
   .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 12px 0; }
   .kpi { background: var(--panel2); border-radius: 8px; padding: 10px 12px; }
   .kpi .l { font-size: 11px; color: var(--muted); }
@@ -249,6 +250,13 @@
       <div><label>Inventario <span class="hint" style="margin:0">(Tipo A)</span></label><input id="bandaInventario" value="10" placeholder="10"></div>
       <div><label>Proveedores</label><input id="bandaProveedores" value="10" placeholder="10"></div>
       <div><label>Cuentas por cobrar</label><input id="bandaCxC" value="10" placeholder="10"></div>
+    </div>
+    <h2 style="margin-top:18px">Utilidad objetivo</h2>
+    <p class="hint">Lo que esperás que el negocio gane <b>por mes</b>. No cambia ninguna cifra: al validar, el motor te dice qué tan lejos quedó la utilidad promedio del ER. Vacío = no se mide.</p>
+    <div class="grid g4" id="utilObjetivo">
+      <div><label>Utilidad promedio mensual</label><input id="uoMonto" placeholder="ej. 6000"></div>
+      <div><label>Moneda</label><select id="uoMoneda"><option value="USD">USD</option><option value="NIO">NIO</option></select></div>
+      <div><label>Margen ± %</label><input id="uoTolerancia" value="5" placeholder="5"></div>
     </div>
     <h2 style="margin-top:18px">Mínimos (NIO)</h2>
     <p class="hint">Los pisos que el motor no puede violar al cuadrar el período. La banda dice <b>cuánto oscila</b> una cuenta; el mínimo, <b>hasta dónde se la puede empujar</b> cuando hay que salvar la caja.</p>
@@ -748,6 +756,19 @@ function aplicarMinimos(m){
   document.getElementById("minInventario").value = m.inventario||"";
   document.getElementById("minAporte").value = m.aporte_maximo!=null? m.aporte_maximo : "";
 }
+function leerUtilidadObjetivo(){
+  const v=(document.getElementById("uoMonto").value||"").trim();
+  if(v==="") return null;                       // sin objetivo: no se mide
+  return {monto: parseFloat(v)||0,
+          moneda: document.getElementById("uoMoneda").value,
+          tolerancia_pct: parseFloat(document.getElementById("uoTolerancia").value||5)||5};
+}
+function aplicarUtilidadObjetivo(u){
+  u=u||{};
+  document.getElementById("uoMonto").value = u.monto || "";
+  document.getElementById("uoMoneda").value = u.moneda || "USD";
+  document.getElementById("uoTolerancia").value = u.tolerancia_pct!=null?u.tolerancia_pct:5;
+}
 function collect(){
   const p=readFields("periodo");
   const tipo=(p.tipo||"A").toUpperCase();
@@ -764,6 +785,7 @@ function collect(){
     deudas: readDeudas(),
     bandas: leerBandas(),
     minimos: leerMinimos(),
+    ...(leerUtilidadObjetivo() ? {utilidad_objetivo: leerUtilidadObjetivo()} : {}),
   };
   if(modoER()==="generado"){
     const g=readFields("erGenParams");
@@ -901,10 +923,29 @@ function _calculoRetiros(j){
     rec("Caja final (queda en la banda)", fin),
   ];
 }
+// Que tan lejos quedo la utilidad promedio del objetivo. Se muestra SIEMPRE
+// que haya objetivo (no solo al fallar): es el dato que el CPA mira primero.
+function tarjetaUtilidadObjetivo(u){
+  if(!u) return el("span");
+  const usd=u.moneda==="USD";
+  const f=(n)=>Number(n).toLocaleString("es-NI",{maximumFractionDigits:0});
+  const prom=usd?f(u.promedio_usd)+" USD":f(u.promedio_nio)+" NIO";
+  const obj=usd?f(u.objetivo_usd)+" USD":f(u.objetivo_nio)+" NIO";
+  const falta=usd?f(Math.abs(u.falta_usd))+" USD":f(Math.abs(u.falta_nio))+" NIO";
+  const d=el("div",{className:"msg "+(u.dentro?"ok":"warn"),style:"font-size:13px"});
+  d.innerHTML = u.dentro
+    ? "<b>Utilidad promedio "+prom+"</b> — dentro del objetivo de "+obj+
+      " (desvío "+u.desvio_pct.toFixed(1)+"%, margen ±"+u.tolerancia_pct+"%)."
+    : "<b>Utilidad promedio "+prom+"</b> — "+(u.falta_nio>0?"por debajo":"por encima")+
+      " del objetivo de "+obj+" (desvío "+u.desvio_pct.toFixed(1)+"%, margen ±"+
+      u.tolerancia_pct+"%). "+(u.falta_nio>0?"Faltan":"Sobran")+" <b>"+falta+"</b> por mes.";
+  return d;
+}
 function renderPreviewEstados(j){
   const cont=document.getElementById("previewEstados");
   cont.innerHTML="";
   if(!j || j.error) return;
+  cont.appendChild(tarjetaUtilidadObjetivo(j.utilidad_objetivo));
   const bloques=[];
   const er=_tablaDesdeRecords(j.er, {skipCols:["Base"]});
   if(er) bloques.push(["📊 Estado de Resultados", er, true]);
@@ -1184,6 +1225,7 @@ function aplicarInputs(b){
   buildFields("objetivos", OBJ_FIELDS, ov);
   aplicarBandas(b.bandas);
   aplicarMinimos(b.minimos);
+  aplicarUtilidadObjetivo(b.utilidad_objetivo);
   const esGen=(b.er_modo||"manual")==="generado";
   document.getElementById("selModoER").value=esGen?"generado":"manual";
   if(esGen){

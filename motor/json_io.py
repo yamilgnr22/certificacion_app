@@ -20,6 +20,7 @@ from motor.inputs import (
     CAMPOS_BANDA,
     Bandas,
     Minimos,
+    UtilidadObjetivo,
     CuentaObjetivo,
     DatosCliente,
     DeudaInput,
@@ -223,6 +224,17 @@ def _minimos(d: Mapping | None) -> Minimos:
     )
 
 
+def _utilidad_objetivo(d: Mapping | None) -> UtilidadObjetivo:
+    """Utilidad neta promedio que el CPA espera. Sin bloque o en 0, no se mide."""
+    d = d or {}
+    base = UtilidadObjetivo()
+    return UtilidadObjetivo(
+        monto=float(d.get("monto") or 0.0),
+        moneda=(str(d.get("moneda") or "NIO").upper() if d.get("moneda") else "NIO"),
+        tolerancia_pct=float(d.get("tolerancia_pct") or base.tolerancia_pct),
+    )
+
+
 def inputs_from_json(body: Mapping) -> InputsTipoA:
     periodo = _periodo(body["periodo"])
     return InputsTipoA(
@@ -234,6 +246,7 @@ def inputs_from_json(body: Mapping) -> InputsTipoA:
         deudas=[_deuda(x) for x in (body.get("deudas") or [])],
         bandas=_bandas(body.get("bandas")),
         minimos=_minimos(body.get("minimos")),
+        utilidad_objetivo=_utilidad_objetivo(body.get("utilidad_objetivo")),
     )
 
 
@@ -257,6 +270,7 @@ def inputs_tipo_b_from_json(body: Mapping) -> InputsTipoB:
         seed=str(body.get("seed", "") or ""),
         bandas=_bandas(body.get("bandas")),
         minimos=_minimos(body.get("minimos")),
+        utilidad_objetivo=_utilidad_objetivo(body.get("utilidad_objetivo")),
     )
 
 

@@ -279,6 +279,40 @@ class Bandas:
 
 
 @dataclass(frozen=True)
+class UtilidadObjetivo:
+    """Utilidad neta promedio mensual que el CPA espera del cliente.
+
+    No cambia NINGUNA cifra: el motor calcula el ER con los parametros dados
+    y despues mide que tan lejos quedo del objetivo. Sirve para saber, antes
+    de generar el documento, si el resultado se parece a lo que el negocio
+    factura de verdad.
+
+    monto 0 = sin objetivo (no se mide nada, comportamiento de siempre).
+    La moneda es la del monto que se escribe; la comparacion se hace en NIO
+    con el tipo de cambio del periodo.
+    """
+
+    monto: float = 0.0
+    moneda: Moneda = "NIO"
+    tolerancia_pct: float = 5.0
+
+    def __post_init__(self) -> None:
+        if self.monto < 0:
+            raise ValueError("La utilidad objetivo no puede ser negativa")
+        if not (0 < self.tolerancia_pct <= 100):
+            raise ValueError(
+                f"tolerancia_pct debe estar en (0, 100], no {self.tolerancia_pct}"
+            )
+
+    def objetivo_nio(self, tasa_cambio: float) -> float:
+        return self.monto * (tasa_cambio if self.moneda == "USD" else 1.0)
+
+    @property
+    def activo(self) -> bool:
+        return self.monto > 0
+
+
+@dataclass(frozen=True)
 class Minimos:
     """Pisos y topes que el motor no puede violar al cuadrar el periodo.
 
@@ -316,6 +350,7 @@ class InputsTipoA:
     deudas: list[DeudaInput] = field(default_factory=list)
     bandas: Bandas = field(default_factory=Bandas)
     minimos: Minimos = field(default_factory=Minimos)
+    utilidad_objetivo: UtilidadObjetivo = field(default_factory=UtilidadObjetivo)
 
     def __post_init__(self) -> None:
         if self.periodo.tipo != "A":
@@ -366,6 +401,7 @@ class InputsTipoB:
     seed: str = ""
     bandas: Bandas = field(default_factory=Bandas)
     minimos: Minimos = field(default_factory=Minimos)
+    utilidad_objetivo: UtilidadObjetivo = field(default_factory=UtilidadObjetivo)
 
     def __post_init__(self) -> None:
         if self.periodo.tipo != "B":

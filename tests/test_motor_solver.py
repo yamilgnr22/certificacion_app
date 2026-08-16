@@ -283,5 +283,85 @@ class OscilacionSinEstancarseTest(unittest.TestCase):
         self.assertEqual(_trayectoria("x", 12, 20.0), _trayectoria("x", 12, 20.0))
 
 
+class UtilidadObjetivoTest(unittest.TestCase):
+    """El objetivo mide, no corrige: las cifras salen iguales con o sin el."""
+
+    def _modelo(self, objetivo=None):
+        from motor import UtilidadObjetivo
+        er = [ER_LineaMes(mes=m, ingresos=500_000, costo_ventas=300_000) for m in MESES]
+        kw = {"utilidad_objetivo": objetivo} if objetivo else {}
+        return certificar_tipo_a(InputsTipoA(
+            periodo=PeriodoSpec(tipo="A", mes_inicial=MESES[0], mes_final=MESES[-1], tasa_cambio=36.6),
+            datos=_datos(), er_mensual=er,
+            saldos_iniciales=ESF_Saldos(efectivo=500_000),
+            saldos_finales=ESF_Saldos(efectivo=1_700_000), **kw))
+
+    def _medir(self, objetivo):
+        from motor.validar import medir_utilidad_objetivo
+        m = self._modelo(objetivo)
+        return medir_utilidad_objetivo(m.inputs, m.er)
+
+    def test_sin_objetivo_no_mide_nada(self):
+        from motor.validar import medir_utilidad_objetivo
+        m = self._modelo()
+        self.assertIsNone(medir_utilidad_objetivo(m.inputs, m.er))
+
+    def test_no_cambia_ninguna_cifra(self):
+        from motor import UtilidadObjetivo
+        sin = self._modelo()
+        con = self._modelo(UtilidadObjetivo(monto=1_000, moneda="USD"))
+        self.assertEqual([e.efectivo for e in sin.esf.meses],
+                         [e.efectivo for e in con.esf.meses])
+
+    def test_dentro_del_margen(self):
+        from motor import UtilidadObjetivo
+        # utilidad = 6 x 200,000 = 1,200,000 => promedio 200,000 NIO
+        m = self._medir(UtilidadObjetivo(monto=200_000, moneda="NIO"))
+        self.assertTrue(m["dentro"])
+        self.assertAlmostEqual(m["desvio_pct"], 0.0, places=1)
+        self.assertAlmostEqual(m["falta_nio"], 0.0, delta=1.0)
+
+    def test_por_debajo_informa_cuanto_falta(self):
+        from motor import UtilidadObjetivo
+        m = self._medir(UtilidadObjetivo(monto=250_000, moneda="NIO"))
+        self.assertFalse(m["dentro"])
+        self.assertAlmostEqual(m["desvio_pct"], -20.0, places=1)
+        self.assertAlmostEqual(m["falta_nio"], 50_000, delta=1.0)
+
+    def test_por_encima_da_falta_negativa(self):
+        from motor import UtilidadObjetivo
+        m = self._medir(UtilidadObjetivo(monto=100_000, moneda="NIO"))
+        self.assertFalse(m["dentro"])
+        self.assertAlmostEqual(m["desvio_pct"], 100.0, places=1)
+        self.assertLess(m["falta_nio"], 0)
+
+    def test_convierte_el_objetivo_en_usd(self):
+        from motor import UtilidadObjetivo
+        # 200,000 NIO / 36.6 = 5,464 USD => objetivo en USD equivalente
+        m = self._medir(UtilidadObjetivo(monto=5_464.48, moneda="USD"))
+        self.assertAlmostEqual(m["objetivo_nio"], 200_000, delta=50)
+        self.assertTrue(m["dentro"])
+
+    def test_el_margen_es_configurable(self):
+        from motor import UtilidadObjetivo
+        # 10% de desvio: fuera con margen 5, dentro con margen 15
+        self.assertFalse(self._medir(UtilidadObjetivo(monto=222_222, moneda="NIO"))["dentro"])
+        self.assertTrue(self._medir(
+            UtilidadObjetivo(monto=222_222, moneda="NIO", tolerancia_pct=15))["dentro"])
+
+    def test_nunca_bloquea(self):
+        from motor import UtilidadObjetivo
+        m = self._modelo(UtilidadObjetivo(monto=10_000_000, moneda="NIO"))
+        self.assertTrue(m.ok, "el objetivo es una expectativa, no una regla contable")
+        self.assertTrue(any(h.invariante == 11 for h in m.validacion.alertas))
+
+    def test_rechaza_parametros_invalidos(self):
+        from motor import UtilidadObjetivo
+        with self.assertRaises(ValueError):
+            UtilidadObjetivo(monto=-1)
+        with self.assertRaises(ValueError):
+            UtilidadObjetivo(monto=1000, tolerancia_pct=0)
+
+
 if __name__ == "__main__":
     unittest.main()

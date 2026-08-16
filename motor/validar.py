@@ -152,6 +152,60 @@ def _invariantes_comunes(
             ))
 
 
+def medir_utilidad_objetivo(inputs, calculo_er: CalculoER) -> dict | None:
+    """Que tan lejos quedo la utilidad promedio del objetivo del CPA.
+
+    No corrige nada: mide. Devuelve None si no se fijo objetivo.
+    'falta' es lo que habria que sumarle al promedio MENSUAL para llegar
+    justo al objetivo (negativo = esta por encima)."""
+    obj = getattr(inputs, "utilidad_objetivo", None)
+    if not obj or not obj.activo:
+        return None
+    tc = inputs.periodo.tasa_cambio
+    objetivo = obj.objetivo_nio(tc)
+    promedio = calculo_er.promedio_utilidad()
+    desvio = (promedio / objetivo - 1.0) * 100.0 if objetivo else 0.0
+    return {
+        "objetivo_nio": round(objetivo, 2),
+        "objetivo_usd": round(objetivo / tc, 2),
+        "promedio_nio": round(promedio, 2),
+        "promedio_usd": round(promedio / tc, 2),
+        "moneda": obj.moneda,
+        "tolerancia_pct": obj.tolerancia_pct,
+        "desvio_pct": round(desvio, 1),
+        "falta_nio": round(objetivo - promedio, 2),
+        "falta_usd": round((objetivo - promedio) / tc, 2),
+        "dentro": abs(desvio) <= obj.tolerancia_pct,
+    }
+
+
+def _invariante_utilidad_objetivo(r: ResultadoValidacion, inputs, calculo_er: CalculoER) -> None:
+    """#11 La utilidad promedio se parece a la que el CPA espera del negocio.
+
+    Nunca bloquea: el objetivo es una expectativa sobre el cliente, no una
+    regla contable. Pero queda registrado en la certificacion, con el desvio
+    y cuanto falta por mes."""
+    m = medir_utilidad_objetivo(inputs, calculo_er)
+    if not m:
+        return
+    en_usd = m["moneda"] == "USD"
+    prom = f"{m['promedio_usd']:,.0f} USD" if en_usd else f"{m['promedio_nio']:,.0f} NIO"
+    obje = f"{m['objetivo_usd']:,.0f} USD" if en_usd else f"{m['objetivo_nio']:,.0f} NIO"
+    falta = f"{abs(m['falta_usd']):,.0f} USD" if en_usd else f"{abs(m['falta_nio']):,.0f} NIO"
+    if m["dentro"]:
+        r.add(11, "alerta", (
+            f"Utilidad promedio {prom}: dentro del objetivo {obje} "
+            f"(desvio {m['desvio_pct']:+.1f}%, margen +-{m['tolerancia_pct']:.0f}%)."
+        ))
+        return
+    direccion = "por DEBAJO" if m["falta_nio"] > 0 else "por ENCIMA"
+    r.add(11, "alerta", (
+        f"Utilidad promedio {prom}: {direccion} del objetivo {obje} "
+        f"(desvio {m['desvio_pct']:+.1f}%, margen +-{m['tolerancia_pct']:.0f}%). "
+        f"Faltan {falta} por mes para llegar."
+    ))
+
+
 def _invariantes_solver(r: ResultadoValidacion, inputs, solver) -> None:
     """#10 Caja: el efectivo nunca baja del piso configurado.
 
@@ -192,6 +246,7 @@ def validar_tipo_a(
     r = ResultadoValidacion()
     _invariantes_comunes(r, inputs, planes, calculo_er, calculo_mov, calculo_esf)
     _invariantes_solver(r, inputs, solver)
+    _invariante_utilidad_objetivo(r, inputs, calculo_er)
 
     # ---- #2 Tipo A: ESF corte = saldos finales dados (por cuenta)
     corte = calculo_esf.corte()
@@ -219,6 +274,7 @@ def validar_tipo_b(
     r = ResultadoValidacion()
     _invariantes_comunes(r, inputs, planes, calculo_er, calculo_mov, calculo_esf)
     _invariantes_solver(r, inputs, solver)
+    _invariante_utilidad_objetivo(r, inputs, calculo_er)
 
     # ---- #3 Bandas de oscilacion
     obj_caja = inputs.objetivo("efectivo")

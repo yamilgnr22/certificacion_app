@@ -1198,6 +1198,7 @@ def motor_v2_certificar():
     """
     from motor.esf import ESFError
     from motor.json_io import modelo_from_json, validacion_to_json
+    from motor.validar import medir_utilidad_objetivo
 
     try:
         body = request.get_json(silent=True) or {}
@@ -1238,6 +1239,10 @@ def motor_v2_certificar():
             "capital_apertura": round(float(modelo.esf.capital_apertura), 2),
             # Techo de la banda de caja por mes (Tipo B): contra el se mide el
             # excedente que sale como retiro del propietario.
+            # Que tan lejos quedo la utilidad promedio del objetivo del CPA
+            # (None si no se fijo objetivo). Se muestra siempre, no solo
+            # cuando se sale del margen.
+            "utilidad_objetivo": medir_utilidad_objetivo(modelo.inputs, modelo.er),
             "caja_objetivo": {
                 m.mes: round(float(m.caja_objetivo), 2) for m in modelo.mov.movs
             },
