@@ -118,6 +118,11 @@
   .kpi { background: var(--panel2); border-radius: 8px; padding: 10px 12px; }
   .kpi .l { font-size: 11px; color: var(--muted); }
   .kpi .v { font-size: 16px; font-weight: 600; margin-top: 2px; }
+  .kpi .sub { font-size: 10px; color: var(--muted); margin-top: 2px; }
+  .kpi.ok { background: rgba(80,200,120,.12); border: 1px solid rgba(80,200,120,.35); }
+  .kpi.ok .v, .kpi.ok .l { color: #6ee7a0; }
+  .kpi.fuera { background: rgba(242,85,90,.12); border: 1px solid rgba(242,85,90,.35); }
+  .kpi.fuera .v, .kpi.fuera .l { color: var(--err); }
   details { margin-top: 8px; } summary { cursor: pointer; color: var(--muted); font-size: 13px; }
   .hint { font-size: 12px; color: var(--muted); margin: 4px 0 10px; }
 </style>
@@ -923,29 +928,10 @@ function _calculoRetiros(j){
     rec("Caja final (queda en la banda)", fin),
   ];
 }
-// Que tan lejos quedo la utilidad promedio del objetivo. Se muestra SIEMPRE
-// que haya objetivo (no solo al fallar): es el dato que el CPA mira primero.
-function tarjetaUtilidadObjetivo(u){
-  if(!u) return el("span");
-  const usd=u.moneda==="USD";
-  const f=(n)=>Number(n).toLocaleString("es-NI",{maximumFractionDigits:0});
-  const prom=usd?f(u.promedio_usd)+" USD":f(u.promedio_nio)+" NIO";
-  const obj=usd?f(u.objetivo_usd)+" USD":f(u.objetivo_nio)+" NIO";
-  const falta=usd?f(Math.abs(u.falta_usd))+" USD":f(Math.abs(u.falta_nio))+" NIO";
-  const d=el("div",{className:"msg "+(u.dentro?"ok":"warn"),style:"font-size:13px"});
-  d.innerHTML = u.dentro
-    ? "<b>Utilidad promedio "+prom+"</b> — dentro del objetivo de "+obj+
-      " (desvío "+u.desvio_pct.toFixed(1)+"%, margen ±"+u.tolerancia_pct+"%)."
-    : "<b>Utilidad promedio "+prom+"</b> — "+(u.falta_nio>0?"por debajo":"por encima")+
-      " del objetivo de "+obj+" (desvío "+u.desvio_pct.toFixed(1)+"%, margen ±"+
-      u.tolerancia_pct+"%). "+(u.falta_nio>0?"Faltan":"Sobran")+" <b>"+falta+"</b> por mes.";
-  return d;
-}
 function renderPreviewEstados(j){
   const cont=document.getElementById("previewEstados");
   cont.innerHTML="";
   if(!j || j.error) return;
-  cont.appendChild(tarjetaUtilidadObjetivo(j.utilidad_objetivo));
   const bloques=[];
   const er=_tablaDesdeRecords(j.er, {skipCols:["Base"]});
   if(er) bloques.push(["📊 Estado de Resultados", er, true]);
@@ -1005,16 +991,33 @@ function renderResultado(j, status){
   const R=document.getElementById("resultado");
   if(j.error){ R.innerHTML=`<div class="msg err"><b>${j.tipo||"Error"}:</b> ${j.error}</div>`; setEstado(""); return; }
   const v=j.validacion||{}; const res=j.resumen||{};
-  let h = `<div class="row"><span class="pill ${v.ok?"ok":"err"}">${v.ok?"VALIDO - los 9 invariantes pasan":"HAY ERRORES"}</span></div>`;
+  let h = `<div class="row"><span class="pill ${v.ok?"ok":"err"}">${v.ok?"VALIDO - todos los invariantes pasan":"HAY ERRORES"}</span></div>`;
   h += `<div class="kpis">
     <div class="kpi"><div class="l">Ingresos Brutos</div><div class="v">${fmt(res.ingresos_brutos)}</div></div>
     <div class="kpi"><div class="l">Utilidad del Periodo</div><div class="v">${fmt(res.utilidad_periodo)}</div></div>
     <div class="kpi"><div class="l">Efectivo al corte</div><div class="v">${fmt(res.efectivo_corte)}</div></div>
-    <div class="kpi"><div class="l">Total Activos</div><div class="v">${fmt(res.total_activos_corte)}</div></div>
+    ${kpiUtilidadObjetivo(j.utilidad_objetivo, res)}
   </div>`;
   (v.errores||[]).forEach(e=> h+=`<div class="msg err">inv#${e.invariante}: ${e.mensaje}</div>`);
   (v.alertas||[]).forEach(e=> h+=`<div class="msg warn">inv#${e.invariante}: ${e.mensaje}</div>`);
   R.innerHTML=h; setEstado("");
+}
+// Cuarta metrica: que tan lejos quedo la utilidad promedio del objetivo.
+// Verde dentro del margen, rojo fuera. Sin objetivo fijado se muestra el
+// Total Activos de siempre.
+function kpiUtilidadObjetivo(u, res){
+  if(!u) return `<div class="kpi"><div class="l">Total Activos</div>`+
+                `<div class="v">${fmt(res.total_activos_corte)}</div></div>`;
+  const usd=u.moneda==="USD";
+  const prom=fmt(usd?u.promedio_usd:u.promedio_nio)+(usd?" USD":"");
+  const obj=fmt(usd?u.objetivo_usd:u.objetivo_nio)+(usd?" USD":"");
+  const falta=fmt(Math.abs(usd?u.falta_usd:u.falta_nio))+(usd?" USD":"");
+  const sub = u.dentro
+    ? `dentro del objetivo ${obj} (${u.desvio_pct.toFixed(1)}%)`
+    : `objetivo ${obj} · ${u.falta_nio>0?"faltan":"sobran"} ${falta}/mes (${u.desvio_pct.toFixed(1)}%)`;
+  return `<div class="kpi ${u.dentro?"ok":"fuera"}" title="Margen +-${u.tolerancia_pct}%">`+
+         `<div class="l">Utilidad promedio mensual</div>`+
+         `<div class="v">${prom}</div><div class="sub">${sub}</div></div>`;
 }
 async function generarDocx(){
   setEstado("Generando DOCX...");
