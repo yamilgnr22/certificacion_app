@@ -153,11 +153,12 @@ def _invariantes_comunes(
 
 
 def medir_utilidad_objetivo(inputs, calculo_er: CalculoER) -> dict | None:
-    """Que tan lejos quedo la utilidad promedio del objetivo del CPA.
+    """Que tan lejos quedo la utilidad promedio del piso que fijo el CPA.
 
-    No corrige nada: mide. Devuelve None si no se fijo objetivo.
-    'falta' es lo que habria que sumarle al promedio MENSUAL para llegar
-    justo al objetivo (negativo = esta por encima)."""
+    Es un piso, no una banda: 'cumple' es estar en el objetivo o por
+    encima. No corrige nada, mide. Devuelve None si no se fijo objetivo.
+    'falta' es lo que habria que sumarle al promedio MENSUAL para llegar al
+    objetivo (negativo = lo supera, y ese excedente no es un problema)."""
     obj = getattr(inputs, "utilidad_objetivo", None)
     if not obj or not obj.activo:
         return None
@@ -171,38 +172,29 @@ def medir_utilidad_objetivo(inputs, calculo_er: CalculoER) -> dict | None:
         "promedio_nio": round(promedio, 2),
         "promedio_usd": round(promedio / tc, 2),
         "moneda": obj.moneda,
-        "tolerancia_pct": obj.tolerancia_pct,
         "desvio_pct": round(desvio, 1),
         "falta_nio": round(objetivo - promedio, 2),
         "falta_usd": round((objetivo - promedio) / tc, 2),
-        "dentro": abs(desvio) <= obj.tolerancia_pct,
+        "cumple": promedio >= objetivo,
     }
 
 
 def _invariante_utilidad_objetivo(r: ResultadoValidacion, inputs, calculo_er: CalculoER) -> None:
-    """#11 La utilidad promedio se parece a la que el CPA espera del negocio.
+    """#11 La utilidad promedio llega al piso que el CPA espera del negocio.
 
-    Nunca bloquea: el objetivo es una expectativa sobre el cliente, no una
-    regla contable. Pero queda registrado en la certificacion, con el desvio
-    y cuanto falta por mes."""
+    Solo advierte si queda POR DEBAJO: superarlo no es un hallazgo, es que
+    al cliente le fue mejor de lo previsto. Nunca bloquea — el objetivo es
+    una expectativa sobre el negocio, no una regla contable."""
     m = medir_utilidad_objetivo(inputs, calculo_er)
-    if not m:
+    if not m or m["cumple"]:
         return
     en_usd = m["moneda"] == "USD"
     prom = f"{m['promedio_usd']:,.0f} USD" if en_usd else f"{m['promedio_nio']:,.0f} NIO"
     obje = f"{m['objetivo_usd']:,.0f} USD" if en_usd else f"{m['objetivo_nio']:,.0f} NIO"
     falta = f"{abs(m['falta_usd']):,.0f} USD" if en_usd else f"{abs(m['falta_nio']):,.0f} NIO"
-    if m["dentro"]:
-        r.add(11, "alerta", (
-            f"Utilidad promedio {prom}: dentro del objetivo {obje} "
-            f"(desvio {m['desvio_pct']:+.1f}%, margen +-{m['tolerancia_pct']:.0f}%)."
-        ))
-        return
-    direccion = "por DEBAJO" if m["falta_nio"] > 0 else "por ENCIMA"
     r.add(11, "alerta", (
-        f"Utilidad promedio {prom}: {direccion} del objetivo {obje} "
-        f"(desvio {m['desvio_pct']:+.1f}%, margen +-{m['tolerancia_pct']:.0f}%). "
-        f"Faltan {falta} por mes para llegar."
+        f"Utilidad promedio {prom}: por DEBAJO del objetivo {obje} "
+        f"({m['desvio_pct']:+.1f}%). Faltan {falta} por mes para llegar."
     ))
 
 

@@ -282,10 +282,12 @@ class Bandas:
 class UtilidadObjetivo:
     """Utilidad neta promedio mensual que el CPA espera del cliente.
 
+    Es un PISO, no una banda: quedar por encima nunca es un problema (el
+    negocio gano mas de lo previsto), quedar por debajo si, porque el
+    documento no va a sostener lo que el cliente dice que factura.
+
     No cambia NINGUNA cifra: el motor calcula el ER con los parametros dados
-    y despues mide que tan lejos quedo del objetivo. Sirve para saber, antes
-    de generar el documento, si el resultado se parece a lo que el negocio
-    factura de verdad.
+    y despues mide contra este piso.
 
     monto 0 = sin objetivo (no se mide nada, comportamiento de siempre).
     La moneda es la del monto que se escribe; la comparacion se hace en NIO
@@ -294,15 +296,10 @@ class UtilidadObjetivo:
 
     monto: float = 0.0
     moneda: Moneda = "NIO"
-    tolerancia_pct: float = 5.0
 
     def __post_init__(self) -> None:
         if self.monto < 0:
             raise ValueError("La utilidad objetivo no puede ser negativa")
-        if not (0 < self.tolerancia_pct <= 100):
-            raise ValueError(
-                f"tolerancia_pct debe estar en (0, 100], no {self.tolerancia_pct}"
-            )
 
     def objetivo_nio(self, tasa_cambio: float) -> float:
         return self.monto * (tasa_cambio if self.moneda == "USD" else 1.0)

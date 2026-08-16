@@ -211,11 +211,10 @@
     <p class="hint" id="erHint">Ingresá los números reales del cliente. Gastos Financieros los calcula el motor desde las deudas activas.</p>
     <div class="scroll"><table id="erTable"></table></div>
     <h2 style="margin-top:18px">Utilidad objetivo</h2>
-    <p class="hint">Lo que esperás que el negocio gane <b>por mes</b>. No cambia ninguna cifra del ER: al validar, el motor mide qué tan lejos quedó la utilidad promedio de esa meta y te lo muestra arriba del Resultado. Vacío = no se mide.</p>
+    <p class="hint">Lo <b>mínimo</b> que esperás que el negocio gane por mes. No cambia ninguna cifra del ER: al validar, el motor compara la utilidad promedio contra ese piso — <b>verde</b> si lo alcanza, <b>rojo</b> si queda por debajo. Vacío = no se mide.</p>
     <div class="grid g4" id="utilObjetivo">
       <div><label>Utilidad promedio mensual</label><input id="uoMonto" placeholder="ej. 6000"></div>
       <div><label>Moneda</label><select id="uoMoneda"><option value="USD">USD</option><option value="NIO">NIO</option></select></div>
-      <div><label>Margen ± %</label><input id="uoTolerancia" value="5" placeholder="5"></div>
     </div>
   </div>
 
@@ -765,14 +764,12 @@ function leerUtilidadObjetivo(){
   const v=(document.getElementById("uoMonto").value||"").trim();
   if(v==="") return null;                       // sin objetivo: no se mide
   return {monto: parseFloat(v)||0,
-          moneda: document.getElementById("uoMoneda").value,
-          tolerancia_pct: parseFloat(document.getElementById("uoTolerancia").value||5)||5};
+          moneda: document.getElementById("uoMoneda").value};
 }
 function aplicarUtilidadObjetivo(u){
   u=u||{};
   document.getElementById("uoMonto").value = u.monto || "";
   document.getElementById("uoMoneda").value = u.moneda || "USD";
-  document.getElementById("uoTolerancia").value = u.tolerancia_pct!=null?u.tolerancia_pct:5;
 }
 function collect(){
   const p=readFields("periodo");
@@ -1012,10 +1009,12 @@ function kpiUtilidadObjetivo(u, res){
   const prom=fmt(usd?u.promedio_usd:u.promedio_nio)+(usd?" USD":"");
   const obj=fmt(usd?u.objetivo_usd:u.objetivo_nio)+(usd?" USD":"");
   const falta=fmt(Math.abs(usd?u.falta_usd:u.falta_nio))+(usd?" USD":"");
-  const sub = u.dentro
-    ? `dentro del objetivo ${obj} (${u.desvio_pct.toFixed(1)}%)`
-    : `objetivo ${obj} · ${u.falta_nio>0?"faltan":"sobran"} ${falta}/mes (${u.desvio_pct.toFixed(1)}%)`;
-  return `<div class="kpi ${u.dentro?"ok":"fuera"}" title="Margen +-${u.tolerancia_pct}%">`+
+  const exceso = Math.abs(usd ? u.falta_usd : u.falta_nio);
+  const sub = !u.cumple
+    ? `objetivo ${obj} · faltan ${falta}/mes (${u.desvio_pct.toFixed(1)}%)`
+    : (exceso < 1 ? `alcanza el objetivo de ${obj}`
+                  : `supera el objetivo de ${obj} por ${falta}/mes`);
+  return `<div class="kpi ${u.cumple?"ok":"fuera"}" title="Objetivo minimo: ${obj} por mes">`+
          `<div class="l">Utilidad promedio mensual</div>`+
          `<div class="v">${prom}</div><div class="sub">${sub}</div></div>`;
 }

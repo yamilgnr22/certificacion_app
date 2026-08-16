@@ -313,54 +313,53 @@ class UtilidadObjetivoTest(unittest.TestCase):
         self.assertEqual([e.efectivo for e in sin.esf.meses],
                          [e.efectivo for e in con.esf.meses])
 
-    def test_dentro_del_margen(self):
+    def test_justo_en_el_objetivo_cumple(self):
         from motor import UtilidadObjetivo
         # utilidad = 6 x 200,000 = 1,200,000 => promedio 200,000 NIO
         m = self._medir(UtilidadObjetivo(monto=200_000, moneda="NIO"))
-        self.assertTrue(m["dentro"])
+        self.assertTrue(m["cumple"], "el objetivo es un piso: igualarlo alcanza")
         self.assertAlmostEqual(m["desvio_pct"], 0.0, places=1)
         self.assertAlmostEqual(m["falta_nio"], 0.0, delta=1.0)
 
-    def test_por_debajo_informa_cuanto_falta(self):
+    def test_por_debajo_no_cumple_e_informa_cuanto_falta(self):
         from motor import UtilidadObjetivo
         m = self._medir(UtilidadObjetivo(monto=250_000, moneda="NIO"))
-        self.assertFalse(m["dentro"])
+        self.assertFalse(m["cumple"])
         self.assertAlmostEqual(m["desvio_pct"], -20.0, places=1)
         self.assertAlmostEqual(m["falta_nio"], 50_000, delta=1.0)
 
-    def test_por_encima_da_falta_negativa(self):
+    def test_por_encima_cumple_por_lejos_que_este(self):
         from motor import UtilidadObjetivo
-        m = self._medir(UtilidadObjetivo(monto=100_000, moneda="NIO"))
-        self.assertFalse(m["dentro"])
-        self.assertAlmostEqual(m["desvio_pct"], 100.0, places=1)
-        self.assertLess(m["falta_nio"], 0)
+        # Superar el piso NUNCA es un problema: al cliente le fue mejor.
+        for objetivo in (100_000, 199_000, 10):
+            m = self._medir(UtilidadObjetivo(monto=objetivo, moneda="NIO"))
+            self.assertTrue(m["cumple"], f"objetivo {objetivo}")
+            self.assertLess(m["falta_nio"], 0, "el excedente va en negativo")
 
     def test_convierte_el_objetivo_en_usd(self):
         from motor import UtilidadObjetivo
         # 200,000 NIO / 36.6 = 5,464 USD => objetivo en USD equivalente
         m = self._medir(UtilidadObjetivo(monto=5_464.48, moneda="USD"))
         self.assertAlmostEqual(m["objetivo_nio"], 200_000, delta=50)
-        self.assertTrue(m["dentro"])
+        self.assertTrue(m["cumple"])
 
-    def test_el_margen_es_configurable(self):
+    def test_solo_alerta_cuando_queda_por_debajo(self):
         from motor import UtilidadObjetivo
-        # 10% de desvio: fuera con margen 5, dentro con margen 15
-        self.assertFalse(self._medir(UtilidadObjetivo(monto=222_222, moneda="NIO"))["dentro"])
-        self.assertTrue(self._medir(
-            UtilidadObjetivo(monto=222_222, moneda="NIO", tolerancia_pct=15))["dentro"])
+        bajo = self._modelo(UtilidadObjetivo(monto=10_000_000, moneda="NIO"))
+        self.assertTrue(any(h.invariante == 11 for h in bajo.validacion.alertas))
+        alto = self._modelo(UtilidadObjetivo(monto=100_000, moneda="NIO"))
+        self.assertFalse(any(h.invariante == 11 for h in alto.validacion.alertas),
+                         "superar el objetivo no es un hallazgo")
 
     def test_nunca_bloquea(self):
         from motor import UtilidadObjetivo
         m = self._modelo(UtilidadObjetivo(monto=10_000_000, moneda="NIO"))
         self.assertTrue(m.ok, "el objetivo es una expectativa, no una regla contable")
-        self.assertTrue(any(h.invariante == 11 for h in m.validacion.alertas))
 
-    def test_rechaza_parametros_invalidos(self):
+    def test_rechaza_monto_negativo(self):
         from motor import UtilidadObjetivo
         with self.assertRaises(ValueError):
             UtilidadObjetivo(monto=-1)
-        with self.assertRaises(ValueError):
-            UtilidadObjetivo(monto=1000, tolerancia_pct=0)
 
 
 if __name__ == "__main__":
