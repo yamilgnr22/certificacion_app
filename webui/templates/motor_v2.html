@@ -144,10 +144,21 @@
       <button class="btn secondary small" id="btnCrearNuevoCliente">➕ Crear nuevo cliente</button>
       <button class="btn secondary small" id="btnNuevo" title="Empieza una certificación nueva en blanco para el cliente seleccionado">Nueva certificación</button>
       <button class="btn secondary small" id="btnAbrir" title="Retoma una certificación guardada de la lista de la derecha">Abrir guardada</button>
+      <button class="btn secondary small" id="btnActualizar" style="display:none"
+        title="Extiende una certificación ya emitida hasta un corte posterior, sin cambiar ninguna cifra de los meses ya firmados">⟳ Actualizar</button>
       <button class="btn small" id="btnGuardar">Guardar borrador</button>
       <button class="btn secondary small" id="btnFinalizar">Finalizar → DOCX</button>
       <span id="persistBadge" class="pill" style="display:none"></span>
       <span id="persistInfo" class="hint" style="margin:0"></span>
+    </div>
+    <div id="panelActualizar" style="display:none;margin-top:10px;padding:12px;border:1px solid var(--acc);border-radius:8px;background:rgba(90,160,255,.07)">
+      <div id="actualizarResumen" style="font-size:13px;margin-bottom:10px"></div>
+      <div class="row" style="align-items:flex-end">
+        <div style="max-width:180px"><label>Nuevo corte (AAAA-MM)</label><input id="actMesFinal" placeholder="2026-07"></div>
+        <button class="btn small" id="btnActualizarOk">Crear actualización</button>
+        <button class="btn secondary small" id="btnActualizarCancelar">Cancelar</button>
+        <span class="hint" id="actInfo" style="margin:0"></span>
+      </div>
     </div>
     <p class="hint" style="margin-top:8px">El borrador se guarda en la base de la app (SQLite), ligado al cliente. "Finalizar" corre el motor, exige los 9 invariantes y deja el periodo inmutable con su DOCX.</p>
   </div>
@@ -609,6 +620,11 @@ function addDeudaRow(d={}){
     tr.appendChild(td);
   });
   const tdx=el("td"); const b=el("button",{className:"btn secondary small"},"X"); b.onclick=()=>tr.remove(); tdx.appendChild(b); tr.appendChild(tdx);
+  // Campos que el motor usa pero la tabla no muestra: se guardan tal cual y
+  // se devuelven al leer, para que abrir y validar no los pierda.
+  const ocultos={};
+  Object.keys(d||{}).forEach(k=>{ if(!DEUDA_COLS.includes(k)) ocultos[k]=d[k]; });
+  if(Object.keys(ocultos).length) tr.dataset.extra=JSON.stringify(ocultos);
   t.appendChild(tr);
 }
 function readDeudas(){
@@ -625,6 +641,7 @@ function readDeudas(){
     // Enviar la fila si tiene ALGÚN dato real. Las deudas SIBOIF vienen sin
     // número (es agregado); antes se descartaban por exigir número y no
     // llegaban al motor -> ESF sin esos pasivos.
+    if(tr.dataset.extra){ try{ Object.assign(d, JSON.parse(tr.dataset.extra)); }catch(e){} }
     const tieneNumero = d.numero && String(d.numero).trim();
     const tieneSaldo = d.saldo_reportado != null && d.saldo_reportado !== 0;
     const tieneEntidad = d.entidad && String(d.entidad).trim();
@@ -1140,6 +1157,11 @@ document.getElementById("selCliente").onchange=()=>{ cargarPeriodos(); cargarDoc
 document.getElementById("btnExtraerDeudas").onclick=extraerDeudasReporte;
 document.getElementById("btnNuevo").onclick=nuevoDesdeCliente;
 document.getElementById("btnAbrir").onclick=abrirPeriodo;
+document.getElementById("selPeriodo").addEventListener("change", togglePanelActualizar);
+document.getElementById("btnActualizar").onclick=abrirPanelActualizar;
+document.getElementById("btnActualizarOk").onclick=crearActualizacion;
+document.getElementById("btnActualizarCancelar").onclick=()=>{
+  document.getElementById("panelActualizar").style.display="none"; };
 document.getElementById("btnGuardar").onclick=guardarBorradorDB;
 document.getElementById("btnFinalizar").onclick=finalizarPeriodo;
 document.getElementById("btnCrearNuevoCliente").onclick=()=>toggleNuevoCliente(true);
@@ -1180,6 +1202,63 @@ async function cargarClientes(){
     });
   }catch(e){ setEstado("No se pudo cargar clientes: "+e.message); }
 }
+let periodosCache=[];
+
+// "Actualizar" solo tiene sentido sobre una certificacion ya emitida: un
+// borrador se abre y se edita, no se extiende.
+function periodoSeleccionado(){
+  const id=document.getElementById("selPeriodo").value;
+  return periodosCache.find(p=>String(p.id)===String(id))||null;
+}
+function togglePanelActualizar(){
+  const p=periodoSeleccionado();
+  const puede=!!p && ["finalizado","certificado"].includes(p.estado);
+  document.getElementById("btnActualizar").style.display=puede?"":"none";
+  if(!puede) document.getElementById("panelActualizar").style.display="none";
+}
+function _mesSiguiente(mes){
+  let [y,m]=String(mes).split("-").map(Number); m+=1; if(m>12){m=1;y+=1;}
+  return `${y}-${String(m).padStart(2,"0")}`;
+}
+function abrirPanelActualizar(){
+  const p=periodoSeleccionado();
+  if(!p) return;
+  const sig=_mesSiguiente(p.mes_final);
+  document.getElementById("actMesFinal").value=sig;
+  document.getElementById("actualizarResumen").innerHTML=
+    "<b>Actualizar la certificación "+p.mes_inicial+".."+p.mes_final+"</b> (finalizada).<br>"+
+    "Los meses ya certificados se mantienen <b>exactos</b>; solo se agregan los nuevos. "+
+    "Sin reporte de crédito actualizado, la deuda continúa el plan ya certificado.<br>"+
+    "El documento original no se toca: esto crea un registro aparte.";
+  document.getElementById("actInfo").textContent="";
+  document.getElementById("panelActualizar").style.display="block";
+}
+async function crearActualizacion(){
+  const p=periodoSeleccionado();
+  const mes=(document.getElementById("actMesFinal").value||"").trim();
+  const info=document.getElementById("actInfo");
+  if(!p) return;
+  if(!/^\d{4}-\d{2}$/.test(mes)){ info.textContent="Formato AAAA-MM (ej. 2026-07)."; info.style.color="var(--err)"; return; }
+  const btn=document.getElementById("btnActualizarOk"); btn.disabled=true;
+  info.style.color="var(--muted)"; info.textContent="Creando…";
+  try{
+    const r=await fetch("/api/motor/v2/periodos/"+p.id+"/actualizar",
+      {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mes_final:mes})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(j.error||("HTTP "+r.status));
+    document.getElementById("panelActualizar").style.display="none";
+    await cargarPeriodos();
+    document.getElementById("selPeriodo").value=j.periodo.id;
+    await abrirPeriodo();
+    const c=j.continuacion||{};
+    setEstado("Actualización creada: se congelaron "+(c.meses_congelados||[]).length+
+              " meses y se agregó "+(c.meses_nuevos||[]).join(", ")+
+              ". Fecha del documento: "+(c.fecha_certificacion||"")+
+              ". Revisá el mes nuevo y Validá.");
+  }catch(e){ info.textContent="No se pudo actualizar: "+e.message; info.style.color="var(--err)"; }
+  finally{ btn.disabled=false; }
+}
+
 async function cargarPeriodos(){
   const cid=document.getElementById("selCliente").value;
   const s=document.getElementById("selPeriodo");
@@ -1187,9 +1266,14 @@ async function cargarPeriodos(){
   if(!cid) return;
   try{
     const j=await fetchJson("/api/motor/v2/periodos?cliente_id="+encodeURIComponent(cid));
-    (j.periodos||[]).forEach(p=>{
-      s.appendChild(el("option",{value:p.id}, p.mes_inicial+".."+p.mes_final+" · "+p.estado));
+    periodosCache=j.periodos||[];
+    periodosCache.forEach(p=>{
+      const etiqueta = p.periodo_anterior_id
+        ? "Actualización "+p.mes_inicial+".."+p.mes_final+" · "+p.estado
+        : p.mes_inicial+".."+p.mes_final+" · "+p.estado;
+      s.appendChild(el("option",{value:p.id}, etiqueta));
     });
+    togglePanelActualizar();
   }catch(e){ setEstado("No se pudo listar certificaciones: "+e.message); }
 }
 async function nuevoDesdeCliente(){

@@ -18,7 +18,7 @@ se mantiene constante entre periodos).
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Mapping
 
 from sqlalchemy import select
@@ -57,6 +57,15 @@ _CUENTAS_CORTE = [
     "retiros_acumulados",
     "total_activos", "total_pasivos", "total_patrimonio",
 ]
+
+
+def _fecha_emision(hoy: date | None = None) -> date:
+    """Fecha del documento nuevo: hoy, salvo que caiga domingo.
+
+    Un documento fechado en domingo levanta preguntas en el banco (la
+    oficina del CPA no atiende), asi que se corre al dia habil anterior."""
+    d = hoy or date.today()
+    return d - timedelta(days=1) if d.weekday() == 6 else d
 
 
 class MotorV2Service:
@@ -145,6 +154,59 @@ class MotorV2Service:
         except Exception:
             self.session.rollback()
             raise
+
+    # ------------------------------------------------- actualizar (extender)
+    def actualizar_certificacion(
+        self,
+        periodo_id: str,
+        nuevo_mes_final: str,
+        *,
+        cpa_user: str = "system",
+    ) -> dict:
+        """Nuevo borrador que extiende una certificacion ya emitida.
+
+        El documento original NO se toca: queda finalizado con su DOCX. Este
+        es un registro aparte, vinculado, con los meses ya certificados
+        congelados cifra por cifra (ver motor/continuacion).
+
+        Para encadenar (jul -> ago) se actualiza desde la ULTIMA finalizada,
+        no desde la original: asi cada actualizacion congela todo lo emitido
+        hasta ese momento.
+        """
+        from motor.continuacion import preparar_continuacion
+
+        anterior = self._get_v2(periodo_id)
+        if anterior.estado not in {"finalizado", "certificado"}:
+            raise PeriodoConflictError(
+                "Solo se puede actualizar una certificacion finalizada. Estado "
+                f"actual: '{anterior.estado}'."
+            )
+        inputs_previos = parse_json_object(anterior.payload_json)
+        try:
+            body = preparar_continuacion(inputs_previos, str(nuevo_mes_final).strip())
+        except ValueError as exc:
+            raise PeriodoValidationError(str(exc)) from exc
+
+        datos = dict(body.get("datos") or {})
+        datos["fecha_certificacion"] = _fecha_emision().isoformat()
+        body["datos"] = datos
+
+        creado = self.crear_borrador(anterior.cliente_id, body, cpa_user=cpa_user)
+        nuevo = self._get_v2(creado["periodo"]["id"])
+        nuevo.periodo_anterior_id = anterior.id
+        nuevo.saldos_iniciales_origen = "rollforward"
+        self.session.commit()
+        meta = body.get("_continua_de") or {}
+        return {
+            "periodo": periodo_to_basic_dict(nuevo),
+            "inputs": body,
+            "continuacion": {
+                "periodo_anterior": f"{anterior.mes_inicial}..{anterior.mes_final}",
+                "meses_congelados": meta.get("meses_congelados") or [],
+                "meses_nuevos": meta.get("meses_nuevos") or [],
+                "fecha_certificacion": datos["fecha_certificacion"],
+            },
+        }
 
     # -------------------------------------------------------------- update
     def actualizar(

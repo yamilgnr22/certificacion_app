@@ -93,6 +93,9 @@ def periodo_to_basic_dict(periodo: PeriodoCertificacion) -> dict[str, Any]:
         "created_at": iso(periodo.created_at),
         "updated_at": iso(periodo.updated_at),
         "finalized_at": iso(periodo.finalized_at),
+        # Si viene de actualizar una certificacion ya emitida, la pantalla la
+        # muestra distinto para no confundirla con la original.
+        "periodo_anterior_id": getattr(periodo, "periodo_anterior_id", None),
     }
 
 

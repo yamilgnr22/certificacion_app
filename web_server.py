@@ -1405,6 +1405,21 @@ def motor_v2_actualizar_periodo(periodo_id: str):
         return _service_error_response(exc)
 
 
+@app.post("/api/motor/v2/periodos/<periodo_id>/actualizar")
+def motor_v2_actualizar_certificacion(periodo_id: str):
+    """Extiende una certificacion ya emitida hasta un nuevo mes de corte.
+
+    Crea un borrador APARTE (el documento original no se toca) con los meses
+    ya certificados congelados cifra por cifra."""
+    try:
+        body = request.get_json(silent=True) or {}
+        return MotorV2Service(_db_session()).actualizar_certificacion(
+            periodo_id, str(body.get("mes_final") or ""), cpa_user=_cpa_user()
+        )
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
 @app.post("/api/motor/v2/periodos/<periodo_id>/finalizar")
 def motor_v2_finalizar_periodo(periodo_id: str):
     try:
