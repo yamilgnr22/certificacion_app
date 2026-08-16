@@ -999,12 +999,17 @@ function renderResultado(j, status){
   (v.alertas||[]).forEach(e=> h+=`<div class="msg warn">inv#${e.invariante}: ${e.mensaje}</div>`);
   R.innerHTML=h; setEstado("");
 }
-// Cuarta metrica: que tan lejos quedo la utilidad promedio del objetivo.
-// Verde dentro del margen, rojo fuera. Sin objetivo fijado se muestra el
-// Total Activos de siempre.
+// Cuarta metrica: la utilidad promedio mensual, que es la cifra por la que
+// pregunta el banco. Con objetivo fijado se pinta verde si lo alcanza y rojo
+// si queda debajo; sin objetivo se muestra igual, en neutro.
 function kpiUtilidadObjetivo(u, res){
-  if(!u) return `<div class="kpi"><div class="l">Total Activos</div>`+
-                `<div class="v">${fmt(res.total_activos_corte)}</div></div>`;
+  if(!u){
+    const tc=parseFloat((readFields("periodo").tasa_cambio)||0)||0;
+    const enUsd=tc>0 ? ` ≈ ${fmt(res.utilidad_promedio/tc)} USD` : "";
+    return `<div class="kpi"><div class="l">Utilidad promedio mensual</div>`+
+           `<div class="v">${fmt(res.utilidad_promedio)}</div>`+
+           `<div class="sub">NIO por mes${enUsd}</div></div>`;
+  }
   const usd=u.moneda==="USD";
   const prom=fmt(usd?u.promedio_usd:u.promedio_nio)+(usd?" USD":"");
   const obj=fmt(usd?u.objetivo_usd:u.objetivo_nio)+(usd?" USD":"");
