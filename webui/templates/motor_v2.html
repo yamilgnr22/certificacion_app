@@ -872,6 +872,35 @@ function _movimientoCapital(j){
   filas.push(rec("Capital al cierre (el del balance)", fin));
   return filas;
 }
+// De donde sale cada retiro: el motor deja la caja del mes dentro de su
+// banda y lo que sobra se lo lleva el dueño. Sin esta tabla el retiro es un
+// numero sin origen; aca se ve contra que techo se midio.
+function _calculoRetiros(j){
+  if(!j || !j.caja_objetivo || !j.mov || !j.mov.length) return null;
+  const fila=n=>(j.mov||[]).find(r=>String(r.Concepto||"").trim()===n);
+  const retiros=fila("Retiros de patrimonio"), finales=fila("Saldo final de caja");
+  const aportes=fila("Aporte del propietario");
+  if(!retiros || !finales) return null;
+  const meses=Object.keys(j.mov[0]).filter(k=>k!=="Concepto").sort();
+  const antes=[], techo=[], ret=[], fin=[];
+  meses.forEach(m=>{
+    const r=Number(retiros[m])||0, a=Number((aportes||{})[m])||0;
+    const f=Number(finales[m])||0;
+    // caja_fin = natural - retiro + aporte  =>  natural = caja_fin + retiro - aporte
+    // (en el flujo el retiro ya viene en negativo, por eso se resta)
+    antes.push(Math.round(f - r - a));
+    techo.push(Math.round(Number(j.caja_objetivo[m])||0));
+    ret.push(r); fin.push(f);
+  });
+  if(!ret.some(v=>v)) return null;   // sin retiros no hay nada que explicar
+  const rec=(c, vals)=>{ const o={Concepto:c}; meses.forEach((m,i)=>o[m]=vals[i]); return o; };
+  return [
+    rec("Caja del mes antes del retiro", antes),
+    rec("Techo de la banda de caja", techo),
+    rec("(=) Excedente: sale como retiro", ret),
+    rec("Caja final (queda en la banda)", fin),
+  ];
+}
 function renderPreviewEstados(j){
   const cont=document.getElementById("previewEstados");
   cont.innerHTML="";
@@ -886,6 +915,8 @@ function renderPreviewEstados(j){
   // entradas - salidas = saldo final, que es el inicial del mes siguiente.
   const mov=_tablaDesdeRecords(j.mov);
   if(mov) bloques.push(["💵 Flujo de caja (cómo se llega a cada saldo de Efectivo)", mov, false]);
+  const ret=_tablaDesdeRecords(_calculoRetiros(j));
+  if(ret) bloques.push(["✂️ Cálculo del retiro del propietario (de dónde sale cada retiro)", ret, false]);
   const cap=_tablaDesdeRecords(_movimientoCapital(j));
   if(cap) bloques.push(["🏦 Movimiento del Capital (cómo se llega al saldo del balance)", cap, false]);
   bloques.forEach(([titulo, tabla, abierto])=>{

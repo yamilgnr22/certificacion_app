@@ -264,6 +264,7 @@ def construir_tipo_b(
             pago_compras_inventario=pago_compras,
             retiro_patrimonio=retiro,
             aporte_propietario=aporte,
+            caja_objetivo=caja_deseada,
         ))
 
         # ----- ESF del mes

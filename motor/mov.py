@@ -55,6 +55,10 @@ class MovMes:
     pago_compras_inventario: float = 0.0  # compras totales pagadas (incluyen cogs)
     retiro_patrimonio: float = 0.0  # excedente de caja retirado (contra Result. Acumulados)
     aporte_propietario: float = 0.0  # plata que mete el dueño cuando la caja no da
+    # Solo Tipo B: techo de la banda de caja de ESE mes (objetivo x (1+osc)).
+    # Es contra lo que se mide el excedente que sale como retiro; sin
+    # guardarlo, el retiro queda como un numero sin origen visible.
+    caja_objetivo: float = 0.0
 
 
 @dataclass(frozen=True)

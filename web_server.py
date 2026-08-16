@@ -1236,6 +1236,11 @@ def motor_v2_certificar():
             # punto de partida del movimiento de la cuenta Capital: el ESF la
             # muestra ya neta de retiros y no deja ver como se llego ahi.
             "capital_apertura": round(float(modelo.esf.capital_apertura), 2),
+            # Techo de la banda de caja por mes (Tipo B): contra el se mide el
+            # excedente que sale como retiro del propietario.
+            "caja_objetivo": {
+                m.mes: round(float(m.caja_objetivo), 2) for m in modelo.mov.movs
+            },
             # ER efectivamente usado (clave en er_modo=generado: la serie
             # producida por base+bandas, para mostrarla en la UI).
             "er_mensual_efectivo": [asdict(l) for l in modelo.inputs.er_mensual],
