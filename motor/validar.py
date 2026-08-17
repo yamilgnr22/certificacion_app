@@ -19,6 +19,12 @@ from motor.mov import CalculoMov
 
 TOLERANCIA = 1.0  # NIO
 
+# El balance NO admite tolerancia. El motor trabaja en cordobas enteros, asi
+# que Activos = Pasivo+Patrimonio tiene que dar exacto; con TOLERANCIA (y la
+# comparacion siendo ">") un descuadre de exactamente 1 pasaba sin avisar y
+# llegaba impreso al documento. El banco lo suma a mano y lo ve.
+TOLERANCIA_BALANCE = 0.5  # NIO
+
 
 @dataclass(frozen=True)
 class Hallazgo:
@@ -91,9 +97,9 @@ def _invariantes_comunes(
         if p.alerta:
             r.add(1, "alerta", p.alerta)
 
-    # ---- #4 Balance cuadra cada mes
+    # ---- #4 Balance cuadra cada mes (exacto, sin tolerancia)
     for e in calculo_esf.meses:
-        if abs(e.diferencia) > TOLERANCIA:
+        if abs(e.diferencia) > TOLERANCIA_BALANCE:
             r.add(4, "error", (
                 f"Mes {e.mes}: Activos {e.total_activos:,.2f} != "
                 f"Pasivo+Patrimonio {e.total_pasivo_patrimonio:,.2f} "

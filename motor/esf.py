@@ -173,11 +173,25 @@ def _capital_apertura(saldos_iniciales: ESF_Saldos) -> float:
 
     Se resta Resultados Acumulados porque es la otra cuenta de patrimonio de
     apertura: sin restarla el balance del mes 0 no cuadra cuando RA0 != 0.
-    Si el cliente envia Capital explicito, se valida (bloqueante)."""
+    Si el cliente envia Capital explicito, se valida (bloqueante).
+
+    Cada cuenta se redondea ANTES de sumar, igual que hace el ESF. Sumar los
+    saldos con decimales y redondear al final da otro numero: redondear(a+b)
+    no siempre es redondear(a)+redondear(b), y esa diferencia aparecia como
+    un descuadre de 1 cordoba entre Activos y Pasivo+Patrimonio."""
+    campos_activo = (
+        "efectivo", "cuentas_por_cobrar", "inventarios", "bienes_inmuebles",
+        "mobiliario_equipos", "vehiculos", "depreciacion_acumulada",
+    )
+    campos_pasivo = (
+        "tarjetas_credito", "proveedores", "impuestos_por_pagar", "gastos_acumulados",
+        "creditos_hipotecarios", "creditos_consumo", "creditos_personales",
+        "creditos_prendarios", "creditos_comerciales",
+    )
+    activos = sum(_redondear(getattr(saldos_iniciales, c)) for c in campos_activo)
+    pasivos = sum(_redondear(getattr(saldos_iniciales, c)) for c in campos_pasivo)
     calculado = _redondear(
-        saldos_iniciales.total_activos()
-        - saldos_iniciales.total_pasivos()
-        - saldos_iniciales.resultados_acumulados
+        activos - pasivos - _redondear(saldos_iniciales.resultados_acumulados)
     )
     enviado = saldos_iniciales.capital
     if enviado is not None:

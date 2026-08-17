@@ -197,5 +197,49 @@ class SubtotalesDelESFTest(unittest.TestCase):
         self.assertLess(e.total_activos_no_corrientes, bruto + 1.0)
 
 
+class BalanceExactoTest(unittest.TestCase):
+    """El balance cuadra al cordoba, sin tolerancia.
+
+    Bug real: los saldos iniciales del cliente traen decimales; el capital de
+    apertura se calculaba sumandolos y redondeando al final, mientras el ESF
+    redondea cada cuenta por separado. redondear(a+b) != redondear(a)+
+    redondear(b), asi que aparecia 1 cordoba de descuadre — y como la
+    validacion usaba '> 1.0', pasaba sin avisar y llegaba impreso.
+    """
+
+    def _modelo(self, **saldos):
+        er = [ER_LineaMes(mes=m, ingresos=100_000.0, costo_ventas=60_000.0)
+              for m in ("2026-01", "2026-02", "2026-03")]
+        si = ESF_Saldos(**saldos)
+        utilidad = 40_000.0 * 3
+        sf = ESF_Saldos(**{**saldos,
+                           "efectivo": round(saldos.get("efectivo", 0.0) + utilidad, 2)})
+        return certificar_tipo_a(InputsTipoA(
+            periodo=PeriodoSpec(tipo="A", mes_inicial="2026-01", mes_final="2026-03",
+                                tasa_cambio=36.6243),
+            datos=_datos(), er_mensual=er, saldos_iniciales=si, saldos_finales=sf))
+
+    def test_saldos_con_decimales_cuadran_exacto(self):
+        # Cada cuenta con .4: sumadas dan .8 (redondea a +1), por separado
+        # redondean a 0. Ese era el origen del descuadre.
+        m = self._modelo(efectivo=100_000.4, inventarios=200_000.4)
+        for e in m.esf.meses:
+            self.assertEqual(e.diferencia, 0.0, f"{e.mes} descuadra {e.diferencia}")
+
+    def test_varias_combinaciones_de_centavos(self):
+        for ef, inv, cxc in ((0.5, 0.5, 0.5), (0.6, 0.6, 0.9), (0.49, 0.49, 0.49),
+                             (0.99, 0.01, 0.5), (0.25, 0.75, 0.5)):
+            m = self._modelo(efectivo=100_000 + ef, inventarios=200_000 + inv,
+                             cuentas_por_cobrar=50_000 + cxc)
+            peor = max(abs(e.diferencia) for e in m.esf.meses)
+            self.assertEqual(peor, 0.0, f"centavos {ef}/{inv}/{cxc} descuadran {peor}")
+
+    def test_un_descuadre_de_un_cordoba_seria_error(self):
+        # La validacion ya no lo deja pasar: la tolerancia del balance es 0.5.
+        from motor.validar import TOLERANCIA_BALANCE
+        self.assertLess(TOLERANCIA_BALANCE, 1.0,
+                        "con tolerancia 1.0 un descuadre de 1 pasaba sin avisar")
+
+
 if __name__ == "__main__":
     unittest.main()
