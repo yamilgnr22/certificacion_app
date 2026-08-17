@@ -144,6 +144,8 @@
       <button class="btn secondary small" id="btnCrearNuevoCliente">➕ Crear nuevo cliente</button>
       <button class="btn secondary small" id="btnNuevo" title="Empieza una certificación nueva en blanco para el cliente seleccionado">Nueva certificación</button>
       <button class="btn secondary small" id="btnAbrir" title="Retoma una certificación guardada de la lista de la derecha">Abrir guardada</button>
+      <button class="btn secondary small" id="btnReabrir" style="display:none"
+        title="Vuelve la certificación a borrador para corregir un error detectado ANTES de entregar el documento">↺ Reabrir para corregir</button>
       <button class="btn secondary small" id="btnActualizar" style="display:none"
         title="Extiende una certificación ya emitida hasta un corte posterior, sin cambiar ninguna cifra de los meses ya firmados">⟳ Actualizar</button>
       <button class="btn small" id="btnGuardar">Guardar borrador</button>
@@ -1159,6 +1161,7 @@ document.getElementById("btnNuevo").onclick=nuevoDesdeCliente;
 document.getElementById("btnAbrir").onclick=abrirPeriodo;
 document.getElementById("selPeriodo").addEventListener("change", togglePanelActualizar);
 document.getElementById("btnActualizar").onclick=abrirPanelActualizar;
+document.getElementById("btnReabrir").onclick=reabrirPeriodo;
 document.getElementById("btnActualizarOk").onclick=crearActualizacion;
 document.getElementById("btnActualizarCancelar").onclick=()=>{
   document.getElementById("panelActualizar").style.display="none"; };
@@ -1214,6 +1217,7 @@ function togglePanelActualizar(){
   const p=periodoSeleccionado();
   const puede=!!p && ["finalizado","certificado"].includes(p.estado);
   document.getElementById("btnActualizar").style.display=puede?"":"none";
+  document.getElementById("btnReabrir").style.display=puede?"":"none";
   if(!puede) document.getElementById("panelActualizar").style.display="none";
 }
 function _mesSiguiente(mes){
@@ -1233,6 +1237,29 @@ function abrirPanelActualizar(){
   document.getElementById("actInfo").textContent="";
   document.getElementById("panelActualizar").style.display="block";
 }
+async function reabrirPeriodo(){
+  const p=periodoSeleccionado();
+  if(!p) return;
+  if(!window.confirm(
+      "Vas a REABRIR la certificación "+p.mes_inicial+".."+p.mes_final+" para corregirla.\n\n"+
+      "Hacelo solo si el documento NO salió del estudio: si ya lo entregaste, el banco "+
+      "tendría dos documentos distintos con el mismo membrete.\n\n"+
+      "Queda registrado en la auditoría. ¿Continuar?")) return;
+  const motivo=window.prompt("¿Qué se va a corregir? (queda en la auditoría)","")||"";
+  setEstado("Reabriendo…");
+  try{
+    const r=await fetch("/api/motor/v2/periodos/"+p.id+"/reabrir",
+      {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({motivo})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(j.error||("HTTP "+r.status));
+    await cargarPeriodos();
+    document.getElementById("selPeriodo").value=p.id;
+    await abrirPeriodo();
+    setEstado("Certificación reabierta como borrador. Corregí, Validá y volvé a Finalizar: "+
+              "el DOCX se regenera y reemplaza al anterior.");
+  }catch(e){ setEstado("No se pudo reabrir: "+e.message); }
+}
+
 async function crearActualizacion(){
   const p=periodoSeleccionado();
   const mes=(document.getElementById("actMesFinal").value||"").trim();

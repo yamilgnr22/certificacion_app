@@ -293,6 +293,67 @@ class MotorV2PersistenciaTest(unittest.TestCase):
         self.assertEqual(lista2, [])
         self.assertEqual(self.client.get(f"/api/documentos/{doc['id']}/archivo").status_code, 404)
 
+
+    # ---------------------------------------- reabrir para corregir
+    def test_reabrir_devuelve_a_borrador(self):
+        """El CPA detecta un error DESPUES de finalizar y antes de entregar."""
+        cid = self.crear_cliente()
+        pid = self.client.post("/api/motor/v2/periodos",
+                               json={"cliente_id": cid, "inputs": gloria_inputs()}).get_json()["periodo"]["id"]
+        self.assertEqual(self.client.post(f"/api/motor/v2/periodos/{pid}/finalizar").status_code, 200)
+
+        r = self.client.post(f"/api/motor/v2/periodos/{pid}/reabrir",
+                             json={"motivo": "salto raro en hipotecarios"})
+        self.assertEqual(r.status_code, 200, r.get_json())
+        self.assertEqual(r.get_json()["periodo"]["estado"], "borrador")
+        self.assertIsNone(r.get_json()["periodo"]["finalized_at"])
+
+        # Y vuelve a ser editable
+        inputs = gloria_inputs()
+        inputs["saldos_iniciales"]["creditos_hipotecarios"] = 100_000
+        self.assertEqual(
+            self.client.put(f"/api/motor/v2/periodos/{pid}", json={"inputs": inputs}).status_code, 200)
+
+    def test_reabrir_un_borrador_es_conflicto(self):
+        cid = self.crear_cliente()
+        pid = self.client.post("/api/motor/v2/periodos",
+                               json={"cliente_id": cid, "inputs": gloria_inputs()}).get_json()["periodo"]["id"]
+        self.assertEqual(self.client.post(f"/api/motor/v2/periodos/{pid}/reabrir").status_code, 409)
+
+    def test_no_se_reabre_si_ya_tiene_una_actualizacion_encima(self):
+        # Corregir el original dejaria a la actualizacion apoyada en cifras
+        # que cambiaron.
+        cid = self.crear_cliente()
+        pid = self.client.post("/api/motor/v2/periodos",
+                               json={"cliente_id": cid, "inputs": gloria_inputs()}).get_json()["periodo"]["id"]
+        self.client.post(f"/api/motor/v2/periodos/{pid}/finalizar")
+        r = self.client.post(f"/api/motor/v2/periodos/{pid}/actualizar", json={"mes_final": "2026-06"})
+        self.assertEqual(r.status_code, 200, r.get_json())
+        self.assertEqual(self.client.post(f"/api/motor/v2/periodos/{pid}/reabrir").status_code, 409)
+
+    def test_actualizar_exige_una_certificacion_finalizada(self):
+        cid = self.crear_cliente()
+        pid = self.client.post("/api/motor/v2/periodos",
+                               json={"cliente_id": cid, "inputs": gloria_inputs()}).get_json()["periodo"]["id"]
+        r = self.client.post(f"/api/motor/v2/periodos/{pid}/actualizar", json={"mes_final": "2026-06"})
+        self.assertEqual(r.status_code, 409)
+
+    def test_actualizar_crea_un_registro_aparte_vinculado(self):
+        cid = self.crear_cliente()
+        pid = self.client.post("/api/motor/v2/periodos",
+                               json={"cliente_id": cid, "inputs": gloria_inputs()}).get_json()["periodo"]["id"]
+        self.client.post(f"/api/motor/v2/periodos/{pid}/finalizar")
+        r = self.client.post(f"/api/motor/v2/periodos/{pid}/actualizar", json={"mes_final": "2026-06"})
+        self.assertEqual(r.status_code, 200, r.get_json())
+        nuevo = r.get_json()["periodo"]
+        self.assertNotEqual(nuevo["id"], pid)
+        self.assertEqual(nuevo["periodo_anterior_id"], pid)
+        self.assertEqual(nuevo["estado"], "borrador")
+        self.assertEqual(nuevo["mes_final"], "2026-06")
+        # El original queda intacto
+        viejo = self.client.get(f"/api/motor/v2/periodos/{pid}").get_json()["periodo"]
+        self.assertEqual(viejo["estado"], "finalizado")
+
     def test_documento_cambiar_tipo(self):
         """Arrastrar una imagen a otra casilla de la hoja: antes habia que
         borrarla de la biblioteca y volver a subirla."""

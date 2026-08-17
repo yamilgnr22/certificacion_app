@@ -152,6 +152,53 @@ def _invariantes_comunes(
             ))
 
 
+_CUENTAS_CREDITO_ESF = [
+    ("creditos_hipotecarios", "Créditos Hipotecarios"),
+    ("creditos_prendarios", "Créditos Prendarios"),
+    ("creditos_consumo", "Créditos Consumo"),
+    ("creditos_personales", "Créditos Personales"),
+    ("creditos_comerciales", "Créditos Comerciales"),
+]
+
+
+def _invariante_salto_de_pasivo(r: ResultadoValidacion, calculo_esf: CalculoESF) -> None:
+    """#12 Ningun credito salta de golpe en un solo mes.
+
+    Caso real (Yader): los hipotecarios bajaban suave de 1,272,772 a
+    1,198,093 y en el mes de corte saltaban a 1,627,601. Eso pasa cuando la
+    apertura del credito quedo subestimada y el motor tiene que reponer la
+    diferencia contra el saldo del reporte. Un hipotecario que sube 430 mil
+    en un mes no se puede explicar ante un banco, y hasta ahora solo se
+    notaba al imprimir el documento.
+
+    Se compara el movimiento de cada mes contra el movimiento tipico de esa
+    misma cuenta: si uno se dispara respecto de los demas Y pesa sobre el
+    saldo, se avisa. Las tarjetas quedan fuera: son revolving y moverse es
+    lo suyo."""
+    meses = calculo_esf.meses
+    if len(meses) < 4:
+        return  # con dos o tres meses no hay "movimiento tipico" que comparar
+    for cuenta, nombre in _CUENTAS_CREDITO_ESF:
+        saldos = [getattr(e, cuenta, 0.0) for e in meses]
+        if max(saldos) <= 0:
+            continue
+        deltas = [saldos[i] - saldos[i - 1] for i in range(1, len(saldos))]
+        magnitudes = sorted(abs(d) for d in deltas)
+        tipico = magnitudes[len(magnitudes) // 2]  # mediana
+        for i, delta in enumerate(deltas):
+            mes = meses[i + 1].mes
+            desproporcionado = abs(delta) > max(5.0 * tipico, TOLERANCIA)
+            pesa = abs(delta) > 0.05 * max(saldos)
+            if desproporcionado and pesa:
+                direccion = "subio" if delta > 0 else "bajo"
+                r.add(12, "alerta", (
+                    f"Mes {mes}: '{nombre}' {direccion} {abs(delta):,.0f} NIO de un mes "
+                    f"al otro, contra un movimiento habitual de {tipico:,.0f}. "
+                    f"Suele ser el saldo de apertura del credito mal estimado: "
+                    f"declaralo en los saldos iniciales para que la deuda baje pareja."
+                ))
+
+
 def medir_utilidad_objetivo(inputs, calculo_er: CalculoER) -> dict | None:
     """Que tan lejos quedo la utilidad promedio del piso que fijo el CPA.
 
@@ -239,6 +286,7 @@ def validar_tipo_a(
     _invariantes_comunes(r, inputs, planes, calculo_er, calculo_mov, calculo_esf)
     _invariantes_solver(r, inputs, solver)
     _invariante_utilidad_objetivo(r, inputs, calculo_er)
+    _invariante_salto_de_pasivo(r, calculo_esf)
 
     # ---- #2 Tipo A: ESF corte = saldos finales dados (por cuenta)
     corte = calculo_esf.corte()
@@ -267,6 +315,7 @@ def validar_tipo_b(
     _invariantes_comunes(r, inputs, planes, calculo_er, calculo_mov, calculo_esf)
     _invariantes_solver(r, inputs, solver)
     _invariante_utilidad_objetivo(r, inputs, calculo_er)
+    _invariante_salto_de_pasivo(r, calculo_esf)
 
     # ---- #3 Bandas de oscilacion
     obj_caja = inputs.objetivo("efectivo")

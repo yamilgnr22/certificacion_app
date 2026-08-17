@@ -362,5 +362,62 @@ class UtilidadObjetivoTest(unittest.TestCase):
             UtilidadObjetivo(monto=-1)
 
 
+class SaltoDePasivoTest(unittest.TestCase):
+    """Un credito que salta en un solo mes: el error que solo se veia al
+    imprimir el documento (caso Yader, hipotecarios +429,508 en el corte)."""
+
+    def _modelo(self, saldos_credito):
+        er = [ER_LineaMes(mes=m, ingresos=500_000, costo_ventas=300_000) for m in MESES]
+        from motor.inputs import DeudaInput
+        deuda = DeudaInput(
+            numero="7001", entidad="BAC", tipo_credito="CARTERA HIPOTECARIA",
+            estrategia="amortizable", moneda="NIO", valor_inicial=2_000_000,
+            saldo_reportado=saldos_credito[MESES[-1]], cuota=25_000,
+            fecha_otorgamiento=date(2015, 1, 1), fecha_actualizado=date(2026, 6, 30),
+            saldo_apertura=saldos_credito[MESES[0]], saldos_mensuales=saldos_credito,
+        )
+        activos = 3_000_000
+        return certificar_tipo_a(InputsTipoA(
+            periodo=PeriodoSpec(tipo="A", mes_inicial=MESES[0], mes_final=MESES[-1], tasa_cambio=36.6),
+            datos=_datos(), er_mensual=er,
+            saldos_iniciales=ESF_Saldos(efectivo=activos,
+                                        creditos_hipotecarios=saldos_credito[MESES[0]]),
+            saldos_finales=ESF_Saldos(efectivo=0, creditos_hipotecarios=saldos_credito[MESES[-1]]),
+            deudas=[deuda]))
+
+    def _alertas(self, modelo):
+        return [h for h in modelo.validacion.alertas if h.invariante == 12]
+
+    def test_detecta_el_salto_en_el_mes_de_corte(self):
+        # Baja suave y en el ultimo mes se dispara: el patron del bug.
+        saldos = {m: 1_200_000 - i * 15_000 for i, m in enumerate(MESES)}
+        saldos[MESES[-1]] = 1_600_000
+        alertas = self._alertas(self._modelo(saldos))
+        self.assertTrue(alertas, "el salto tiene que avisar")
+        self.assertIn(MESES[-1], alertas[0].mensaje)
+        self.assertIn("Hipotecarios", alertas[0].mensaje)
+
+    def test_una_amortizacion_pareja_no_alerta(self):
+        saldos = {m: 1_200_000 - i * 15_000 for i, m in enumerate(MESES)}
+        self.assertFalse(self._alertas(self._modelo(saldos)))
+
+    def test_nunca_bloquea(self):
+        # El salto avisa pero no impide generar el documento: es una señal
+        # para el CPA, no una regla contable rota.
+        saldos = {m: 1_200_000 - i * 15_000 for i, m in enumerate(MESES)}
+        saldos[MESES[-1]] = 1_600_000
+        m = self._modelo(saldos)
+        self.assertFalse([h for h in m.validacion.errores if h.invariante == 12])
+        self.assertTrue([h for h in m.validacion.alertas if h.invariante == 12])
+
+    def test_no_alerta_por_un_movimiento_chico(self):
+        # Desproporcionado respecto de los demas, pero irrelevante contra el
+        # saldo: no ensucia la lista.
+        saldos = {m: 1_200_000 for m in MESES}
+        saldos[MESES[2]] = 1_199_000
+        saldos[MESES[3]] = 1_198_000
+        self.assertFalse(self._alertas(self._modelo(saldos)))
+
+
 if __name__ == "__main__":
     unittest.main()

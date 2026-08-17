@@ -268,6 +268,61 @@ class MotorV2Service:
         return [periodo_to_basic_dict(p) for p in self.session.scalars(stmt)]
 
     # ------------------------------------------------------------ finalize
+    def reabrir(self, periodo_id: str, *, motivo: str = "", cpa_user: str = "system") -> dict:
+        """Devuelve una certificacion finalizada a borrador para corregirla.
+
+        Existe para un caso concreto: el CPA detecta un error DESPUES de
+        finalizar y el documento todavia no salio del estudio. Si ya se
+        entrego, corregir en silencio seria peor que emitir una correccion:
+        el banco tendria dos documentos distintos con el mismo membrete y sin
+        rastro. Por eso el motivo queda en la auditoria y el documento
+        anterior se marca para regenerarse.
+
+        La inmutabilidad sigue siendo la regla: esto es la excepcion, es
+        explicita y deja huella.
+        """
+        periodo = self._get_v2(periodo_id)
+        if periodo.estado not in {"finalizado", "certificado"}:
+            raise PeriodoConflictError(
+                f"Solo se reabre una certificacion finalizada. Estado actual: '{periodo.estado}'."
+            )
+        if self.session.scalar(
+            select(PeriodoCertificacion).where(
+                PeriodoCertificacion.periodo_anterior_id == periodo.id
+            )
+        ):
+            raise PeriodoConflictError(
+                "Esta certificacion ya tiene una actualizacion que parte de sus "
+                "cifras. Corregirla ahora dejaria a la actualizacion apoyada en "
+                "numeros que cambiaron; revisa esa primero."
+            )
+        before = periodo_to_basic_dict(periodo)
+        try:
+            periodo.estado = "borrador"
+            periodo.finalized_at = None
+            periodo.recompute_required = True
+            self.session.flush()
+            after = periodo_to_basic_dict(periodo)
+            self.audit.log(
+                cpa_user=cpa_user,
+                entity_type="periodo",
+                entity_id=periodo.id,
+                action="reopen",
+                summary=(
+                    f"Reabrio la certificacion {periodo.mes_inicial}..{periodo.mes_final} "
+                    f"para corregirla" + (f": {motivo}" if motivo else "")
+                ),
+                before=before,
+                after=after,
+                metadata={"engine": "v2", "motivo": motivo,
+                          "documento_anterior": periodo.documento_path},
+            )
+            self.session.commit()
+            return {"periodo": after}
+        except Exception:
+            self.session.rollback()
+            raise
+
     def finalizar(self, periodo_id: str, *, cpa_user: str = "system") -> dict:
         """Corre el motor con los inputs guardados. Si la validacion pasa,
         guarda el DOCX (con notas), cachea saldos finales y finaliza.

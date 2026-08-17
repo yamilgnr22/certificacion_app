@@ -1405,6 +1405,21 @@ def motor_v2_actualizar_periodo(periodo_id: str):
         return _service_error_response(exc)
 
 
+@app.post("/api/motor/v2/periodos/<periodo_id>/reabrir")
+def motor_v2_reabrir_periodo(periodo_id: str):
+    """Devuelve una certificacion finalizada a borrador para corregirla.
+
+    Para el error detectado antes de entregar el documento. Queda en la
+    auditoria con el motivo."""
+    try:
+        body = request.get_json(silent=True) or {}
+        return MotorV2Service(_db_session()).reabrir(
+            periodo_id, motivo=str(body.get("motivo") or ""), cpa_user=_cpa_user()
+        )
+    except Exception as exc:
+        return _service_error_response(exc)
+
+
 @app.post("/api/motor/v2/periodos/<periodo_id>/actualizar")
 def motor_v2_actualizar_certificacion(periodo_id: str):
     """Extiende una certificacion ya emitida hasta un nuevo mes de corte.
