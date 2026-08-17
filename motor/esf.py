@@ -153,17 +153,25 @@ def _aperturas_credito(planes: list[PlanResuelto]) -> dict[str, float]:
 def _saldos_iniciales_efectivos(si: ESF_Saldos, aperturas: dict[str, float]) -> ESF_Saldos:
     """ESF_Saldos con las cuentas de credito resueltas.
 
-    Prioridad: lo que DECLARA el cliente manda. El saldo de apertura de una
-    cuenta de credito suele venir de una certificacion anterior (un ESF ya
-    emitido y firmado), asi que es un hecho, no algo a estimar; el modulo de
-    deuda ya recalibro las aperturas de los creditos contra el (ver
-    amortizacion._calibrar_aperturas). Solo cuando el cliente NO declara nada
-    (cuenta en 0) se usa la apertura derivada de los planes."""
+    Lo que DECLARA el cliente manda, pero como ANCLA del modulo de deuda: ese
+    total ya sirvio para recalibrar la apertura de cada credito (ver
+    amortizacion._calibrar_aperturas). Aca se toma el resultado de esa
+    calibracion, que es el saldo que el ESF va a mostrar mes a mes.
+
+    Por que el resultado y no el declarado: el total se reparte entre varios
+    creditos, muchos en dolares, y cada uno se convierte y redondea por
+    separado; la suma puede quedar un cordoba abajo del declarado. Si el
+    capital se calculara con el declarado y el balance mostrara la suma de
+    los planes, el ESF descuadraria por ese cordoba TODOS los meses — que es
+    justo lo que aparecia impreso en el documento.
+
+    Cuando ningun plan alimenta la cuenta (apertura 0) se respeta el saldo
+    declarado: ahi no hay nada que calibrar."""
     import dataclasses
 
     overrides: dict[str, float] = {}
     for cuenta, apertura in aperturas.items():
-        if apertura > 0.0 and abs(_redondear(getattr(si, cuenta))) <= TOLERANCIA:
+        if apertura > 0.0:
             overrides[cuenta] = apertura
     return dataclasses.replace(si, **overrides) if overrides else si
 

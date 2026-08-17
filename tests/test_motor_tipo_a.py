@@ -241,5 +241,50 @@ class BalanceExactoTest(unittest.TestCase):
                         "con tolerancia 1.0 un descuadre de 1 pasaba sin avisar")
 
 
+class AperturaDeclaradaVsPlanesTest(unittest.TestCase):
+    """El capital y el balance tienen que mirar el MISMO saldo de apertura.
+
+    Bug real (Yader): el CPA declara 1,707,054 de hipotecarios; el motor
+    reparte ese total entre tres creditos en dolares y, al convertir y
+    redondear cada uno, los planes suman 1,707,053. El capital se calculaba
+    con el declarado y el ESF mostraba la suma de los planes: 1 cordoba de
+    descuadre en TODOS los meses, impreso en el documento.
+    """
+
+    def _modelo(self, declarado):
+        from motor.inputs import DeudaInput
+        er = [ER_LineaMes(mes=m, ingresos=100_000.0, costo_ventas=60_000.0)
+              for m in ("2026-01", "2026-02", "2026-03")]
+        # Tres creditos en USD que reparten el total declarado.
+        deudas = [
+            DeudaInput(numero=str(7000 + i), entidad="BAC", tipo_credito="CARTERA HIPOTECARIA",
+                       estrategia="amortizable", moneda="USD", valor_inicial=20_000.0,
+                       saldo_reportado=s, cuota=162.0,
+                       fecha_otorgamiento=date(2015, 1, 1), fecha_actualizado=date(2026, 3, 31),
+                       fecha_vencimiento=date(2030, 1, 1))
+            for i, s in enumerate((9_557.65, 10_998.14, 3_157.45))
+        ]
+        return certificar_tipo_a(InputsTipoA(
+            periodo=PeriodoSpec(tipo="A", mes_inicial="2026-01", mes_final="2026-03",
+                                tasa_cambio=36.6243),
+            datos=_datos(), er_mensual=er,
+            saldos_iniciales=ESF_Saldos(efectivo=5_000_000.0, creditos_hipotecarios=declarado),
+            saldos_finales=ESF_Saldos(efectivo=5_120_000.0), deudas=deudas))
+
+    def test_el_balance_cuadra_aunque_el_reparto_pierda_un_cordoba(self):
+        for declarado in (1_707_054, 1_707_053, 1_707_055, 900_001, 1_234_567):
+            m = self._modelo(float(declarado))
+            peor = max(abs(e.diferencia) for e in m.esf.meses)
+            self.assertEqual(peor, 0.0, f"declarado {declarado:,} descuadra {peor}")
+
+    def test_el_capital_usa_la_apertura_de_los_planes(self):
+        # No la cifra declarada: la que el ESF va a arrastrar mes a mes.
+        from motor.esf import _aperturas_credito
+
+        m = self._modelo(1_707_054.0)
+        apertura = _aperturas_credito(m.planes)["creditos_hipotecarios"]
+        self.assertAlmostEqual(m.esf.capital_apertura, 5_000_000.0 - apertura, delta=0.5)
+
+
 if __name__ == "__main__":
     unittest.main()
