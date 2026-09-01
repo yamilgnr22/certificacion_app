@@ -400,8 +400,14 @@ function buildFields(containerId, defs, values={}){
     const w=el("div"); w.appendChild(el("label",{},l));
     let i;
     if(k==="tipo"){
-      i=el("select"); ["A","B"].forEach(o=>i.appendChild(el("option",{value:o},o)));
-      i.value=(values[k]||"A"); i.onchange=()=>toggleTipo();
+      // La pregunta que decide el regimen va EN la opcion: el CPA no tiene
+      // que recordar que significa "A" o "B" cada vez que abre la pantalla.
+      i=el("select");
+      [["A","A · SÍ tengo el balance de cierre del cliente"],
+       ["B","B · NO lo tengo — el motor proyecta el período"]]
+        .forEach(([v,txt])=>i.appendChild(el("option",{value:v},txt)));
+      i.value=(values[k]||"A");
+      i.onchange=()=>{ toggleTipo(); pistaTipo(); };
     } else if(k==="giro_negocio_id"){
       i=el("select"); i.appendChild(el("option",{value:""},"— seleccionar giro —"));
       (girosCache||[]).forEach(g=>i.appendChild(el("option",{value:g.id},g.nombre||g.id)));
@@ -420,8 +426,24 @@ function buildFields(containerId, defs, values={}){
     } else {
       i=el("input",{value: values[k]!=null?values[k]:"", type: (k==="fecha_certificacion")?"date":"text"});
     }
-    i.dataset.key=k; w.appendChild(i); c.appendChild(w);
+    i.dataset.key=k; w.appendChild(i);
+    if(k==="tipo") w.appendChild(el("div",{id:"pistaTipo",className:"hint",style:"margin:6px 0 0;line-height:1.45"}));
+    c.appendChild(w);
   });
+  if(containerId==="periodo") pistaTipo();
+}
+
+// Que implica cada regimen, con la pregunta que lo decide siempre a la vista.
+function pistaTipo(){
+  const d=document.getElementById("pistaTipo");
+  if(!d) return;
+  const esB=((readFields("periodo").tipo)||"A").toUpperCase()==="B";
+  d.innerHTML = esB
+    ? "<b>Sin balance de cierre.</b> El motor proyecta: la caja oscila dentro de la banda que le fijes y "+
+      "lo que sobra sale como <b>retiros del propietario</b>, así que el capital baja. "+
+      "Vas a completar «Cuentas objetivo», no «Saldos finales»."
+    : "<b>Con balance de cierre.</b> Las cifras que cargues en «Saldos finales» son <b>ancla dura</b>: "+
+      "el motor cierra exacto ahí y el capital queda estable. Si no tenés ese balance, elegí <b>B</b>.";
 }
 function readFields(containerId){
   const o={}; document.querySelectorAll("#"+containerId+" input, #"+containerId+" select").forEach(i=>{ o[i.dataset.key]=i.value; }); return o;
