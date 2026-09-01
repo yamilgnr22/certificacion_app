@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from datetime import date
 from pathlib import Path
 
 from motor.amortizacion import (
@@ -25,7 +26,7 @@ from motor.amortizacion import (
     mapear_cuenta_esf,
     resolver_planes,
 )
-from motor.inputs import PeriodoSpec
+from motor.inputs import DeudaInput, PeriodoSpec
 
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "deudas_thelma.json"
@@ -298,3 +299,72 @@ class PlanesTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CuotaQueNoCubreElCapitalTest(unittest.TestCase):
+    """Datos del reporte que no cierran entre si.
+
+    Caso real (Modesto, credito 3611): valor 21,900 USD, cuota 228 y plazo
+    84 meses. 228 x 84 = 19,152, menos que lo prestado: ninguna tasa positiva
+    lo explica, el motor infiere 0% y el credito termina sin intereses. El ER
+    se quedaba sin sus Gastos Financieros y nada lo avisaba.
+    """
+
+    def _deuda(self, **kw):
+        base = dict(
+            numero="3611", entidad="BANCO DE AMERICA CENTRAL",
+            tipo_credito="CARTERA DE VEHICULOS", estrategia="amortizable",
+            moneda="USD", valor_inicial=21_900.0, saldo_reportado=18_261.59,
+            cuota=228.0, fecha_otorgamiento=date(2025, 2, 14),
+            fecha_actualizado=date(2026, 7, 1), fecha_vencimiento=date(2032, 2, 16),
+        )
+        base.update(kw)
+        return DeudaInput(**base)
+
+    def _plan(self, deuda):
+        periodo = PeriodoSpec(tipo="A", mes_inicial="2026-03", mes_final="2026-08",
+                              tasa_cambio=36.6243)
+        return resolver_planes([deuda], periodo)[0]
+
+    def test_avisa_cuando_la_cuota_no_cubre_el_capital(self):
+        plan = self._plan(self._deuda())
+        self.assertIsNotNone(plan.alerta, "tiene que avisar, no quedarse callado")
+        self.assertIn("3611", plan.alerta)
+        self.assertIn("Gastos Financieros", plan.alerta)
+
+    def test_el_mensaje_dice_cual_seria_la_cuota_minima(self):
+        # 21,900 / 84 = 260.71: el dato accionable para revisar el reporte.
+        self.assertIn("260.71", self._plan(self._deuda()).alerta)
+
+    def test_una_cuota_coherente_no_alerta(self):
+        # Con 360 la cuenta cierra: 360 x 84 = 30,240 > 21,900.
+        plan = self._plan(self._deuda(cuota=360.0))
+        self.assertGreater(plan.tasa_mensual_inferida, 0, "deberia inferir tasa")
+        self.assertNotIn("no genera intereses", (plan.alerta or "").lower())
+
+    def test_no_alerta_si_la_tasa_viene_declarada(self):
+        # Con tasa dada no hay nada que inferir: el CPA ya resolvio el dato.
+        plan = self._plan(self._deuda(tasa_mensual=0.008))
+        self.assertNotIn("Gastos Financieros", (plan.alerta or ""))
+
+    def test_no_alerta_con_trayectoria_mes_a_mes(self):
+        saldos = {m: 18_261.59 for m in ("2026-03", "2026-04", "2026-05",
+                                         "2026-06", "2026-07", "2026-08")}
+        plan = self._plan(self._deuda(saldos_mensuales=saldos))
+        self.assertNotIn("Gastos Financieros", (plan.alerta or ""))
+
+    def test_no_alerta_sin_fecha_de_vencimiento(self):
+        # Sin vencimiento el plazo se estima como valor/cuota y la
+        # comparacion se vuelve circular: cualquier centavo la dispararia.
+        # Es el caso de las cuentas de telefonia y TV del reporte, que no
+        # son prestamos.
+        plan = self._plan(self._deuda(
+            numero="0362", entidad="ENITEL", tipo_credito="CARTERA TELEFONIA",
+            valor_inicial=733.55, saldo_reportado=733.55, cuota=733.0,
+            fecha_vencimiento=None))
+        self.assertIsNone(plan.alerta)
+
+    def test_no_alerta_por_una_diferencia_de_centavos(self):
+        # 84 x 260.70 = 21,898.80 contra 21,900: redondeo del reporte.
+        plan = self._plan(self._deuda(cuota=260.70))
+        self.assertNotIn("Gastos Financieros", (plan.alerta or ""))

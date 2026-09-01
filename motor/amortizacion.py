@@ -194,6 +194,47 @@ def _apertura_derivada_amortizable(deuda: DeudaInput, periodo: PeriodoSpec, tasa
 
 # ---------------------------------------------------------------- Materializar
 
+def _alerta_cuota_no_cubre(deuda: DeudaInput, tasa: float) -> str | None:
+    """Avisa cuando la cuota no alcanza ni para devolver el capital.
+
+    Caso real (Modesto, credito 3611): valor 21,900 USD, cuota 228 y plazo
+    84 meses -> 228 x 84 = 19,152, menos que lo prestado. Ninguna tasa
+    positiva explica eso, asi que inferir_tasa_mensual devuelve 0 y el
+    credito termina SIN intereses: el ER se queda sin sus Gastos
+    Financieros y nada lo avisaba. Casi siempre es la cuota mal extraida
+    del reporte.
+
+    Solo aplica a los amortizables que dependen de la tasa inferida: si el
+    CPA declaro la tasa, o el credito trae su trayectoria mes a mes, no hay
+    nada que inferir.
+
+    Y solo con fecha de VENCIMIENTO en el reporte. Sin ella el plazo se
+    estima como valor/cuota, con lo que la comparacion se vuelve circular y
+    cualquier centavo de redondeo dispararia el aviso: es lo que pasaba con
+    las cuentas de telefonia y TV por cable, que aparecen en el reporte de
+    credito pero no son prestamos."""
+    if deuda.estrategia != "amortizable" or deuda.tasa_mensual is not None:
+        return None
+    if deuda.saldos_mensuales or deuda.cuota <= 0 or deuda.valor_inicial <= 0:
+        return None
+    if tasa > 0 or deuda.fecha_vencimiento is None:
+        return None
+    plazo = _plazo_meses(deuda)
+    total_cuotas = deuda.cuota * plazo
+    # Materialidad: un faltante de centavos es redondeo del reporte, no un
+    # dato mal extraido.
+    if total_cuotas >= deuda.valor_inicial * 0.98:
+        return None
+    minima = deuda.valor_inicial / plazo if plazo else 0.0
+    return (
+        f"Credito {deuda.numero} ({deuda.entidad}): la cuota {deuda.cuota:,.2f} "
+        f"{deuda.moneda} por {plazo} meses suma {total_cuotas:,.2f}, menos que los "
+        f"{deuda.valor_inicial:,.2f} prestados. Sin tasa que lo explique el credito "
+        f"NO genera intereses y el ER queda sin sus Gastos Financieros. Revisa la "
+        f"cuota en el reporte: para ese plazo tendria que ser {minima:,.2f} o mas."
+    )
+
+
 def _materializar(
     deuda: DeudaInput,
     periodo: PeriodoSpec,
@@ -215,8 +256,8 @@ def _materializar(
     saldo_post_normal = max(0.0, s_ini_ult - abono_normal_ult)
     abono_extra = saldo_post_normal - deuda.saldo_reportado
 
-    alerta = None
-    if abs(abono_extra) > 2.0 * deuda.cuota and deuda.cuota > 0:
+    alerta = _alerta_cuota_no_cubre(deuda, tasa)
+    if alerta is None and abs(abono_extra) > 2.0 * deuda.cuota and deuda.cuota > 0:
         alerta = (
             f"Credito {deuda.numero} ({deuda.entidad}): abono extraordinario de cierre "
             f"= {abono_extra:,.2f} {deuda.moneda} (>2x cuota {deuda.cuota:,.2f}). "
